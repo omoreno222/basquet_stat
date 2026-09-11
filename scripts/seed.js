@@ -146,12 +146,12 @@ async function seed() {
       }
     }
 
-    // Create a game
-    console.log('Creating game...');
+    // Create games (official and friendly)
+    console.log('Creating games...');
     const managerUser = users.find(u => u.role === 'team_manager');
-    const { data: game, error: gameError } = await supabase
-      .from('games')
-      .insert({
+    
+    const gamesData = [
+      {
         team_id: team.id,
         opponent_name: 'Lions Basketball',
         is_home: true,
@@ -160,14 +160,33 @@ async function seed() {
         status: 'scheduled',
         slot_a_user_id: managerUser?.id,
         slot_b_user_id: null,
-      })
-      .select()
-      .single();
+        official: true,
+      },
+      {
+        team_id: team.id,
+        opponent_name: 'Eagles United',
+        is_home: false,
+        venue: 'Eagles Arena',
+        game_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        status: 'scheduled',
+        slot_a_user_id: null,
+        slot_b_user_id: null,
+        official: false,
+      },
+    ];
 
-    if (gameError) {
-      console.error('Error creating game:', gameError);
-    } else {
-      console.log('✓ Created game:', `${team.name} vs ${game.opponent_name}`);
+    for (const gameData of gamesData) {
+      const { data: game, error: gameError } = await supabase
+        .from('games')
+        .insert(gameData)
+        .select()
+        .single();
+
+      if (gameError) {
+        console.error(`Error creating game ${gameData.opponent_name}:`, gameError);
+      } else {
+        console.log(`✓ Created ${game.official ? 'official' : 'friendly'} game: ${team.name} vs ${game.opponent_name}`);
+      }
     }
 
     // Create translations
@@ -317,6 +336,103 @@ async function seed() {
       { key: 'trke_capture_resume', locale: 'en', value: 'Resume Live Capture' },
       { key: 'trke_capture_resume', locale: 'es', value: 'Reanudar Captura en Vivo' },
       { key: 'trke_capture_resume', locale: 'ca', value: 'Reprendre Captura en Directe' },
+      
+      // Admin CRUD forms
+      { key: 'trke_admin_add', locale: 'en', value: 'Add' },
+      { key: 'trke_admin_add', locale: 'es', value: 'Añadir' },
+      { key: 'trke_admin_add', locale: 'ca', value: 'Afegir' },
+      
+      { key: 'trke_admin_edit', locale: 'en', value: 'Edit' },
+      { key: 'trke_admin_edit', locale: 'es', value: 'Editar' },
+      { key: 'trke_admin_edit', locale: 'ca', value: 'Editar' },
+      
+      { key: 'trke_admin_delete', locale: 'en', value: 'Delete' },
+      { key: 'trke_admin_delete', locale: 'es', value: 'Eliminar' },
+      { key: 'trke_admin_delete', locale: 'ca', value: 'Eliminar' },
+      
+      { key: 'trke_admin_create', locale: 'en', value: 'Create' },
+      { key: 'trke_admin_create', locale: 'es', value: 'Crear' },
+      { key: 'trke_admin_create', locale: 'ca', value: 'Crear' },
+      
+      { key: 'trke_admin_update', locale: 'en', value: 'Update' },
+      { key: 'trke_admin_update', locale: 'es', value: 'Actualizar' },
+      { key: 'trke_admin_update', locale: 'ca', value: 'Actualitzar' },
+      
+      { key: 'trke_admin_cancel', locale: 'en', value: 'Cancel' },
+      { key: 'trke_admin_cancel', locale: 'es', value: 'Cancelar' },
+      { key: 'trke_admin_cancel', locale: 'ca', value: 'Cancel·lar' },
+      
+      { key: 'trke_admin_save', locale: 'en', value: 'Save' },
+      { key: 'trke_admin_save', locale: 'es', value: 'Guardar' },
+      { key: 'trke_admin_save', locale: 'ca', value: 'Desar' },
+      
+      { key: 'trke_admin_name', locale: 'en', value: 'Name' },
+      { key: 'trke_admin_name', locale: 'es', value: 'Nombre' },
+      { key: 'trke_admin_name', locale: 'ca', value: 'Nom' },
+      
+      { key: 'trke_admin_active', locale: 'en', value: 'Active' },
+      { key: 'trke_admin_active', locale: 'es', value: 'Activo' },
+      { key: 'trke_admin_active', locale: 'ca', value: 'Actiu' },
+      
+      { key: 'trke_admin_season', locale: 'en', value: 'Season' },
+      { key: 'trke_admin_season', locale: 'es', value: 'Temporada' },
+      { key: 'trke_admin_season', locale: 'ca', value: 'Temporada' },
+      
+      { key: 'trke_admin_team', locale: 'en', value: 'Team' },
+      { key: 'trke_admin_team', locale: 'es', value: 'Equipo' },
+      { key: 'trke_admin_team', locale: 'ca', value: 'Equip' },
+      
+      { key: 'trke_admin_player', locale: 'en', value: 'Player' },
+      { key: 'trke_admin_player', locale: 'es', value: 'Jugador' },
+      { key: 'trke_admin_player', locale: 'ca', value: 'Jugador' },
+      
+      { key: 'trke_admin_jersey_number', locale: 'en', value: 'Jersey Number' },
+      { key: 'trke_admin_jersey_number', locale: 'es', value: 'Número de Camiseta' },
+      { key: 'trke_admin_jersey_number', locale: 'ca', value: 'Número de Samarreta' },
+      
+      { key: 'trke_admin_position', locale: 'en', value: 'Position' },
+      { key: 'trke_admin_position', locale: 'es', value: 'Posición' },
+      { key: 'trke_admin_position', locale: 'ca', value: 'Posició' },
+      
+      { key: 'trke_admin_opponent', locale: 'en', value: 'Opponent' },
+      { key: 'trke_admin_opponent', locale: 'es', value: 'Oponente' },
+      { key: 'trke_admin_opponent', locale: 'ca', value: 'Oponent' },
+      
+      { key: 'trke_admin_home_game', locale: 'en', value: 'Home Game' },
+      { key: 'trke_admin_home_game', locale: 'es', value: 'Partido en Casa' },
+      { key: 'trke_admin_home_game', locale: 'ca', value: 'Partit a Casa' },
+      
+      { key: 'trke_admin_away_game', locale: 'en', value: 'Away Game' },
+      { key: 'trke_admin_away_game', locale: 'es', value: 'Partido Fuera' },
+      { key: 'trke_admin_away_game', locale: 'ca', value: 'Partit Fora' },
+      
+      { key: 'trke_admin_official', locale: 'en', value: 'Official' },
+      { key: 'trke_admin_official', locale: 'es', value: 'Oficial' },
+      { key: 'trke_admin_official', locale: 'ca', value: 'Oficial' },
+      
+      { key: 'trke_admin_friendly', locale: 'en', value: 'Friendly' },
+      { key: 'trke_admin_friendly', locale: 'es', value: 'Amistoso' },
+      { key: 'trke_admin_friendly', locale: 'ca', value: 'Amistós' },
+      
+      { key: 'trke_admin_venue', locale: 'en', value: 'Venue' },
+      { key: 'trke_admin_venue', locale: 'es', value: 'Lugar' },
+      { key: 'trke_admin_venue', locale: 'ca', value: 'Lloc' },
+      
+      { key: 'trke_admin_date', locale: 'en', value: 'Date' },
+      { key: 'trke_admin_date', locale: 'es', value: 'Fecha' },
+      { key: 'trke_admin_date', locale: 'ca', value: 'Data' },
+      
+      { key: 'trke_admin_email', locale: 'en', value: 'Email' },
+      { key: 'trke_admin_email', locale: 'es', value: 'Correo Electrónico' },
+      { key: 'trke_admin_email', locale: 'ca', value: 'Correu Electrònic' },
+      
+      { key: 'trke_admin_password', locale: 'en', value: 'Password' },
+      { key: 'trke_admin_password', locale: 'es', value: 'Contraseña' },
+      { key: 'trke_admin_password', locale: 'ca', value: 'Contrasenya' },
+      
+      { key: 'trke_admin_role', locale: 'en', value: 'Role' },
+      { key: 'trke_admin_role', locale: 'es', value: 'Rol' },
+      { key: 'trke_admin_role', locale: 'ca', value: 'Rol' },
     ];
 
     const { error: translationError } = await supabase

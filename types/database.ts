@@ -66,6 +66,7 @@ export interface Game {
   clock_remaining_ms: number;
   current_period: number;
   possession: 'home' | 'away' | null;
+  official: boolean;
   created_at: string;
   updated_at: string;
 }
