@@ -2,6 +2,16 @@
 
 A comprehensive basketball statistics management application built for tracking team performance, player stats, and live game capture with role-based access control.
 
+## ⚠️ SECURITY NOTICE
+
+**NEVER commit real credentials to git.** All secrets must be stored in `.env.local` (which is gitignored). The `.env.example` file contains only empty placeholders. If real credentials were ever committed to this repository:
+
+1. Rotate all affected keys immediately in your Supabase dashboard
+2. Generate new API keys and service role keys
+3. Never put real values in `.env.example` or commit `.env.local` files
+
+Always use `.env.local` for local development and secure environment variables on deployment platforms (Vercel, etc.).
+
 ## Product Overview
 
 BasquetStat is designed for basketball teams following FIBA rules (4 quarters × 10 minutes). The system supports:
