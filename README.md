@@ -32,14 +32,25 @@ Season → Team → Players → Games
                     Player Statistics
 ```
 
-### Live Capture Model (Foundation Ready, UI Coming Soon)
+### Live Capture Model (Phase 2 - IMPLEMENTED ✅)
 
-During live games, two Team Managers work simultaneously:
+During live games, two Team Managers work simultaneously via Supabase Realtime:
 
-- **Slot A Operator**: Game clock control, shots (1/2/3 points), fouls, substitutions, opponent score
-- **Slot B Operator**: Rebounds, assists, turnovers, steals
+- **Slot A Operator**: Game clock control (play/pause, ±adjust), shots with half-court coordinates (1/2/3 pts), fouls, substitutions (auto-tracking stints), opponent score entry
+- **Slot B Operator**: Rebounds (overlay after miss), assists (prompt after make), steals, turnovers
 
-Admins can assign users to Slot A and Slot B when opening a game, and operators can swap roles mid-quarter if needed. All events are timestamped with period number, clock remaining (ms), and elapsed time (ms). Shot zones (1-4) are captured on each event for future heatmap analysis.
+**Key Features:**
+- **Real-time sync**: Both operators see updates instantly via Supabase Realtime
+- **Role swapping**: Admins can swap A↔B assignments mid-game
+- **Shot tracking**: Tap half-court to record location; coordinates normalized 0-1, zones 1-4 (paint, right arc, left arc, 3pt)
+- **Auto-prompts**: Slot B gets rebound overlay after misses, assist prompt after makes
+- **Possession**: Auto-switches; manually correctable
+- **Undo**: Last event with cross-user warning
+- **Connection indicator**: Shows active users and slot assignments
+
+**Routes:**
+- `/team-manager/games/[id]` - Assign slots A/B, swap roles, start/resume game
+- `/team-manager/games/[id]/capture` - Live capture interface (renders A or B based on assignment)
 
 ## User Roles
 
@@ -208,7 +219,7 @@ After seeding, log in with these accounts:
 
 ## Application Routes
 
-- `/login` - Authentication page
+- `/login` - Authentication page (supports .local domains)
 - `/` - Redirects to role-specific home
 - `/admin` - Admin dashboard (seasons, teams, players, users, games, translations)
 - `/admin/seasons` - Season management
@@ -217,7 +228,9 @@ After seeding, log in with these accounts:
 - `/admin/users` - User management
 - `/admin/games` - Game viewing
 - `/admin/translations` - i18n string management
-- `/team-manager` - Game list with Slot A/B assignment (live capture UI coming soon)
+- `/team-manager` - Game list with Slot A/B status
+- `/team-manager/games/[id]` - **Game detail: assign/swap slots, start/resume**
+- `/team-manager/games/[id]/capture` - **Live capture interface (Slot A or B)**
 - `/coach` - Team roster and statistics (read-only)
 - `/parent` - Linked children's statistics (read-only, RLS enforced)
 - `/player` - Personal statistics (read-only, RLS enforced)

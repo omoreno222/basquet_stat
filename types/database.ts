@@ -62,6 +62,10 @@ export interface Game {
   status: GameStatus;
   slot_a_user_id: string | null;
   slot_b_user_id: string | null;
+  clock_running: boolean;
+  clock_remaining_ms: number;
+  current_period: number;
+  possession: 'home' | 'away' | null;
   created_at: string;
   updated_at: string;
 }
@@ -101,6 +105,7 @@ export interface GameEvent {
   coord_y: number | null;
   zone: number | null;
   is_offensive: boolean | null;
+  recorded_by_user_id: string | null;
   created_at: string;
 }
 

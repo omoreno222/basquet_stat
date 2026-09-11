@@ -25,15 +25,19 @@ export default function LoginPage() {
       if (error) throw error;
 
       if (data.session) {
-        // Store token in cookie for middleware
-        document.cookie = `sb-access-token=${data.session.access_token}; path=/; max-age=3600`;
+        // Store token in cookie for middleware with SameSite=Lax
+        document.cookie = `sb-access-token=${data.session.access_token}; path=/; max-age=3600; SameSite=Lax`;
         
         // Get user role and redirect
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('role')
           .eq('id', data.user.id)
           .single();
+
+        if (profileError) {
+          throw new Error(`Profile error: ${profileError.message}`);
+        }
 
         if (profile) {
           const roleRoutes: Record<string, string> = {
@@ -44,6 +48,8 @@ export default function LoginPage() {
             player: '/player',
           };
           router.push(roleRoutes[profile.role] || '/');
+        } else {
+          throw new Error('No profile found for user');
         }
       }
     } catch (err: any) {
@@ -72,10 +78,11 @@ export default function LoginPage() {
             </label>
             <input
               id="email"
-              type="email"
+              type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              placeholder="email@basquet.local"
               required
             />
           </div>

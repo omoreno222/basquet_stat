@@ -228,6 +228,95 @@ async function seed() {
       { key: 'trke_game_status_final', locale: 'en', value: 'Final' },
       { key: 'trke_game_status_final', locale: 'es', value: 'Finalizado' },
       { key: 'trke_game_status_final', locale: 'ca', value: 'Finalitzat' },
+      
+      // Live capture
+      { key: 'trke_capture_slot_a', locale: 'en', value: 'Slot A' },
+      { key: 'trke_capture_slot_a', locale: 'es', value: 'Puesto A' },
+      { key: 'trke_capture_slot_a', locale: 'ca', value: 'Posició A' },
+      
+      { key: 'trke_capture_slot_b', locale: 'en', value: 'Slot B' },
+      { key: 'trke_capture_slot_b', locale: 'es', value: 'Puesto B' },
+      { key: 'trke_capture_slot_b', locale: 'ca', value: 'Posició B' },
+      
+      { key: 'trke_capture_period', locale: 'en', value: 'Period' },
+      { key: 'trke_capture_period', locale: 'es', value: 'Período' },
+      { key: 'trke_capture_period', locale: 'ca', value: 'Període' },
+      
+      { key: 'trke_capture_start', locale: 'en', value: 'START' },
+      { key: 'trke_capture_start', locale: 'es', value: 'INICIAR' },
+      { key: 'trke_capture_start', locale: 'ca', value: 'INICIAR' },
+      
+      { key: 'trke_capture_pause', locale: 'en', value: 'PAUSE' },
+      { key: 'trke_capture_pause', locale: 'es', value: 'PAUSAR' },
+      { key: 'trke_capture_pause', locale: 'ca', value: 'PAUSAR' },
+      
+      { key: 'trke_capture_possession', locale: 'en', value: 'Possession' },
+      { key: 'trke_capture_possession', locale: 'es', value: 'Posesión' },
+      { key: 'trke_capture_possession', locale: 'ca', value: 'Possessió' },
+      
+      { key: 'trke_capture_select_player', locale: 'en', value: 'Select Player' },
+      { key: 'trke_capture_select_player', locale: 'es', value: 'Seleccionar Jugador' },
+      { key: 'trke_capture_select_player', locale: 'ca', value: 'Seleccionar Jugador' },
+      
+      { key: 'trke_capture_shot_2pt', locale: 'en', value: '2-Point Shot' },
+      { key: 'trke_capture_shot_2pt', locale: 'es', value: 'Tiro de 2 Puntos' },
+      { key: 'trke_capture_shot_2pt', locale: 'ca', value: 'Tir de 2 Punts' },
+      
+      { key: 'trke_capture_shot_3pt', locale: 'en', value: '3-Point Shot' },
+      { key: 'trke_capture_shot_3pt', locale: 'es', value: 'Tiro de 3 Puntos' },
+      { key: 'trke_capture_shot_3pt', locale: 'ca', value: 'Tir de 3 Punts' },
+      
+      { key: 'trke_capture_free_throw', locale: 'en', value: 'Free Throw' },
+      { key: 'trke_capture_free_throw', locale: 'es', value: 'Tiro Libre' },
+      { key: 'trke_capture_free_throw', locale: 'ca', value: 'Tir Lliure' },
+      
+      { key: 'trke_capture_foul', locale: 'en', value: 'Foul' },
+      { key: 'trke_capture_foul', locale: 'es', value: 'Falta' },
+      { key: 'trke_capture_foul', locale: 'ca', value: 'Falta' },
+      
+      { key: 'trke_capture_rebound', locale: 'en', value: 'Rebound' },
+      { key: 'trke_capture_rebound', locale: 'es', value: 'Rebote' },
+      { key: 'trke_capture_rebound', locale: 'ca', value: 'Rebot' },
+      
+      { key: 'trke_capture_assist', locale: 'en', value: 'Assist' },
+      { key: 'trke_capture_assist', locale: 'es', value: 'Asistencia' },
+      { key: 'trke_capture_assist', locale: 'ca', value: 'Assistència' },
+      
+      { key: 'trke_capture_steal', locale: 'en', value: 'Steal' },
+      { key: 'trke_capture_steal', locale: 'es', value: 'Robo' },
+      { key: 'trke_capture_steal', locale: 'ca', value: 'Robatori' },
+      
+      { key: 'trke_capture_turnover', locale: 'en', value: 'Turnover' },
+      { key: 'trke_capture_turnover', locale: 'es', value: 'Pérdida' },
+      { key: 'trke_capture_turnover', locale: 'ca', value: 'Pèrdua' },
+      
+      { key: 'trke_capture_undo', locale: 'en', value: 'Undo Last' },
+      { key: 'trke_capture_undo', locale: 'es', value: 'Deshacer Último' },
+      { key: 'trke_capture_undo', locale: 'ca', value: 'Desfer Últim' },
+      
+      { key: 'trke_capture_opponent_score', locale: 'en', value: 'Opponent Score' },
+      { key: 'trke_capture_opponent_score', locale: 'es', value: 'Puntuación Rival' },
+      { key: 'trke_capture_opponent_score', locale: 'ca', value: 'Puntuació Rival' },
+      
+      { key: 'trke_capture_event_feed', locale: 'en', value: 'Event Feed' },
+      { key: 'trke_capture_event_feed', locale: 'es', value: 'Registro de Eventos' },
+      { key: 'trke_capture_event_feed', locale: 'ca', value: 'Registre d\'Esdeveniments' },
+      
+      { key: 'trke_capture_assign_slots', locale: 'en', value: 'Assign Slots' },
+      { key: 'trke_capture_assign_slots', locale: 'es', value: 'Asignar Puestos' },
+      { key: 'trke_capture_assign_slots', locale: 'ca', value: 'Assignar Posicions' },
+      
+      { key: 'trke_capture_swap_slots', locale: 'en', value: 'Swap A ↔ B' },
+      { key: 'trke_capture_swap_slots', locale: 'es', value: 'Intercambiar A ↔ B' },
+      { key: 'trke_capture_swap_slots', locale: 'ca', value: 'Intercanviar A ↔ B' },
+      
+      { key: 'trke_capture_start_game', locale: 'en', value: 'Start Game' },
+      { key: 'trke_capture_start_game', locale: 'es', value: 'Iniciar Partido' },
+      { key: 'trke_capture_start_game', locale: 'ca', value: 'Iniciar Partit' },
+      
+      { key: 'trke_capture_resume', locale: 'en', value: 'Resume Live Capture' },
+      { key: 'trke_capture_resume', locale: 'es', value: 'Reanudar Captura en Vivo' },
+      { key: 'trke_capture_resume', locale: 'ca', value: 'Reprendre Captura en Directe' },
     ];
 
     const { error: translationError } = await supabase

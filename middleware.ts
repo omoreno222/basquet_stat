@@ -20,9 +20,17 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
+    // Create Supabase client with Authorization Bearer for RLS
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      }
     );
 
     const { data: { user } } = await supabase.auth.getUser(token);
@@ -31,14 +39,15 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    // Get user profile
-    const { data: profile } = await supabase
+    // Get user profile - RLS now works because we have Authorization header
+    const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('role')
       .eq('id', user.id)
       .single();
 
-    if (!profile) {
+    if (profileError || !profile) {
+      console.error('Profile fetch error:', profileError);
       return NextResponse.redirect(new URL('/login', request.url));
     }
 

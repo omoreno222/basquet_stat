@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 export default function TeamManagerDashboard() {
   const [profile, setProfile] = useState<any>(null);
@@ -89,38 +90,35 @@ export default function TeamManagerDashboard() {
               ) : (
                 games.map((game) => (
                   <li key={game.id} className="px-6 py-4 hover:bg-gray-50">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-medium text-gray-900">
-                          {game.teams?.name} vs {game.opponent_name}
-                        </h3>
-                        <p className="text-sm text-gray-500">
-                          {new Date(game.game_date).toLocaleDateString()} - {game.venue || 'TBD'}
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          Score: {game.team_score} - {game.opponent_score}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <span className={`px-2 py-1 text-xs font-semibold rounded uppercase ${
-                          game.status === 'live' ? 'text-green-800 bg-green-100' :
-                          game.status === 'final' ? 'text-gray-800 bg-gray-100' :
-                          'text-blue-800 bg-blue-100'
-                        }`}>
-                          {game.status}
-                        </span>
-                        <div className="mt-2 text-xs text-gray-600">
-                          {game.slot_a_user_id ? '✓' : '○'} Slot A
-                          {' | '}
-                          {game.slot_b_user_id ? '✓' : '○'} Slot B
+                    <Link href={`/team-manager/games/${game.id}`}>
+                      <div className="flex items-center justify-between cursor-pointer">
+                        <div>
+                          <h3 className="text-lg font-medium text-gray-900">
+                            {game.teams?.name} vs {game.opponent_name}
+                          </h3>
+                          <p className="text-sm text-gray-500">
+                            {new Date(game.game_date).toLocaleDateString()} - {game.venue || 'TBD'}
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            Score: {game.team_score} - {game.opponent_score}
+                          </p>
                         </div>
-                        {game.status === 'scheduled' && (
-                          <button className="mt-2 text-xs text-blue-600 hover:text-blue-800">
-                            Assign Slots
-                          </button>
-                        )}
+                        <div className="text-right">
+                          <span className={`px-2 py-1 text-xs font-semibold rounded uppercase ${
+                            game.status === 'live' ? 'text-green-800 bg-green-100' :
+                            game.status === 'final' ? 'text-gray-800 bg-gray-100' :
+                            'text-blue-800 bg-blue-100'
+                          }`}>
+                            {game.status}
+                          </span>
+                          <div className="mt-2 text-xs text-gray-600">
+                            {game.slot_a_user_id ? '✓' : '○'} Slot A
+                            {' | '}
+                            {game.slot_b_user_id ? '✓' : '○'} Slot B
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    </Link>
                   </li>
                 ))
               )}
