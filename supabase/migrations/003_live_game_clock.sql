@@ -1,4 +1,4 @@
--- Migration 002: Add live game clock state and enhance game tracking
+-- Migration 003: Add live game clock state and enhance game tracking
 -- This supports real-time game capture with clock management and current game state
 
 -- Add clock state columns to games table
