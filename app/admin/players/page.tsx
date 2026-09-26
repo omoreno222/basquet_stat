@@ -2,14 +2,26 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Player, Team } from '@/types/database';
+import { Player } from '@/types/database';
+import { Team } from '@/lib/types';
 import Link from 'next/link';
 import Image from 'next/image';
 import { uploadPlayerAvatar, removePlayerAvatar } from '../actions';
 
+interface PlayerWithTeam extends Player {
+  teams?: { 
+    name: string;
+    seasons?: { name: string };
+  };
+}
+
+interface TeamWithSeason extends Team {
+  seasons?: { name: string };
+}
+
 export default function PlayersPage() {
-  const [players, setPlayers] = useState<any[]>([]);
-  const [teams, setTeams] = useState<any[]>([]);
+  const [players, setPlayers] = useState<PlayerWithTeam[]>([]);
+  const [teams, setTeams] = useState<TeamWithSeason[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingPlayer, setEditingPlayer] = useState<Player | null>(null);
@@ -47,7 +59,7 @@ export default function PlayersPage() {
     setError('');
   }
 
-  function handleEdit(player: any) {
+  function handleEdit(player: PlayerWithTeam) {
     setEditingPlayer(player);
     setFormData({
       full_name: player.full_name,
@@ -246,7 +258,7 @@ export default function PlayersPage() {
                       className="w-full border rounded px-3 py-2"
                     >
                       <option value="">Select a team</option>
-                      {teams.map((team: any) => (
+                      {teams.map((team) => (
                         <option key={team.id} value={team.id}>
                           {team.name} ({team.seasons?.name})
                         </option>

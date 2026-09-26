@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Locale } from '@/types/database';
 import Link from 'next/link';
+import { Translation } from '@/lib/types';
 
 export default function TranslationsPage() {
-  const [translations, setTranslations] = useState<any[]>([]);
+  const [translations, setTranslations] = useState<Translation[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterLocale, setFilterLocale] = useState<string>('all');
-  const [editingTranslation, setEditingTranslation] = useState<any>(null);
+  const [editingTranslation, setEditingTranslation] = useState<Translation | null>(null);
   const [editValue, setEditValue] = useState('');
   const [error, setError] = useState('');
 
@@ -29,7 +29,7 @@ export default function TranslationsPage() {
     setLoading(false);
   }
 
-  function handleEdit(translation: any) {
+  function handleEdit(translation: Translation) {
     setEditingTranslation(translation);
     setEditValue(translation.value);
     setError('');
@@ -43,6 +43,11 @@ export default function TranslationsPage() {
 
   async function handleSave() {
     setError('');
+    
+    if (!editingTranslation) {
+      setError('No translation selected');
+      return;
+    }
     
     if (!editValue.trim()) {
       setError('Value cannot be empty');

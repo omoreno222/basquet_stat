@@ -475,14 +475,17 @@ export function calculateShotZone(
   const dy = courtY - rimY;
   const distFromRim = Math.sqrt(dx * dx + dy * dy);
   
+  // Check if shot is inside the 3-point line
+  const inside3pt = isInsideThreePointLine(worldX, worldY, attackingRight);
+  
   // Zone classification based on FIBA geometry
   // Zone 1: Paint/close (< 3m from rim)
-  // Zone 2-3: Mid-range (3-6.75m), split by court width
-  // Zone 4: Beyond 3-point line (> 6.75m)
+  // Zone 2-3: Mid-range (3-6.75m AND inside 3pt line), split by court width
+  // Zone 4: Beyond 3-point line
   if (distFromRim < 3.0) {
     return 1; // Paint/close range
-  } else if (distFromRim < 6.75) {
-    // Mid-range, distinguish left/right based on position relative to center width
+  } else if (inside3pt) {
+    // Mid-range (inside 3pt line), distinguish left/right based on position relative to center width
     return dy > 0 ? 2 : 3; // Right (2) vs Left (3) based on y-position
   } else {
     return 4; // Long range / 3-point area

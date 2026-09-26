@@ -1,21 +1,29 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import { Profile, Player } from '@/lib/types';
+
+interface PlayerWithTeam extends Player {
+  teams?: { name: string };
+}
+
+interface ParentPlayerLink {
+  id: string;
+  parent_id: string;
+  player_id: string;
+  players: PlayerWithTeam;
+}
 
 export default function ParentDashboard() {
-  const [profile, setProfile] = useState<any>(null);
-  const [children, setChildren] = useState<any[]>([]);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [children, setChildren] = useState<ParentPlayerLink[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  useEffect(() => {
-    checkUser();
-  }, []);
-
-  async function checkUser() {
+  const checkUser = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       router.push('/login');
@@ -50,7 +58,11 @@ export default function ParentDashboard() {
     setProfile(profileData);
     await loadChildren(user.id);
     setLoading(false);
-  }
+  }, [router]);
+
+  useEffect(() => {
+    checkUser();
+  }, [checkUser]);
 
   async function loadChildren(parentId: string) {
     const { data } = await supabase
@@ -89,7 +101,7 @@ export default function ParentDashboard() {
               <span className="text-lg font-semibold text-gray-700">Parent</span>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-gray-700">Welcome, {profile.full_name || profile.email}</span>
+              <span className="text-gray-700">Welcome, {profile?.full_name || profile?.email}</span>
               <button
                 onClick={handleLogout}
                 className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
@@ -132,7 +144,7 @@ export default function ParentDashboard() {
           
           <div className="mt-6 bg-purple-50 border border-purple-200 rounded p-4">
             <p className="text-sm text-purple-800">
-              Parent view: Read-only access to linked children's statistics only (RLS enforced)
+              Parent view: Read-only access to linked children&apos;s statistics only (RLS enforced)
             </p>
           </div>
         </div>

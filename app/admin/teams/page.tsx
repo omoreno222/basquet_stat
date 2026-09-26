@@ -5,8 +5,12 @@ import { supabase } from '@/lib/supabase';
 import { Season, Team } from '@/types/database';
 import Link from 'next/link';
 
+interface TeamWithSeason extends Team {
+  seasons?: { name: string };
+}
+
 export default function TeamsPage() {
-  const [teams, setTeams] = useState<any[]>([]);
+  const [teams, setTeams] = useState<TeamWithSeason[]>([]);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -39,7 +43,7 @@ export default function TeamsPage() {
     setError('');
   }
 
-  function handleEdit(team: any) {
+  function handleEdit(team: TeamWithSeason) {
     setEditingTeam(team);
     setFormData({
       name: team.name,

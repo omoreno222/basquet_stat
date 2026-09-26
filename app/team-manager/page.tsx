@@ -1,22 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
+import { Profile, Game } from '@/lib/types';
+
+interface GameWithTeam extends Game {
+  teams?: { name: string };
+}
 
 export default function TeamManagerDashboard() {
-  const [profile, setProfile] = useState<any>(null);
-  const [games, setGames] = useState<any[]>([]);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [games, setGames] = useState<GameWithTeam[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  useEffect(() => {
-    checkUser();
-  }, []);
-
-  async function checkUser() {
+  const checkUser = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       router.push('/login');
@@ -51,7 +52,11 @@ export default function TeamManagerDashboard() {
     setProfile(profileData);
     await loadGames();
     setLoading(false);
-  }
+  }, [router]);
+
+  useEffect(() => {
+    checkUser();
+  }, [checkUser]);
 
   async function loadGames() {
     const { data } = await supabase
@@ -90,7 +95,7 @@ export default function TeamManagerDashboard() {
               <span className="text-lg font-semibold text-gray-700">Team Manager</span>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-gray-700">Welcome, {profile.full_name || profile.email}</span>
+              <span className="text-gray-700">Welcome, {profile?.full_name || profile?.email}</span>
               <button
                 onClick={handleLogout}
                 className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"

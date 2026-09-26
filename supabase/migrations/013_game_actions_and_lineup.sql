@@ -134,5 +134,14 @@ INSERT INTO translations (key, locale, value) VALUES
   ('trke_none', 'ca', 'Cap')
 ON CONFLICT (key, locale) DO NOTHING;
 
--- Add starting_lineups to realtime publication
-ALTER PUBLICATION supabase_realtime ADD TABLE starting_lineups;
+-- Add starting_lineups to realtime publication (idempotent)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' 
+    AND tablename = 'starting_lineups'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE starting_lineups;
+  END IF;
+END $$;

@@ -53,8 +53,9 @@ export default function LoginPage() {
           throw new Error('No profile found for user');
         }
       }
-    } catch (err: any) {
-      setError(err.message || 'Login failed');
+    } catch (err) {
+      const error = err as Error;
+      setError(error.message || 'Login failed');
     } finally {
       setLoading(false);
     }

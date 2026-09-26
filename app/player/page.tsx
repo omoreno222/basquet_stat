@@ -1,21 +1,22 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import { Profile, Player } from '@/lib/types';
+
+interface PlayerWithTeam extends Player {
+  teams?: { name: string };
+}
 
 export default function PlayerDashboard() {
-  const [profile, setProfile] = useState<any>(null);
-  const [playerData, setPlayerData] = useState<any>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [playerData, setPlayerData] = useState<PlayerWithTeam | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  useEffect(() => {
-    checkUser();
-  }, []);
-
-  async function checkUser() {
+  const checkUser = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       router.push('/login');
@@ -50,7 +51,11 @@ export default function PlayerDashboard() {
     setProfile(profileData);
     await loadPlayerData(user.id);
     setLoading(false);
-  }
+  }, [router]);
+
+  useEffect(() => {
+    checkUser();
+  }, [checkUser]);
 
   async function loadPlayerData(userId: string) {
     const { data } = await supabase
@@ -90,7 +95,7 @@ export default function PlayerDashboard() {
               <span className="text-lg font-semibold text-gray-700">Player</span>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-gray-700">Welcome, {profile.full_name || profile.email}</span>
+              <span className="text-gray-700">Welcome, {profile?.full_name || profile?.email}</span>
               <button
                 onClick={handleLogout}
                 className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"

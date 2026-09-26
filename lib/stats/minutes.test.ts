@@ -1,12 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { calculateMinutesPlayed, formatMinutes } from './minutes';
 
-describe('calculateMinutesPlayed', () => {
-  const PERIOD_LENGTH_MS = 600000; // 10 minutes
+interface GameEvent {
+  period_number: number;
+  clock_remaining_ms: number;
+  player_id?: string;
+  player_out_id?: string;
+  event_type: string;
+  created_at?: string;
+}
 
+describe('calculateMinutesPlayed', () => {
   it('should calculate minutes for starting lineup with no substitutions', () => {
     const startingLineup = ['player1', 'player2', 'player3', 'player4', 'player5'];
-    const events: any[] = [];
+    const events: GameEvent[] = [];
     const currentPeriod = 1;
     const clockRemainingMs = 300000; // 5 minutes remaining = 5 minutes elapsed
 
@@ -14,8 +21,7 @@ describe('calculateMinutesPlayed', () => {
       startingLineup,
       events,
       currentPeriod,
-      clockRemainingMs,
-      PERIOD_LENGTH_MS
+      clockRemainingMs
     );
 
     // All starting players should have 5 minutes (300 seconds)
@@ -44,8 +50,7 @@ describe('calculateMinutesPlayed', () => {
       startingLineup,
       events,
       currentPeriod,
-      clockRemainingMs,
-      PERIOD_LENGTH_MS
+      clockRemainingMs
     );
 
     // player1 played 5 minutes (start to 5:00 mark)
@@ -86,8 +91,7 @@ describe('calculateMinutesPlayed', () => {
       startingLineup,
       events,
       currentPeriod,
-      clockRemainingMs,
-      PERIOD_LENGTH_MS
+      clockRemainingMs
     );
 
     // player1 played 2 minutes (start to 8:00)
@@ -110,7 +114,7 @@ describe('calculateMinutesPlayed', () => {
 
   it('should handle lineup carrying over to next period', () => {
     const startingLineup = ['player1', 'player2', 'player3', 'player4', 'player5'];
-    const events: any[] = [];
+    const events: GameEvent[] = [];
     const currentPeriod = 2;
     const clockRemainingMs = 300000; // 5 minutes into period 2
 
@@ -118,8 +122,7 @@ describe('calculateMinutesPlayed', () => {
       startingLineup,
       events,
       currentPeriod,
-      clockRemainingMs,
-      PERIOD_LENGTH_MS
+      clockRemainingMs
     );
 
     // All starters played full period 1 (10 min) + 5 min of period 2 = 15 min
@@ -148,8 +151,7 @@ describe('calculateMinutesPlayed', () => {
       startingLineup,
       events,
       currentPeriod,
-      clockRemainingMs,
-      PERIOD_LENGTH_MS
+      clockRemainingMs
     );
 
     // player1: 5 min in period 1
@@ -195,8 +197,7 @@ describe('calculateMinutesPlayed', () => {
       startingLineup,
       events,
       currentPeriod,
-      clockRemainingMs,
-      PERIOD_LENGTH_MS
+      clockRemainingMs
     );
 
     // player1: 2 min (start to 8:00) + 4 min (4:00 to end) = 6 min
@@ -229,8 +230,7 @@ describe('calculateMinutesPlayed', () => {
       startingLineup,
       events,
       currentPeriod,
-      clockRemainingMs,
-      PERIOD_LENGTH_MS
+      clockRemainingMs
     );
 
     // All should have 5 minutes (no subs processed)
@@ -259,8 +259,7 @@ describe('calculateMinutesPlayed', () => {
       startingLineup,
       events,
       currentPeriod,
-      clockRemainingMs,
-      PERIOD_LENGTH_MS
+      clockRemainingMs
     );
 
     // player1 played 5 minutes before sub
@@ -271,6 +270,127 @@ describe('calculateMinutesPlayed', () => {
     
     // Others played 5 minutes
     expect(result.player2).toBe(300);
+  });
+
+  it('should handle multiple subs at the same clock time (created_at ordering)', () => {
+    const startingLineup = ['player1', 'player2', 'player3', 'player4', 'player5'];
+    const events: GameEvent[] = [
+      {
+        event_type: 'substitution',
+        period_number: 1,
+        clock_remaining_ms: 300000, // Same clock
+        player_id: 'player6',
+        player_out_id: 'player1',
+        created_at: '2024-01-01T10:00:00Z',
+      },
+      {
+        event_type: 'substitution',
+        period_number: 1,
+        clock_remaining_ms: 300000, // Same clock
+        player_id: 'player7',
+        player_out_id: 'player2',
+        created_at: '2024-01-01T10:00:01Z', // 1 second later
+      },
+    ];
+    const currentPeriod = 1;
+    const clockRemainingMs = 0;
+
+    const result = calculateMinutesPlayed(
+      startingLineup,
+      events,
+      currentPeriod,
+      clockRemainingMs
+    );
+
+    // Both players out should have same time (5 min)
+    expect(result.player1).toBe(300);
+    expect(result.player2).toBe(300);
+    
+    // Both subs happened at same clock, so both incoming players get 5 min
+    expect(result.player6).toBe(300);
+    expect(result.player7).toBe(300);
+    
+    // Others played full 10 minutes
+    expect(result.player3).toBe(600);
+  });
+
+  it('should handle early period end (period ended before 0:00)', () => {
+    const startingLineup = ['player1', 'player2', 'player3', 'player4', 'player5'];
+    const events: GameEvent[] = [];
+    const currentPeriod = 2;
+    const clockRemainingMs = 540000; // 9 minutes into period 2
+    const periodEndTimes = { 1: 30000 }; // Period 1 ended at 0:30 remaining (9:30 played)
+
+    const result = calculateMinutesPlayed(
+      startingLineup,
+      events,
+      currentPeriod,
+      clockRemainingMs,
+      periodEndTimes
+    );
+
+    // All starters: 9.5 min in period 1 + 1 min in period 2 = 10.5 min = 630s
+    expect(result.player1).toBe(630);
+    expect(result.player2).toBe(630);
+    expect(result.player3).toBe(630);
+    expect(result.player4).toBe(630);
+    expect(result.player5).toBe(630);
+  });
+
+  it('should handle overtime periods (5 minutes instead of 10)', () => {
+    const startingLineup = ['player1', 'player2', 'player3', 'player4', 'player5'];
+    const events: GameEvent[] = [];
+    // We're in Q5 (first overtime), 2 minutes elapsed
+    const currentPeriod = 5;
+    const clockRemainingMs = 180000; // 3 minutes remaining in OT1 = 2 minutes elapsed
+
+    const result = calculateMinutesPlayed(
+      startingLineup,
+      events,
+      currentPeriod,
+      clockRemainingMs
+    );
+
+    // All starters: 4 regulation periods (10 min each) + 2 min of OT = 42 min = 2520s
+    expect(result.player1).toBe(2520);
+    expect(result.player2).toBe(2520);
+    expect(result.player3).toBe(2520);
+    expect(result.player4).toBe(2520);
+    expect(result.player5).toBe(2520);
+  });
+
+  it('should handle overtime with substitution', () => {
+    const startingLineup = ['player1', 'player2', 'player3', 'player4', 'player5'];
+    const events: GameEvent[] = [
+      {
+        event_type: 'substitution',
+        period_number: 5, // Overtime
+        clock_remaining_ms: 180000, // Sub at 3:00 remaining in OT
+        player_id: 'player6',
+        player_out_id: 'player1',
+      },
+    ];
+    const currentPeriod = 5;
+    const clockRemainingMs = 0; // OT ended
+
+    const result = calculateMinutesPlayed(
+      startingLineup,
+      events,
+      currentPeriod,
+      clockRemainingMs
+    );
+
+    // player1: 4 regulation (40 min) + 2 min OT = 42 min = 2520s
+    expect(result.player1).toBe(2520);
+    
+    // player6: 3 min of OT = 180s
+    expect(result.player6).toBe(180);
+    
+    // Others: 4 regulation + 5 min OT = 45 min = 2700s
+    expect(result.player2).toBe(2700);
+    expect(result.player3).toBe(2700);
+    expect(result.player4).toBe(2700);
+    expect(result.player5).toBe(2700);
   });
 });
 

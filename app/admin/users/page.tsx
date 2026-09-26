@@ -6,6 +6,7 @@ import { UserRole } from '@/types/database';
 import Link from 'next/link';
 import Image from 'next/image';
 import { createUser, updateUserRoles, linkParentToPlayer, unlinkParentFromPlayer, uploadProfileAvatar, removeProfileAvatar } from '../actions';
+import { Player } from '@/lib/types';
 
 interface UserWithRoles {
   id: string;
@@ -16,10 +17,25 @@ interface UserWithRoles {
   avatar_url: string | null;
 }
 
+interface PlayerWithTeam extends Player {
+  teams?: { name: string };
+}
+
+interface ParentLink {
+  id: string;
+  parent_id: string;
+  player_id: string;
+  players?: PlayerWithTeam;
+  profiles?: {
+    full_name: string | null;
+    email: string;
+  };
+}
+
 export default function UsersPage() {
   const [users, setUsers] = useState<UserWithRoles[]>([]);
-  const [players, setPlayers] = useState<any[]>([]);
-  const [parentLinks, setParentLinks] = useState<any[]>([]);
+  const [players, setPlayers] = useState<PlayerWithTeam[]>([]);
+  const [parentLinks, setParentLinks] = useState<ParentLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [showLinkForm, setShowLinkForm] = useState(false);
@@ -510,7 +526,7 @@ export default function UsersPage() {
                 <h3 className="text-lg font-medium">Parent-Player Links</h3>
               </div>
               <ul className="divide-y divide-gray-200">
-                {parentLinks.map((link: any) => (
+                {parentLinks.map((link) => (
                   <li key={link.id} className="px-6 py-4 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
                       <div>

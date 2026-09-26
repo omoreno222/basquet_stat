@@ -3,11 +3,20 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Game, GameStatus } from '@/types/database';
+import { Team } from '@/lib/types';
 import Link from 'next/link';
 
+interface GameWithTeam extends Game {
+  teams?: { name: string };
+}
+
+interface TeamWithSeason extends Team {
+  seasons?: { name: string };
+}
+
 export default function GamesPage() {
-  const [games, setGames] = useState<any[]>([]);
-  const [teams, setTeams] = useState<any[]>([]);
+  const [games, setGames] = useState<GameWithTeam[]>([]);
+  const [teams, setTeams] = useState<TeamWithSeason[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingGame, setEditingGame] = useState<Game | null>(null);
@@ -52,7 +61,7 @@ export default function GamesPage() {
     setError('');
   }
 
-  function handleEdit(game: any) {
+  function handleEdit(game: GameWithTeam) {
     setEditingGame(game);
     const gameDate = new Date(game.game_date);
     const localDate = new Date(gameDate.getTime() - gameDate.getTimezoneOffset() * 60000)
@@ -177,7 +186,7 @@ export default function GamesPage() {
                       className="w-full border rounded px-3 py-2"
                     >
                       <option value="">Select a team</option>
-                      {teams.map((team: any) => (
+                      {teams.map((team) => (
                         <option key={team.id} value={team.id}>
                           {team.name} ({team.seasons?.name})
                         </option>

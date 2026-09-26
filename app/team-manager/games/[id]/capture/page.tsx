@@ -17,6 +17,72 @@ import { calculateMinutesPlayed, formatMinutes } from '@/lib/stats/minutes';
 
 type ConnectionStatus = 'connected' | 'reconnecting' | 'offline';
 
+interface Player {
+  id: string;
+  full_name: string;
+  jersey_number: number;
+  avatar_url: string | null;
+}
+
+interface Game {
+  id: string;
+  home_team_id: string;
+  away_team_id: string;
+  game_date: string;
+  slot_a_user_id: string | null;
+  slot_b_user_id: string | null;
+  home_score: number;
+  away_score: number;
+  period: number;
+  clock_remaining_ms: number;
+  clock_running: boolean;
+  current_period: number;
+  possession: 'home' | 'away';
+  team_score: number;
+  opponent_score: number;
+  attacking_right_first_period: boolean;
+  attack_right_first: boolean;
+  opponent_name?: string;
+  home_team?: { name: string };
+  away_team?: { name: string };
+  teams?: { name: string };
+}
+
+interface GameEvent {
+  id: string;
+  game_id: string;
+  player_id?: string;
+  player_out_id?: string;
+  event_type: string;
+  period_number: number;
+  clock_remaining_ms: number;
+  elapsed_ms: number;
+  points?: number;
+  made?: boolean;
+  coord_x?: number;
+  coord_y?: number;
+  foul_type?: string;
+  free_throws_awarded?: number;
+  is_offensive?: boolean;
+  recorded_by_user_id: string;
+  created_at: string;
+  player?: Player;
+  player_out?: Player;
+}
+
+interface User {
+  id: string;
+  email: string;
+}
+
+interface PresenceState {
+  [key: string]: Array<{
+    presence_ref: string;
+    slot?: 'a' | 'b';
+    user_id?: string;
+  }>;
+}
+
 /**
  * COORDINATE SYSTEM CONVENTION:
  * 
@@ -45,14 +111,14 @@ export default function GameCapturePage() {
   const router = useRouter();
   const gameId = params.id as string;
 
-  const [game, setGame] = useState<any>(null);
-  const [players, setPlayers] = useState<any[]>([]);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [game, setGame] = useState<Game | null>(null);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userSlot, setUserSlot] = useState<'a' | 'b' | null>(null);
   const [loading, setLoading] = useState(true);
-  const [events, setEvents] = useState<any[]>([]);
+  const [events, setEvents] = useState<GameEvent[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('offline');
-  const [presenceState, setPresenceState] = useState<any>({});
+  const [presenceState, setPresenceState] = useState<PresenceState>({});
   
   // Game state
   const [clockRunning, setClockRunning] = useState(false);
@@ -68,7 +134,7 @@ export default function GameCapturePage() {
   const [showShotActions, setShowShotActions] = useState(false);
   const [showSlotBActions, setShowSlotBActions] = useState(false);
   const [tapCoordinates, setTapCoordinates] = useState<{ x: number; y: number } | null>(null);
-  const [selectedPlayer, setSelectedPlayer] = useState<any>(null);
+  const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [showEventFeed, setShowEventFeed] = useState(false);
   
   // New lineup and action modals
@@ -112,21 +178,29 @@ export default function GameCapturePage() {
   };
 
   // Derive current on-court players from starting lineup + substitution events
-  function deriveOnCourtPlayers(startingIds: string[], allEvents: any[]): string[] {
+  function deriveOnCourtPlayers(startingIds: string[], allEvents: GameEvent[]): string[] {
     const subs = allEvents
       .filter(e => e.event_type === 'substitution' && e.player_id && e.player_out_id)
       .sort((a, b) => {
         if (a.period_number !== b.period_number) {
           return a.period_number - b.period_number;
         }
-        return b.clock_remaining_ms - a.clock_remaining_ms;
+        // Higher clock = earlier in period
+        if (a.clock_remaining_ms !== b.clock_remaining_ms) {
+          return b.clock_remaining_ms - a.clock_remaining_ms;
+        }
+        // Tie-breaker: sort by created_at ASC (earlier insertions first)
+        if (a.created_at && b.created_at) {
+          return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0;
+        }
+        return 0;
       });
 
-    let currentLineup = [...startingIds];
+    const currentLineup = [...startingIds];
     for (const sub of subs) {
-      const outIndex = currentLineup.indexOf(sub.player_out_id);
+      const outIndex = currentLineup.indexOf(sub.player_out_id!);
       if (outIndex !== -1) {
-        currentLineup[outIndex] = sub.player_id;
+        currentLineup[outIndex] = sub.player_id!;
       }
     }
     return currentLineup;
@@ -182,7 +256,7 @@ export default function GameCapturePage() {
     return () => clearInterval(interval);
   }, [userSlot, clockRunning, clockRemaining, game, gameId]);
 
-  async function updateGameState(updates: any) {
+  async function updateGameState(updates: Partial<Game>) {
     const { error } = await supabase
       .from('games')
       .update(updates)
@@ -310,14 +384,22 @@ export default function GameCapturePage() {
             .from('game_events')
             .select(`
               *, 
-              player:players!game_events_player_id_fkey(full_name, jersey_number),
-              player_out:players!game_events_player_out_id_fkey(full_name, jersey_number)
+              player:players!game_events_player_id_fkey(full_name, jersey_number, avatar_url),
+              player_out:players!game_events_player_out_id_fkey(full_name, jersey_number, avatar_url)
             `)
             .eq('id', payload.new.id)
             .single();
 
           if (data) {
-            setEvents(prev => [data, ...prev]);
+            setEvents(prev => {
+              const newEvents = [data, ...prev];
+              // Re-derive on-court lineup if this is a substitution
+              if (data.event_type === 'substitution') {
+                const currentOnCourt = deriveOnCourtPlayers(startingLineupIds, newEvents);
+                setOnCourtPlayerIds(currentOnCourt);
+              }
+              return newEvents;
+            });
           }
         }
       )
@@ -330,7 +412,13 @@ export default function GameCapturePage() {
           filter: `game_id=eq.${gameId}`,
         },
         (payload) => {
-          setEvents(prev => prev.filter(e => e.id !== payload.old.id));
+          setEvents(prev => {
+            const filtered = prev.filter(e => e.id !== payload.old.id);
+            // Re-derive on-court lineup after deletion
+            const currentOnCourt = deriveOnCourtPlayers(startingLineupIds, filtered);
+            setOnCourtPlayerIds(currentOnCourt);
+            return filtered;
+          });
         }
       )
       .on(
@@ -341,7 +429,7 @@ export default function GameCapturePage() {
           table: 'games',
           filter: `id=eq.${gameId}`,
         },
-        async (payload: any) => {
+        async (payload: { new: Game }) => {
           if (payload.new) {
             const newData = payload.new;
             
@@ -381,7 +469,7 @@ export default function GameCapturePage() {
               }
             }
 
-            setGame((prev: any) => ({ ...prev, ...newData }));
+            setGame((prev) => ({ ...prev, ...newData }) as Game);
           }
         }
       )
@@ -455,7 +543,7 @@ export default function GameCapturePage() {
 
   function handlePlayerSelected(playerId: string) {
     const player = players.find(p => p.id === playerId);
-    setSelectedPlayer(player);
+    setSelectedPlayer(player || null);
     setShowPlayerPicker(false);
     
     if (userSlot === 'a') {
@@ -491,7 +579,7 @@ export default function GameCapturePage() {
         coord_y: normalized.y,
         zone,
         is_offensive: possession === 'home',
-        recorded_by_user_id: currentUser.id,
+        recorded_by_user_id: currentUser!.id,
       });
 
     if (error) {
@@ -541,7 +629,7 @@ export default function GameCapturePage() {
         coord_x: normalized.x,
         coord_y: normalized.y,
         is_offensive: actionType === 'rebound_off' || actionType === 'steal' || actionType === 'assist',
-        recorded_by_user_id: currentUser.id,
+        recorded_by_user_id: currentUser!.id,
       });
 
     if (error) {
@@ -553,7 +641,7 @@ export default function GameCapturePage() {
     setTapCoordinates(null);
   }
 
-  async function handleFreeThrowSubmit(player: any, shots: boolean[]) {
+  async function handleFreeThrowSubmit(player: Player, shots: boolean[]) {
     const elapsed = 600000 - clockRemaining;
     const attacking = isAttackingRight();
     
@@ -579,7 +667,7 @@ export default function GameCapturePage() {
           coord_x: ftNormalized.x,
           coord_y: ftNormalized.y,
           is_offensive: possession === 'home',
-          recorded_by_user_id: currentUser.id,
+          recorded_by_user_id: currentUser!.id,
         });
 
       if (error) {
@@ -601,7 +689,7 @@ export default function GameCapturePage() {
     setShowFreeThrow(false);
   }
 
-  async function handleFoulSubmit(player: any, foulType: string, freeThrowsAwarded: number) {
+  async function handleFoulSubmit(player: Player, foulType: string, freeThrowsAwarded: number) {
     const elapsed = 600000 - clockRemaining;
 
     const { error } = await supabase
@@ -616,7 +704,7 @@ export default function GameCapturePage() {
         foul_type: foulType,
         free_throws_awarded: freeThrowsAwarded,
         is_offensive: possession === 'home',
-        recorded_by_user_id: currentUser.id,
+        recorded_by_user_id: currentUser!.id,
       });
 
     if (error) {
@@ -626,28 +714,29 @@ export default function GameCapturePage() {
     setShowFoul(false);
   }
 
-  async function handleSubstitutionSubmit(playersOut: any[], playersIn: any[]) {
+  async function handleSubstitutionSubmit(playersOut: Player[], playersIn: Player[]) {
     const elapsed = 600000 - clockRemaining;
 
-    // Record one event per swap
-    for (let i = 0; i < playersOut.length; i++) {
-      const { error } = await supabase
-        .from('game_events')
-        .insert({
-          game_id: gameId,
-          player_id: playersIn[i].id,
-          player_out_id: playersOut[i].id,
-          event_type: 'substitution',
-          period_number: currentPeriod,
-          clock_remaining_ms: clockRemaining,
-          elapsed_ms: elapsed,
-          recorded_by_user_id: currentUser.id,
-        });
+    // Create array of substitution events for atomic insert
+    const substitutionEvents = playersOut.map((playerOut, i) => ({
+      game_id: gameId,
+      player_id: playersIn[i].id,
+      player_out_id: playerOut.id,
+      event_type: 'substitution',
+      period_number: currentPeriod,
+      clock_remaining_ms: clockRemaining,
+      elapsed_ms: elapsed,
+      recorded_by_user_id: currentUser!.id,
+    }));
 
-      if (error) {
-        alert(`Error recording substitution: ${error.message}`);
-        return;
-      }
+    // Insert all substitutions atomically
+    const { error } = await supabase
+      .from('game_events')
+      .insert(substitutionEvents);
+
+    if (error) {
+      alert(`Error recording substitution: ${error.message}`);
+      return;
     }
 
     // Update on-court lineup by replacing players
@@ -663,11 +752,15 @@ export default function GameCapturePage() {
     setShowSubstitution(false);
   }
 
-  async function handleStartingLineupSubmit(selectedPlayers: any[]) {
-    // Only allow setting lineup before game starts (no substitutions recorded yet)
-    const hasSubs = events.some(e => e.event_type === 'substitution');
-    if (hasSubs) {
-      alert('Cannot change starting lineup after substitutions have been made. Use Sub button instead.');
+  async function handleStartingLineupSubmit(selectedPlayers: Player[]) {
+    // Block lineup changes if game has started:
+    // - Any events have been recorded (not just subs)
+    // - Clock has run (not at initial 10:00)
+    const hasEvents = events.length > 0;
+    const clockHasRun = clockRemaining < 600000;
+    
+    if (hasEvents || clockHasRun) {
+      alert('Cannot change starting lineup after the game has started. Use Sub button instead.');
       setShowStartingLineup(false);
       return;
     }
@@ -753,7 +846,7 @@ export default function GameCapturePage() {
     if (events.length === 0) return;
 
     const lastEvent = events[0];
-    const isOwnEvent = lastEvent.recorded_by_user_id === currentUser.id;
+    const isOwnEvent = lastEvent.recorded_by_user_id === currentUser?.id;
 
     if (!isOwnEvent) {
       if (!confirm('This event was recorded by another user. Undo anyway?')) {
@@ -761,7 +854,7 @@ export default function GameCapturePage() {
       }
     }
 
-    if (lastEvent.made && lastEvent.points > 0 && userSlot === 'a') {
+    if (lastEvent.made && lastEvent.points && lastEvent.points > 0 && userSlot === 'a') {
       const newTeamScore = Math.max(0, teamScore - lastEvent.points);
       setTeamScore(newTeamScore);
       await updateGameState({ team_score: newTeamScore });
@@ -821,12 +914,12 @@ export default function GameCapturePage() {
   const shotMarkers = events
     .filter(e => (e.event_type === 'shot' || e.event_type === 'free_throw') && e.coord_x != null && e.coord_y != null)
     .map(e => {
-      const world = normalizedToWorld(e.coord_x, e.coord_y);
+      const world = normalizedToWorld(e.coord_x!, e.coord_y!);
       return {
         id: e.id,
         x: world.x,
         y: world.y,
-        made: e.made,
+        made: e.made ?? false,
         points: e.points || 0,
       };
     });
@@ -851,8 +944,7 @@ export default function GameCapturePage() {
     startingLineupIds,
     events,
     currentPeriod,
-    clockRemaining,
-    600000 // 10 minutes per period
+    clockRemaining
   );
 
   const attacking = isAttackingRight();
@@ -861,7 +953,6 @@ export default function GameCapturePage() {
   // Possession highlight: show which half has possession (not which we're attacking)
   // When we have possession (offense), highlight our attacking half
   // When opponent has possession, highlight their attacking half (opposite of ours)
-  const highlightRight = isOffense ? attacking : !attacking;
 
   const connectionColor = connectedCount > 0
     ? 'text-green-400'
@@ -1131,8 +1222,16 @@ export default function GameCapturePage() {
             {events.map(event => (
               <div key={event.id} className="text-sm p-3 bg-gray-700 rounded-lg">
                 <div className="font-medium text-white">
-                  {event.players?.jersey_number && `#${event.players.jersey_number} `}
-                  {event.players?.full_name || 'Team'}
+                  {event.event_type === 'substitution' ? (
+                    <>
+                      IN #{event.player?.jersey_number} {event.player?.full_name} / OUT #{event.player_out?.jersey_number} {event.player_out?.full_name}
+                    </>
+                  ) : (
+                    <>
+                      {event.player?.jersey_number && `#${event.player.jersey_number} `}
+                      {event.player?.full_name || 'Team'}
+                    </>
+                  )}
                 </div>
                 <div className="text-gray-400 text-xs mt-1">
                   {event.event_type === 'shot' && event.made === false 

@@ -1,29 +1,41 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
+import { Profile, Player, Game } from '@/lib/types';
+
+interface GameWithTeam extends Game {
+  teams?: { name: string };
+  opponent_name?: string;
+  venue?: string;
+  status?: string;
+}
+
+interface PlayerWithTeam extends Player {
+  teams?: { name: string };
+}
+
+interface UserProfile extends Profile {
+  roles?: string[];
+  isAdmin?: boolean;
+}
 
 export default function GameDetailPage() {
   const params = useParams();
   const router = useRouter();
   const gameId = params.id as string;
   
-  const [game, setGame] = useState<any>(null);
-  const [team, setTeam] = useState<any>(null);
-  const [players, setPlayers] = useState<any[]>([]);
-  const [users, setUsers] = useState<any[]>([]);
+  const [game, setGame] = useState<GameWithTeam | null>(null);
+  const [players, setPlayers] = useState<PlayerWithTeam[]>([]);
+  const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [slotAUserId, setSlotAUserId] = useState<string>('');
   const [slotBUserId, setSlotBUserId] = useState<string>('');
 
-  useEffect(() => {
-    loadData();
-  }, [gameId]);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       router.push('/login');
@@ -58,21 +70,15 @@ export default function GameDetailPage() {
       setSlotAUserId(gameData.slot_a_user_id || '');
       setSlotBUserId(gameData.slot_b_user_id || '');
 
-      const { data: teamData } = await supabase
-        .from('teams')
-        .select('*')
-        .eq('id', gameData.team_id)
-        .single();
+      if (gameData.team_id) {
+        const { data: playersData } = await supabase
+          .from('players')
+          .select('*')
+          .eq('team_id', gameData.team_id)
+          .order('jersey_number');
 
-      setTeam(teamData);
-
-      const { data: playersData } = await supabase
-        .from('players')
-        .select('*')
-        .eq('team_id', gameData.team_id)
-        .order('jersey_number');
-
-      setPlayers(playersData || []);
+        setPlayers(playersData || []);
+      }
 
       // Fetch users who have admin or team_manager role (multi-role support)
       // We get all profile_roles entries with these roles, then fetch the profiles
@@ -86,7 +92,7 @@ export default function GameDetailPage() {
       if (eligibleUserIds.length > 0) {
         const { data: usersData } = await supabase
           .from('profiles')
-          .select('id, email, full_name')
+          .select('id, email, full_name, role, avatar_url, created_at')
           .in('id', eligibleUserIds)
           .order('email');
 
@@ -95,13 +101,16 @@ export default function GameDetailPage() {
         setUsers([]);
       }
 
-      // Store isAdmin for use in canCapture check
-      (profile as any).isAdmin = isAdmin;
-      setCurrentUser(profile);
+      // Set current user with admin status
+      setCurrentUser({ ...profile, isAdmin } as UserProfile);
     }
 
     setLoading(false);
-  }
+  }, [gameId, router]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   async function handleAssignSlots() {
     if (!slotAUserId && !slotBUserId) {
@@ -170,7 +179,7 @@ export default function GameDetailPage() {
   }
 
   const canCapture = currentUser && (
-    (currentUser as any).isAdmin ||
+    currentUser.isAdmin ||
     currentUser.id === game.slot_a_user_id ||
     currentUser.id === game.slot_b_user_id
   );
