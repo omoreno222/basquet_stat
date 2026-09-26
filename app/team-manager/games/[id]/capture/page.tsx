@@ -9,6 +9,10 @@ import { BasketballCourt, calculateShotZone } from './components/BasketballCourt
 import { PlayerSelectionModal } from './components/PlayerSelectionModal';
 import { ShotActionModal } from './components/ShotActionModal';
 import { SlotBActionModal } from './components/SlotBActionModal';
+import { StartingLineupModal } from './components/StartingLineupModal';
+import { FreeThrowModal } from './components/FreeThrowModal';
+import { FoulModal } from './components/FoulModal';
+import { SubstitutionModal } from './components/SubstitutionModal';
 
 type ConnectionStatus = 'connected' | 'reconnecting' | 'offline';
 
@@ -65,7 +69,14 @@ export default function GameCapturePage() {
   const [tapCoordinates, setTapCoordinates] = useState<{ x: number; y: number } | null>(null);
   const [selectedPlayer, setSelectedPlayer] = useState<any>(null);
   const [showEventFeed, setShowEventFeed] = useState(false);
-  const [showSlotAMenu, setShowSlotAMenu] = useState(false);
+  
+  // New lineup and action modals
+  const [showStartingLineup, setShowStartingLineup] = useState(false);
+  const [showFreeThrow, setShowFreeThrow] = useState(false);
+  const [showFoul, setShowFoul] = useState(false);
+  const [showSubstitution, setShowSubstitution] = useState(false);
+  const [onCourtPlayerIds, setOnCourtPlayerIds] = useState<string[]>([]);
+  const [startingLineupSet, setStartingLineupSet] = useState(false);
 
   // Refs
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -218,6 +229,18 @@ export default function GameCapturePage() {
         .limit(50);
 
       setEvents(eventsData || []);
+      
+      // Load starting lineup
+      const { data: lineupData } = await supabase
+        .from('starting_lineups')
+        .select('player_id')
+        .eq('game_id', gameId)
+        .order('position_index');
+
+      if (lineupData && lineupData.length > 0) {
+        setOnCourtPlayerIds(lineupData.map(sl => sl.player_id));
+        setStartingLineupSet(true);
+      }
     }
 
     setLoading(false);
@@ -322,6 +345,28 @@ export default function GameCapturePage() {
             }
 
             setGame((prev: any) => ({ ...prev, ...newData }));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'starting_lineups',
+          filter: `game_id=eq.${gameId}`,
+        },
+        async () => {
+          // Reload lineup when it changes
+          const { data: lineupData } = await supabase
+            .from('starting_lineups')
+            .select('player_id')
+            .eq('game_id', gameId)
+            .order('position_index');
+
+          if (lineupData && lineupData.length > 0) {
+            setOnCourtPlayerIds(lineupData.map(sl => sl.player_id));
+            setStartingLineupSet(true);
           }
         }
       )
@@ -463,59 +508,68 @@ export default function GameCapturePage() {
     setTapCoordinates(null);
   }
 
-  async function handleFreeThrow(made: boolean) {
-    if (!selectedPlayer) {
-      alert('Please select a player from the court');
-      return;
+  async function handleFreeThrowSubmit(player: any, shots: boolean[]) {
+    const elapsed = 600000 - clockRemaining;
+    const attacking = isAttackingRight();
+    
+    // Calculate FT position: center of FT line at attacking basket (5.8m from baseline, y=7.5m)
+    const ftWorldX = attacking ? (28 - 5.8) / 28 : 5.8 / 28;
+    const ftWorldY = 0.5;
+    const ftNormalized = worldToNormalized(ftWorldX, ftWorldY);
+
+    // Insert one event per shot
+    for (let i = 0; i < shots.length; i++) {
+      const made = shots[i];
+      const { error } = await supabase
+        .from('game_events')
+        .insert({
+          game_id: gameId,
+          player_id: player.id,
+          event_type: 'free_throw',
+          period_number: currentPeriod,
+          clock_remaining_ms: clockRemaining,
+          elapsed_ms: elapsed,
+          points: made ? 1 : 0,
+          made,
+          coord_x: ftNormalized.x,
+          coord_y: ftNormalized.y,
+          is_offensive: possession === 'home',
+          recorded_by_user_id: currentUser.id,
+        });
+
+      if (error) {
+        alert(`Error recording FT ${i + 1}: ${error.message}`);
+        return;
+      }
     }
 
-    const elapsed = 600000 - clockRemaining;
-
-    const { error } = await supabase
-      .from('game_events')
-      .insert({
-        game_id: gameId,
-        player_id: selectedPlayer.id,
-        event_type: 'free_throw',
-        period_number: currentPeriod,
-        clock_remaining_ms: clockRemaining,
-        elapsed_ms: elapsed,
-        points: made ? 1 : 0,
-        made,
-        is_offensive: possession === 'home',
-        recorded_by_user_id: currentUser.id,
-      });
-
-    if (error) {
-      alert(`Error: ${error.message}`);
-    } else {
-      if (made && userSlot === 'a') {
-        const newTeamScore = teamScore + 1;
+    // Update score for made FTs (Slot A authority)
+    if (userSlot === 'a') {
+      const madeCount = shots.filter(s => s).length;
+      if (madeCount > 0) {
+        const newTeamScore = teamScore + madeCount;
         setTeamScore(newTeamScore);
         await updateGameState({ team_score: newTeamScore });
       }
     }
 
-    setShowSlotAMenu(false);
+    setShowFreeThrow(false);
   }
 
-  async function handleFoul() {
-    if (!selectedPlayer) {
-      alert('Please select a player from the court');
-      return;
-    }
-
+  async function handleFoulSubmit(player: any, foulType: string, freeThrowsAwarded: number) {
     const elapsed = 600000 - clockRemaining;
 
     const { error } = await supabase
       .from('game_events')
       .insert({
         game_id: gameId,
-        player_id: selectedPlayer.id,
+        player_id: player.id,
         event_type: 'foul',
         period_number: currentPeriod,
         clock_remaining_ms: clockRemaining,
         elapsed_ms: elapsed,
+        foul_type: foulType,
+        free_throws_awarded: freeThrowsAwarded,
         is_offensive: possession === 'home',
         recorded_by_user_id: currentUser.id,
       });
@@ -524,34 +578,68 @@ export default function GameCapturePage() {
       alert(`Error: ${error.message}`);
     }
 
-    setShowSlotAMenu(false);
+    setShowFoul(false);
   }
 
-  async function handleSubstitution() {
-    if (!selectedPlayer) {
-      alert('Please select a player from the court');
-      return;
-    }
-
+  async function handleSubstitutionSubmit(playersOut: any[], playersIn: any[]) {
     const elapsed = 600000 - clockRemaining;
 
+    // Record one event per swap
+    for (let i = 0; i < playersOut.length; i++) {
+      const { error } = await supabase
+        .from('game_events')
+        .insert({
+          game_id: gameId,
+          player_id: playersIn[i].id,
+          player_out_id: playersOut[i].id,
+          event_type: 'substitution',
+          period_number: currentPeriod,
+          clock_remaining_ms: clockRemaining,
+          elapsed_ms: elapsed,
+          recorded_by_user_id: currentUser.id,
+        });
+
+      if (error) {
+        alert(`Error recording substitution: ${error.message}`);
+        return;
+      }
+    }
+
+    // Update on-court lineup
+    const newOnCourt = onCourtPlayerIds
+      .filter(id => !playersOut.some(p => p.id === id))
+      .concat(playersIn.map(p => p.id));
+    
+    setOnCourtPlayerIds(newOnCourt);
+    setShowSubstitution(false);
+  }
+
+  async function handleStartingLineupSubmit(selectedPlayers: any[]) {
+    // Delete existing lineup
+    await supabase
+      .from('starting_lineups')
+      .delete()
+      .eq('game_id', gameId);
+
+    // Insert new lineup
+    const lineupInserts = selectedPlayers.map((player, index) => ({
+      game_id: gameId,
+      player_id: player.id,
+      position_index: index,
+    }));
+
     const { error } = await supabase
-      .from('game_events')
-      .insert({
-        game_id: gameId,
-        player_id: selectedPlayer.id,
-        event_type: 'substitution',
-        period_number: currentPeriod,
-        clock_remaining_ms: clockRemaining,
-        elapsed_ms: elapsed,
-        recorded_by_user_id: currentUser.id,
-      });
+      .from('starting_lineups')
+      .insert(lineupInserts);
 
     if (error) {
       alert(`Error: ${error.message}`);
+      return;
     }
 
-    setShowSlotAMenu(false);
+    setOnCourtPlayerIds(selectedPlayers.map(p => p.id));
+    setStartingLineupSet(true);
+    setShowStartingLineup(false);
   }
 
   async function toggleClock() {
@@ -653,19 +741,15 @@ export default function GameCapturePage() {
   const presenceUsers = Object.keys(presenceState);
   const connectedCount = presenceUsers.length;
   
-  const connectionColor = 
-    connectionStatus === 'connected' ? 'text-green-400' :
-    connectionStatus === 'reconnecting' ? 'text-yellow-400' :
-    'text-red-400';
-  
   const connectionText =
     connectionStatus === 'connected' ? 'Connected' :
     connectionStatus === 'reconnecting' ? 'Reconnecting...' :
     'Offline';
 
   // Get shot markers for court (transform normalized coords to world coords for display)
+  // Include both field shots and free throws
   const shotMarkers = events
-    .filter(e => e.event_type === 'shot' && e.coord_x != null && e.coord_y != null)
+    .filter(e => (e.event_type === 'shot' || e.event_type === 'free_throw') && e.coord_x != null && e.coord_y != null)
     .map(e => {
       const world = normalizedToWorld(e.coord_x, e.coord_y);
       return {
@@ -676,6 +760,21 @@ export default function GameCapturePage() {
         points: e.points || 0,
       };
     });
+
+  // Helper functions for lineup management
+  const onCourtPlayers = players.filter(p => onCourtPlayerIds.includes(p.id));
+  const benchPlayers = players.filter(p => !onCourtPlayerIds.includes(p.id));
+  
+  // Calculate foul counts for each player
+  const playerFoulCounts: Record<string, number> = {};
+  events.forEach(e => {
+    if (e.event_type === 'foul' && e.player_id) {
+      playerFoulCounts[e.player_id] = (playerFoulCounts[e.player_id] || 0) + 1;
+    }
+  });
+
+  // Get players for pickers (on-court only, or all if lineup not set)
+  const availablePlayers = startingLineupSet && onCourtPlayers.length > 0 ? onCourtPlayers : players;
 
   const attacking = isAttackingRight();
   const isOffense = possession === 'home';
@@ -815,34 +914,49 @@ export default function GameCapturePage() {
 
       {/* Bottom Bar - Compact Actions & Slot Info */}
       <div className="flex items-center justify-between bg-gray-800 border-t-2 border-orange-500 px-3 py-2 flex-shrink-0 gap-3" style={{ minHeight: '50px' }}>
-        {/* Left: Slot A Additional Actions */}
+        {/* Left: Slot A Action Buttons */}
         {userSlot === 'a' ? (
-          <div className="relative flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <span className="text-xs text-orange-400 font-bold">Slot A</span>
+            
+            {/* Lineup Button */}
             <button
-              onClick={() => setShowSlotAMenu(!showSlotAMenu)}
-              className="px-3 py-2 bg-orange-500 hover:bg-orange-600 rounded font-bold text-xs"
+              onClick={() => setShowStartingLineup(true)}
+              className="px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-bold text-xs"
               style={{ minHeight: '44px' }}
             >
-              {showSlotAMenu ? 'Close' : 'FT / Foul / Sub'}
+              {startingLineupSet ? 'Lineup' : 'Set Lineup'}
             </button>
-
-            {showSlotAMenu && (
-              <div className="absolute bottom-full left-0 mb-2 bg-gray-800 rounded-lg p-3 shadow-2xl border-2 border-orange-500 space-y-2 min-w-[200px] z-50">
-                <p className="text-xs text-gray-400 mb-2">
-                  {selectedPlayer ? `#${selectedPlayer.jersey_number} ${selectedPlayer.full_name}` : 'Tap court to select'}
-                </p>
-                <button onClick={() => handleFreeThrow(true)} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 rounded text-sm" style={{ minHeight: '44px' }}>FT Made</button>
-                <button onClick={() => handleFreeThrow(false)} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 rounded text-sm" style={{ minHeight: '44px' }}>FT Miss</button>
-                <button onClick={handleFoul} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-700 rounded text-sm" style={{ minHeight: '44px' }}>Foul</button>
-                <button onClick={handleSubstitution} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 rounded text-sm" style={{ minHeight: '44px' }}>Substitution</button>
-              </div>
-            )}
-            {selectedPlayer && (
-              <span className="text-xs text-gray-400">
-                Selected: #{selectedPlayer.jersey_number} {selectedPlayer.full_name.split(' ')[0]}
-              </span>
-            )}
+            
+            {/* FT Button */}
+            <button
+              onClick={() => setShowFreeThrow(true)}
+              disabled={!startingLineupSet || onCourtPlayers.length === 0}
+              className="px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:opacity-50 rounded-lg font-bold text-xs"
+              style={{ minHeight: '44px' }}
+            >
+              FT
+            </button>
+            
+            {/* Foul Button */}
+            <button
+              onClick={() => setShowFoul(true)}
+              disabled={!startingLineupSet || onCourtPlayers.length === 0}
+              className="px-3 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-700 disabled:opacity-50 rounded-lg font-bold text-xs"
+              style={{ minHeight: '44px' }}
+            >
+              Foul
+            </button>
+            
+            {/* Sub Button */}
+            <button
+              onClick={() => setShowSubstitution(true)}
+              disabled={!startingLineupSet || onCourtPlayers.length === 0 || benchPlayers.length === 0}
+              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:opacity-50 rounded-lg font-bold text-xs"
+              style={{ minHeight: '44px' }}
+            >
+              Sub
+            </button>
           </div>
         ) : (
           <div className="flex items-center gap-2">
@@ -905,7 +1019,7 @@ export default function GameCapturePage() {
       {/* Modals */}
       {showPlayerPicker && (
         <PlayerSelectionModal
-          players={players}
+          players={availablePlayers}
           onSelectPlayer={handlePlayerSelected}
           onClose={() => {
             setShowPlayerPicker(false);
@@ -943,6 +1057,57 @@ export default function GameCapturePage() {
             setSelectedPlayer(null);
             setTapCoordinates(null);
           }}
+        />
+      )}
+
+      {/* New lineup and action modals */}
+      {showStartingLineup && (
+        <StartingLineupModal
+          players={players}
+          selectedPlayers={players.filter(p => onCourtPlayerIds.includes(p.id))}
+          onTogglePlayer={(player) => {
+            if (onCourtPlayerIds.includes(player.id)) {
+              // Remove player
+              const newPlayers = players.filter(p => onCourtPlayerIds.includes(p.id) && p.id !== player.id);
+              setOnCourtPlayerIds(newPlayers.map(p => p.id));
+            } else {
+              // Add player if less than 5
+              if (onCourtPlayerIds.length < 5) {
+                setOnCourtPlayerIds([...onCourtPlayerIds, player.id]);
+              }
+            }
+          }}
+          onConfirm={async () => {
+            const selectedPlayers = players.filter(p => onCourtPlayerIds.includes(p.id));
+            await handleStartingLineupSubmit(selectedPlayers);
+          }}
+          onClose={() => setShowStartingLineup(false)}
+        />
+      )}
+
+      {showFreeThrow && (
+        <FreeThrowModal
+          players={onCourtPlayers}
+          onConfirm={handleFreeThrowSubmit}
+          onClose={() => setShowFreeThrow(false)}
+        />
+      )}
+
+      {showFoul && (
+        <FoulModal
+          players={onCourtPlayers}
+          playerFoulCounts={playerFoulCounts}
+          onConfirm={handleFoulSubmit}
+          onClose={() => setShowFoul(false)}
+        />
+      )}
+
+      {showSubstitution && (
+        <SubstitutionModal
+          onCourtPlayers={onCourtPlayers}
+          benchPlayers={benchPlayers}
+          onConfirm={handleSubstitutionSubmit}
+          onClose={() => setShowSubstitution(false)}
         />
       )}
     </div>
