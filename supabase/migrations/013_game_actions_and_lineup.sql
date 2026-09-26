@@ -32,50 +32,18 @@ CREATE INDEX IF NOT EXISTS idx_starting_lineups_game ON starting_lineups(game_id
 ALTER TABLE starting_lineups ENABLE ROW LEVEL SECURITY;
 
 -- RLS policy for starting_lineups (same pattern as game_events)
-DROP POLICY IF EXISTS "Users can view starting lineups for their team's games" ON starting_lineups;
-CREATE POLICY "Users can view starting lineups for their team's games"
+-- SELECT: Anyone can view (for stats, reports, etc.)
+DROP POLICY IF EXISTS "Anyone can view starting lineups" ON starting_lineups;
+CREATE POLICY "Anyone can view starting lineups"
   ON starting_lineups FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM games g
-      JOIN profiles p ON (
-        p.role IN ('admin', 'team_manager', 'coach') 
-        AND p.team_id = g.team_id
-      ) OR p.role = 'admin'
-      WHERE g.id = starting_lineups.game_id
-      AND p.id = auth.uid()
-    )
-  );
+  USING (true);
 
-DROP POLICY IF EXISTS "Team managers can insert starting lineups" ON starting_lineups;
-CREATE POLICY "Team managers can insert starting lineups"
-  ON starting_lineups FOR INSERT
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM games g
-      JOIN profiles p ON (
-        p.role IN ('admin', 'team_manager') 
-        AND p.team_id = g.team_id
-      ) OR p.role = 'admin'
-      WHERE g.id = starting_lineups.game_id
-      AND p.id = auth.uid()
-    )
-  );
-
-DROP POLICY IF EXISTS "Team managers can delete starting lineups" ON starting_lineups;
-CREATE POLICY "Team managers can delete starting lineups"
-  ON starting_lineups FOR DELETE
-  USING (
-    EXISTS (
-      SELECT 1 FROM games g
-      JOIN profiles p ON (
-        p.role IN ('admin', 'team_manager') 
-        AND p.team_id = g.team_id
-      ) OR p.role = 'admin'
-      WHERE g.id = starting_lineups.game_id
-      AND p.id = auth.uid()
-    )
-  );
+-- Write operations: Only admin or team_manager (uses function from migration 002/005)
+DROP POLICY IF EXISTS "Team managers can manage starting lineups" ON starting_lineups;
+CREATE POLICY "Team managers can manage starting lineups"
+  ON starting_lineups FOR ALL
+  USING (is_admin_or_team_manager())
+  WITH CHECK (is_admin_or_team_manager());
 
 -- Add translations for new UI strings
 INSERT INTO translations (key, locale, value) VALUES
