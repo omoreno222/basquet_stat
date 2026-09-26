@@ -34,6 +34,13 @@ async function seed() {
         full_name: 'Team Manager' 
       },
       { 
+        email: 'pere.alier@basquet.local', 
+        password: 'basquet2024', 
+        role: 'team_manager', 
+        roles: ['team_manager'],
+        full_name: 'Pere Alier' 
+      },
+      { 
         email: 'coach@basquet.local', 
         password: 'basquet2024', 
         role: 'coach', 
