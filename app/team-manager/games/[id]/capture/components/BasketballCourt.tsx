@@ -161,6 +161,18 @@ export function BasketballCourt({
         <rect x={COURT_LENGTH / 2} y="0" width={COURT_LENGTH / 2} height={COURT_WIDTH} fill="url(#activeHighlight)" />
       )}
       
+      {/* Logo in center circle - painted on parquet */}
+      <image
+        href="/images/seasonmath-logo.png"
+        x={COURT_LENGTH / 2 - 150}
+        y={COURT_WIDTH / 2 - 150}
+        width="300"
+        height="300"
+        opacity="0.85"
+        preserveAspectRatio="xMidYMid meet"
+        style={{ pointerEvents: 'none' }}
+      />
+      
       {/* Court outline - white */}
       <rect x="0" y="0" width={COURT_LENGTH} height={COURT_WIDTH} fill="none" stroke="#ffffff" strokeWidth="5" />
       
