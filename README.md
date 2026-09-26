@@ -110,7 +110,7 @@ All user-facing strings use translation keys starting with `trke_`:
 - `teams`: Teams linked to seasons
 - `players`: Player roster with jersey numbers, positions, and optional user links
 - `parent_player_links`: Parent-child relationships for access control
-- `games`: Game records with opponent, venue, date, status, and **Slot A/B user assignments**
+- `games`: Game records with opponent, venue, date, status, **official flag** (true=competition, false=friendly), and **Slot A/B user assignments**
 - `game_periods`: Quarter and overtime tracking
 - `stints`: Player minutes tracking (in/out timestamps tied to game clock)
 - `game_events`: All game actions (shots, fouls, rebounds, assists, steals, turnovers) with:
@@ -180,9 +180,14 @@ supabase db push
 
 **Option B: Manual SQL execution**
 ```bash
-# Copy the contents of supabase/migrations/001_initial_schema.sql
-# and run it in your Supabase SQL Editor
+# Run migrations in order:
+# 001_initial_schema.sql
+# 002_fix_profiles_rls.sql
+# 003_live_game_clock.sql
+# 004_games_official.sql (NEW: adds official/friendly game distinction)
 ```
+
+**⚠️ IMPORTANT**: If you have an existing database, make sure to run migration `004_games_official.sql` to add the `official` column to the games table.
 
 5. Seed the database:
 ```bash
@@ -195,8 +200,8 @@ This creates:
 - 1 team (Junior Warriors)
 - 5 players with jersey numbers
 - 1 parent-player link
-- 1 scheduled game with Slot A assigned
-- Translation strings in EN, ES, and CA
+- 2 scheduled games (1 official, 1 friendly) with Slot A assigned
+- Translation strings in EN, ES, and CA (including new admin CRUD UI strings)
 
 6. Run the development server:
 ```bash
@@ -222,12 +227,12 @@ After seeding, log in with these accounts:
 - `/login` - Authentication page (supports .local domains)
 - `/` - Redirects to role-specific home
 - `/admin` - Admin dashboard (seasons, teams, players, users, games, translations)
-- `/admin/seasons` - Season management
-- `/admin/teams` - Team management
-- `/admin/players` - Player management
-- `/admin/users` - User management
-- `/admin/games` - Game viewing
-- `/admin/translations` - i18n string management
+- `/admin/seasons` - **Season CRUD** (create, edit, delete, set active)
+- `/admin/teams` - **Team CRUD** (create, edit, delete with season linking)
+- `/admin/players` - **Player CRUD** (create, edit, delete with team linking)
+- `/admin/users` - **User CRUD** (create via server action, edit role, link parent→player)
+- `/admin/games` - **Game CRUD** (create, edit, delete with official/friendly flag)
+- `/admin/translations` - **i18n management** (list, edit translation values)
 - `/team-manager` - Game list with Slot A/B status
 - `/team-manager/games/[id]` - **Game detail: assign/swap slots, start/resume**
 - `/team-manager/games/[id]/capture` - **Live capture interface (Slot A or B)**

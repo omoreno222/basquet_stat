@@ -27,7 +27,21 @@ export default function CoachDashboard() {
       .eq('id', user.id)
       .single();
 
-    if (!profileData || profileData.role !== 'coach') {
+    if (!profileData) {
+      router.push('/login');
+      return;
+    }
+
+    // Check if user has coach role (multi-role support)
+    const { data: userRoles } = await supabase
+      .from('profile_roles')
+      .select('role')
+      .eq('profile_id', user.id);
+
+    const roles = userRoles?.map(r => r.role) || [profileData.role];
+    const hasCoachRole = roles.includes('coach');
+
+    if (!hasCoachRole) {
       router.push('/login');
       return;
     }

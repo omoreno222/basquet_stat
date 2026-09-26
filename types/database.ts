@@ -13,6 +13,12 @@ export interface Profile {
   updated_at: string;
 }
 
+export interface ProfileRole {
+  profile_id: string;
+  role: UserRole;
+  created_at: string;
+}
+
 export interface Season {
   id: string;
   name: string;
@@ -66,6 +72,7 @@ export interface Game {
   clock_remaining_ms: number;
   current_period: number;
   possession: 'home' | 'away' | null;
+  official: boolean;
   created_at: string;
   updated_at: string;
 }

@@ -39,7 +39,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    // Get user profile - RLS now works because we have Authorization header
+    // Get user profile and all roles
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('role')
@@ -51,7 +51,21 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    const role = profile.role;
+    // Fetch all roles for multi-role support
+    const { data: userRoles, error: rolesError } = await supabase
+      .from('profile_roles')
+      .select('role')
+      .eq('profile_id', user.id);
+
+    if (rolesError) {
+      console.error('Roles fetch error:', rolesError);
+      return NextResponse.redirect(new URL('/login', request.url));
+    }
+
+    // Extract role strings from profile_roles or fall back to legacy single role
+    const roles = userRoles && userRoles.length > 0 
+      ? userRoles.map(r => r.role) 
+      : [profile.role];
 
     // Role-based route protection
     const roleRoutes: Record<string, string[]> = {
@@ -62,19 +76,22 @@ export async function middleware(request: NextRequest) {
       player: ['/player'],
     };
 
-    // Check if user is accessing their allowed routes
-    const allowedRoutes = roleRoutes[role] || [];
+    // Collect all allowed routes based on all user roles (union of permissions)
+    const allowedRoutes = roles.flatMap(role => roleRoutes[role] || []);
+
+    // Check if user is accessing any of their allowed routes
     const isAccessingAllowedRoute = allowedRoutes.some(route => pathname.startsWith(route));
 
-    // Root path handling
+    // Root path handling - use primary role (profiles.role) for default navigation
     if (pathname === '/') {
-      const defaultRoute = allowedRoutes[0] || '/login';
+      const defaultRoute = roleRoutes[profile.role]?.[0] || '/login';
       return NextResponse.redirect(new URL(defaultRoute, request.url));
     }
 
     // Block unauthorized access
     if (!isAccessingAllowedRoute && !PUBLIC_ROUTES.some(route => pathname.startsWith(route))) {
-      const defaultRoute = allowedRoutes[0] || '/login';
+      // Redirect to their primary role's default route
+      const defaultRoute = roleRoutes[profile.role]?.[0] || '/login';
       return NextResponse.redirect(new URL(defaultRoute, request.url));
     }
 

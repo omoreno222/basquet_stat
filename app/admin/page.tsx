@@ -27,7 +27,21 @@ export default function AdminDashboard() {
       .eq('id', user.id)
       .single();
 
-    if (!profileData || profileData.role !== 'admin') {
+    if (!profileData) {
+      router.push('/login');
+      return;
+    }
+
+    // Check if user has admin role (multi-role support)
+    const { data: userRoles } = await supabase
+      .from('profile_roles')
+      .select('role')
+      .eq('profile_id', user.id);
+
+    const roles = userRoles?.map(r => r.role) || [profileData.role];
+    const hasAdminRole = roles.includes('admin');
+
+    if (!hasAdminRole) {
       router.push('/login');
       return;
     }
