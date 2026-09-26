@@ -34,7 +34,6 @@ function getPlayerColor(id: string): string {
 export function FreeThrowModal({ players, onConfirm, onClose }: FreeThrowModalProps) {
   const [step, setStep] = useState<'player' | 'count' | 'shots'>('player');
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
-  const [shotCount, setShotCount] = useState<number>(0);
   const [shots, setShots] = useState<(boolean | null)[]>([]);
 
   const handlePlayerSelect = (player: Player) => {
@@ -43,7 +42,6 @@ export function FreeThrowModal({ players, onConfirm, onClose }: FreeThrowModalPr
   };
 
   const handleCountSelect = (count: number) => {
-    setShotCount(count);
     setShots(new Array(count).fill(null));
     setStep('shots');
   };

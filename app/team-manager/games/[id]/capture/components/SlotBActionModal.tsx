@@ -3,8 +3,6 @@
 interface SlotBActionModalProps {
   playerName: string;
   playerJersey: number;
-  coordinateX: number;
-  coordinateY: number;
   onAction: (actionType: 'rebound_off' | 'rebound_def' | 'assist' | 'steal' | 'turnover') => void;
   onClose: () => void;
 }
@@ -12,8 +10,6 @@ interface SlotBActionModalProps {
 export function SlotBActionModal({
   playerName,
   playerJersey,
-  coordinateX,
-  coordinateY,
   onAction,
   onClose
 }: SlotBActionModalProps) {

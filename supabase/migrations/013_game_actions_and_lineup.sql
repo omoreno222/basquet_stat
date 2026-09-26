@@ -1,6 +1,13 @@
 -- Migration 013: Game Actions (Fouls, Free Throws) and Lineup Tracking
 -- Description: Add support for foul types, substitutions, and lineup tracking
 
+-- Add 'substitution' to event_type enum (if not already present)
+DO $$ BEGIN
+  ALTER TYPE event_type ADD VALUE IF NOT EXISTS 'substitution';
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
 -- Add foul_type enum
 DO $$ BEGIN
   CREATE TYPE foul_type AS ENUM ('personal', 'technical', 'unsportsmanlike');
@@ -126,3 +133,6 @@ INSERT INTO translations (key, locale, value) VALUES
   ('trke_none', 'es', 'Ninguno'),
   ('trke_none', 'ca', 'Cap')
 ON CONFLICT (key, locale) DO NOTHING;
+
+-- Add starting_lineups to realtime publication
+ALTER PUBLICATION supabase_realtime ADD TABLE starting_lineups;

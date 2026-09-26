@@ -161,7 +161,16 @@ export function BasketballCourt({
         <rect x={COURT_LENGTH / 2} y="0" width={COURT_LENGTH / 2} height={COURT_WIDTH} fill="url(#activeHighlight)" />
       )}
       
-      {/* Logo in center circle - painted on parquet */}
+      {/* Court outline - white */}
+      <rect x="0" y="0" width={COURT_LENGTH} height={COURT_WIDTH} fill="none" stroke="#ffffff" strokeWidth="5" />
+      
+      {/* Center line */}
+      <line x1={COURT_LENGTH / 2} y1="0" x2={COURT_LENGTH / 2} y2={COURT_WIDTH} stroke="#ffffff" strokeWidth="5" />
+      
+      {/* Center circle */}
+      <circle cx={COURT_LENGTH / 2} cy={COURT_WIDTH / 2} r={CENTER_CIRCLE_RADIUS} fill="none" stroke="#ffffff" strokeWidth="3" />
+      
+      {/* Logo in center circle - painted on parquet, above center line */}
       <image
         href="/images/seasonmath-logo.png"
         x={COURT_LENGTH / 2 - 150}
@@ -172,15 +181,6 @@ export function BasketballCourt({
         preserveAspectRatio="xMidYMid meet"
         style={{ pointerEvents: 'none' }}
       />
-      
-      {/* Court outline - white */}
-      <rect x="0" y="0" width={COURT_LENGTH} height={COURT_WIDTH} fill="none" stroke="#ffffff" strokeWidth="5" />
-      
-      {/* Center line */}
-      <line x1={COURT_LENGTH / 2} y1="0" x2={COURT_LENGTH / 2} y2={COURT_WIDTH} stroke="#ffffff" strokeWidth="5" />
-      
-      {/* Center circle */}
-      <circle cx={COURT_LENGTH / 2} cy={COURT_WIDTH / 2} r={CENTER_CIRCLE_RADIUS} fill="none" stroke="#ffffff" strokeWidth="3" />
       
       {/* LEFT BASKET HALF */}
       
@@ -475,12 +475,15 @@ export function calculateShotZone(
   const dy = courtY - rimY;
   const distFromRim = Math.sqrt(dx * dx + dy * dy);
   
-  // Zone classification based on distance and position
+  // Zone classification based on FIBA geometry
+  // Zone 1: Paint/close (< 3m from rim)
+  // Zone 2-3: Mid-range (3-6.75m), split by court width
+  // Zone 4: Beyond 3-point line (> 6.75m)
   if (distFromRim < 3.0) {
     return 1; // Paint/close range
-  } else if (distFromRim < 5.0) {
-    // Mid-range, distinguish left/right
-    return dx > 0 ? 2 : 3;
+  } else if (distFromRim < 6.75) {
+    // Mid-range, distinguish left/right based on position relative to center width
+    return dy > 0 ? 2 : 3; // Right (2) vs Left (3) based on y-position
   } else {
     return 4; // Long range / 3-point area
   }

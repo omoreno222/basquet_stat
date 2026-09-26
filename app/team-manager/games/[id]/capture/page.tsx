@@ -77,8 +77,10 @@ export default function GameCapturePage() {
   const [showFoul, setShowFoul] = useState(false);
   const [showSubstitution, setShowSubstitution] = useState(false);
   const [onCourtPlayerIds, setOnCourtPlayerIds] = useState<string[]>([]);
+  const [startingLineupIds, setStartingLineupIds] = useState<string[]>([]); // Immutable starting 5
   const [startingLineupSet, setStartingLineupSet] = useState(false);
   const [showBoxScore, setShowBoxScore] = useState(false);
+  const [draftLineupIds, setDraftLineupIds] = useState<string[]>([]); // Draft state for lineup modal
 
   // Refs
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -108,6 +110,27 @@ export default function GameCapturePage() {
       y: normY,
     };
   };
+
+  // Derive current on-court players from starting lineup + substitution events
+  function deriveOnCourtPlayers(startingIds: string[], allEvents: any[]): string[] {
+    const subs = allEvents
+      .filter(e => e.event_type === 'substitution' && e.player_id && e.player_out_id)
+      .sort((a, b) => {
+        if (a.period_number !== b.period_number) {
+          return a.period_number - b.period_number;
+        }
+        return b.clock_remaining_ms - a.clock_remaining_ms;
+      });
+
+    let currentLineup = [...startingIds];
+    for (const sub of subs) {
+      const outIndex = currentLineup.indexOf(sub.player_out_id);
+      if (outIndex !== -1) {
+        currentLineup[outIndex] = sub.player_id;
+      }
+    }
+    return currentLineup;
+  }
 
   useEffect(() => {
     loadData();
@@ -225,10 +248,13 @@ export default function GameCapturePage() {
 
       const { data: eventsData } = await supabase
         .from('game_events')
-        .select('*, players(full_name, jersey_number)')
+        .select(`
+          *, 
+          player:players!game_events_player_id_fkey(full_name, jersey_number),
+          player_out:players!game_events_player_out_id_fkey(full_name, jersey_number)
+        `)
         .eq('game_id', gameId)
-        .order('created_at', { ascending: false })
-        .limit(50);
+        .order('created_at', { ascending: false });
 
       setEvents(eventsData || []);
       
@@ -240,8 +266,13 @@ export default function GameCapturePage() {
         .order('position_index');
 
       if (lineupData && lineupData.length > 0) {
-        setOnCourtPlayerIds(lineupData.map(sl => sl.player_id));
+        const startingIds = lineupData.map(sl => sl.player_id);
+        setStartingLineupIds(startingIds);
         setStartingLineupSet(true);
+        
+        // Derive current on-court players from starting lineup + subs
+        const currentOnCourt = deriveOnCourtPlayers(startingIds, eventsData || []);
+        setOnCourtPlayerIds(currentOnCourt);
       }
     }
 
@@ -277,12 +308,16 @@ export default function GameCapturePage() {
         async (payload) => {
           const { data } = await supabase
             .from('game_events')
-            .select('*, players(full_name, jersey_number)')
+            .select(`
+              *, 
+              player:players!game_events_player_id_fkey(full_name, jersey_number),
+              player_out:players!game_events_player_out_id_fkey(full_name, jersey_number)
+            `)
             .eq('id', payload.new.id)
             .single();
 
           if (data) {
-            setEvents(prev => [data, ...prev].slice(0, 50));
+            setEvents(prev => [data, ...prev]);
           }
         }
       )
@@ -367,8 +402,16 @@ export default function GameCapturePage() {
             .order('position_index');
 
           if (lineupData && lineupData.length > 0) {
-            setOnCourtPlayerIds(lineupData.map(sl => sl.player_id));
+            const startingIds = lineupData.map(sl => sl.player_id);
+            setStartingLineupIds(startingIds);
             setStartingLineupSet(true);
+            
+            // Re-derive on-court players from new starting lineup + all events
+            setEvents(prevEvents => {
+              const currentOnCourt = deriveOnCourtPlayers(startingIds, prevEvents);
+              setOnCourtPlayerIds(currentOnCourt);
+              return prevEvents;
+            });
           }
         }
       )
@@ -607,39 +650,57 @@ export default function GameCapturePage() {
       }
     }
 
-    // Update on-court lineup
-    const newOnCourt = onCourtPlayerIds
-      .filter(id => !playersOut.some(p => p.id === id))
-      .concat(playersIn.map(p => p.id));
+    // Update on-court lineup by replacing players
+    const newOnCourt = onCourtPlayerIds.map(id => {
+      const outIndex = playersOut.findIndex(p => p.id === id);
+      if (outIndex !== -1) {
+        return playersIn[outIndex].id;
+      }
+      return id;
+    });
     
     setOnCourtPlayerIds(newOnCourt);
     setShowSubstitution(false);
   }
 
   async function handleStartingLineupSubmit(selectedPlayers: any[]) {
-    // Delete existing lineup
-    await supabase
+    // Only allow setting lineup before game starts (no substitutions recorded yet)
+    const hasSubs = events.some(e => e.event_type === 'substitution');
+    if (hasSubs) {
+      alert('Cannot change starting lineup after substitutions have been made. Use Sub button instead.');
+      setShowStartingLineup(false);
+      return;
+    }
+
+    // Use upsert approach: delete and re-insert in a single operation
+    const { error: deleteError } = await supabase
       .from('starting_lineups')
       .delete()
       .eq('game_id', gameId);
 
-    // Insert new lineup
+    if (deleteError) {
+      alert(`Error clearing lineup: ${deleteError.message}`);
+      return;
+    }
+
     const lineupInserts = selectedPlayers.map((player, index) => ({
       game_id: gameId,
       player_id: player.id,
       position_index: index,
     }));
 
-    const { error } = await supabase
+    const { error: insertError } = await supabase
       .from('starting_lineups')
       .insert(lineupInserts);
 
-    if (error) {
-      alert(`Error: ${error.message}`);
+    if (insertError) {
+      alert(`Error saving lineup: ${insertError.message}`);
       return;
     }
 
-    setOnCourtPlayerIds(selectedPlayers.map(p => p.id));
+    const startingIds = selectedPlayers.map(p => p.id);
+    setStartingLineupIds(startingIds);
+    setOnCourtPlayerIds(startingIds);
     setStartingLineupSet(true);
     setShowStartingLineup(false);
   }
@@ -713,6 +774,13 @@ export default function GameCapturePage() {
 
     if (error) {
       alert(`Error: ${error.message}`);
+    } else {
+      // If undoing a substitution, re-derive on-court lineup
+      if (lastEvent.event_type === 'substitution') {
+        const remainingEvents = events.slice(1);
+        const newOnCourt = deriveOnCourtPlayers(startingLineupIds, remainingEvents);
+        setOnCourtPlayerIds(newOnCourt);
+      }
     }
   }
 
@@ -778,9 +846,9 @@ export default function GameCapturePage() {
   // Get players for pickers (on-court only, or all if lineup not set)
   const availablePlayers = startingLineupSet && onCourtPlayers.length > 0 ? onCourtPlayers : players;
 
-  // Calculate minutes played for all players
+  // Calculate minutes played for all players (use starting lineup, not current on-court)
   const playerMinutes = calculateMinutesPlayed(
-    onCourtPlayerIds,
+    startingLineupIds,
     events,
     currentPeriod,
     clockRemaining,
@@ -883,7 +951,7 @@ export default function GameCapturePage() {
           
           {/* Connection Status */}
           <div className="text-xs">
-            <span className={connectionColor}>●</span>
+            <span className={connectionColor}>● {connectionText}</span>
             {connectedCount > 0 && <span className="ml-1 text-gray-400">({connectedCount})</span>}
           </div>
           
@@ -932,7 +1000,10 @@ export default function GameCapturePage() {
             
             {/* Lineup Button */}
             <button
-              onClick={() => setShowStartingLineup(true)}
+              onClick={() => {
+                setDraftLineupIds(startingLineupSet ? startingLineupIds : []);
+                setShowStartingLineup(true);
+              }}
               className="px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-bold text-xs"
               style={{ minHeight: '44px' }}
             >
@@ -1064,9 +1135,12 @@ export default function GameCapturePage() {
                   {event.players?.full_name || 'Team'}
                 </div>
                 <div className="text-gray-400 text-xs mt-1">
-                  {event.event_type}
-                  {event.made !== null && ` - ${event.made ? 'Made' : 'Miss'}`}
-                  {event.points > 0 && ` (${event.points}pts)`}
+                  {event.event_type === 'shot' && event.made === false 
+                    ? `${event.points}P miss`
+                    : event.event_type === 'shot' && event.made === true
+                    ? `${event.points}P made`
+                    : event.event_type
+                  }
                 </div>
               </div>
             ))}
@@ -1113,12 +1187,10 @@ export default function GameCapturePage() {
         />
       )}
 
-      {showSlotBActions && selectedPlayer && tapCoordinates && (
+      {showSlotBActions && selectedPlayer && (
         <SlotBActionModal
           playerName={selectedPlayer.full_name}
           playerJersey={selectedPlayer.jersey_number}
-          coordinateX={tapCoordinates.x}
-          coordinateY={tapCoordinates.y}
           onAction={handleSlotBAction}
           onClose={() => {
             setShowSlotBActions(false);
@@ -1132,24 +1204,24 @@ export default function GameCapturePage() {
       {showStartingLineup && (
         <StartingLineupModal
           players={players}
-          selectedPlayers={players.filter(p => onCourtPlayerIds.includes(p.id))}
+          selectedPlayers={players.filter(p => draftLineupIds.includes(p.id))}
           onTogglePlayer={(player) => {
-            if (onCourtPlayerIds.includes(player.id)) {
-              // Remove player
-              const newPlayers = players.filter(p => onCourtPlayerIds.includes(p.id) && p.id !== player.id);
-              setOnCourtPlayerIds(newPlayers.map(p => p.id));
+            if (draftLineupIds.includes(player.id)) {
+              setDraftLineupIds(draftLineupIds.filter(id => id !== player.id));
             } else {
-              // Add player if less than 5
-              if (onCourtPlayerIds.length < 5) {
-                setOnCourtPlayerIds([...onCourtPlayerIds, player.id]);
+              if (draftLineupIds.length < 5) {
+                setDraftLineupIds([...draftLineupIds, player.id]);
               }
             }
           }}
           onConfirm={async () => {
-            const selectedPlayers = players.filter(p => onCourtPlayerIds.includes(p.id));
+            const selectedPlayers = players.filter(p => draftLineupIds.includes(p.id));
             await handleStartingLineupSubmit(selectedPlayers);
           }}
-          onClose={() => setShowStartingLineup(false)}
+          onClose={() => {
+            setShowStartingLineup(false);
+            setDraftLineupIds([]); // Clear draft on close
+          }}
         />
       )}
 
