@@ -13,6 +13,7 @@ interface Player {
 interface SubstitutionModalProps {
   onCourtPlayers: Player[];
   benchPlayers: Player[];
+  playerMinutes: Record<string, number>; // seconds played per player
   onConfirm: (playersOut: Player[], playersIn: Player[]) => void;
   onClose: () => void;
 }
@@ -32,9 +33,16 @@ function getPlayerColor(id: string): string {
   return colors[index];
 }
 
+function formatMinutes(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
 export function SubstitutionModal({
   onCourtPlayers,
   benchPlayers,
+  playerMinutes,
   onConfirm,
   onClose
 }: SubstitutionModalProps) {
@@ -133,6 +141,10 @@ export function SubstitutionModal({
                       <div className="text-xs text-center font-medium line-clamp-2">
                         {player.full_name}
                       </div>
+                      {/* Minutes Played */}
+                      <div className="text-xs text-gray-400 font-mono">
+                        {formatMinutes(playerMinutes[player.id] || 0)}
+                      </div>
                     </button>
                   );
                 })}
@@ -189,6 +201,10 @@ export function SubstitutionModal({
                       </div>
                       <div className="text-xs text-center font-medium line-clamp-2">
                         {player.full_name}
+                      </div>
+                      {/* Minutes Played */}
+                      <div className="text-xs text-gray-400 font-mono">
+                        {formatMinutes(playerMinutes[player.id] || 0)}
                       </div>
                     </button>
                   );

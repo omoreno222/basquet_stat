@@ -13,6 +13,7 @@ import { StartingLineupModal } from './components/StartingLineupModal';
 import { FreeThrowModal } from './components/FreeThrowModal';
 import { FoulModal } from './components/FoulModal';
 import { SubstitutionModal } from './components/SubstitutionModal';
+import { calculateMinutesPlayed, formatMinutes } from '@/lib/stats/minutes';
 
 type ConnectionStatus = 'connected' | 'reconnecting' | 'offline';
 
@@ -77,6 +78,7 @@ export default function GameCapturePage() {
   const [showSubstitution, setShowSubstitution] = useState(false);
   const [onCourtPlayerIds, setOnCourtPlayerIds] = useState<string[]>([]);
   const [startingLineupSet, setStartingLineupSet] = useState(false);
+  const [showBoxScore, setShowBoxScore] = useState(false);
 
   // Refs
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -776,6 +778,15 @@ export default function GameCapturePage() {
   // Get players for pickers (on-court only, or all if lineup not set)
   const availablePlayers = startingLineupSet && onCourtPlayers.length > 0 ? onCourtPlayers : players;
 
+  // Calculate minutes played for all players
+  const playerMinutes = calculateMinutesPlayed(
+    onCourtPlayerIds,
+    events,
+    currentPeriod,
+    clockRemaining,
+    600000 // 10 minutes per period
+  );
+
   const attacking = isAttackingRight();
   const isOffense = possession === 'home';
   
@@ -957,6 +968,16 @@ export default function GameCapturePage() {
             >
               Sub
             </button>
+            
+            {/* Box Score Button */}
+            <button
+              onClick={() => setShowBoxScore(!showBoxScore)}
+              disabled={!startingLineupSet}
+              className="px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-lg font-bold text-xs border border-gray-600"
+              style={{ minHeight: '44px' }}
+            >
+              {showBoxScore ? 'Hide' : 'Box'}
+            </button>
           </div>
         ) : (
           <div className="flex items-center gap-2">
@@ -974,6 +995,53 @@ export default function GameCapturePage() {
           {showEventFeed ? 'Hide Events' : 'Show Events'}
         </button>
       </div>
+
+      {/* Box Score Panel */}
+      {showBoxScore && startingLineupSet && (
+        <div className="absolute top-16 left-4 bg-gray-800 bg-opacity-95 rounded-lg shadow-2xl border-2 border-orange-500 p-4 z-40 max-w-sm">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="font-bold text-white">Box Score</h3>
+            <button
+              onClick={() => setShowBoxScore(false)}
+              className="text-gray-400 hover:text-white text-xl"
+            >
+              ×
+            </button>
+          </div>
+          
+          <div className="space-y-1 max-h-[400px] overflow-y-auto">
+            {/* On Court Players */}
+            <div className="text-xs text-orange-400 font-bold mb-1">On Court</div>
+            {onCourtPlayers.map(player => (
+              <div key={player.id} className="flex justify-between items-center text-sm bg-gray-700 px-2 py-1 rounded">
+                <span className="text-white">
+                  <span className="text-gray-400">#{player.jersey_number}</span> {player.full_name}
+                </span>
+                <span className="font-mono text-green-400 font-bold">
+                  {formatMinutes(playerMinutes[player.id] || 0)}
+                </span>
+              </div>
+            ))}
+            
+            {/* Bench Players */}
+            {benchPlayers.length > 0 && (
+              <>
+                <div className="text-xs text-blue-400 font-bold mt-3 mb-1">Bench</div>
+                {benchPlayers.map(player => (
+                  <div key={player.id} className="flex justify-between items-center text-sm bg-gray-700 px-2 py-1 rounded">
+                    <span className="text-white">
+                      <span className="text-gray-400">#{player.jersey_number}</span> {player.full_name}
+                    </span>
+                    <span className="font-mono text-gray-400">
+                      {formatMinutes(playerMinutes[player.id] || 0)}
+                    </span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Event Feed Drawer */}
       {showEventFeed && (
@@ -1106,6 +1174,7 @@ export default function GameCapturePage() {
         <SubstitutionModal
           onCourtPlayers={onCourtPlayers}
           benchPlayers={benchPlayers}
+          playerMinutes={playerMinutes}
           onConfirm={handleSubstitutionSubmit}
           onClose={() => setShowSubstitution(false)}
         />
