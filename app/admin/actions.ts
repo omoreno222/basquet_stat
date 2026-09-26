@@ -172,6 +172,12 @@ export async function unlinkParentFromPlayer(parentId: string, playerId: string)
 }
 
 export async function uploadProfileAvatar(profileId: string, file: File) {
+  // SECURITY: Verify caller is admin before using service role
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
   const supabase = getServerSupabase();
 
   // Validate file type
@@ -231,6 +237,12 @@ export async function uploadProfileAvatar(profileId: string, file: File) {
 }
 
 export async function removeProfileAvatar(profileId: string) {
+  // SECURITY: Verify caller is admin before using service role
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
   const supabase = getServerSupabase();
 
   // Get current avatar URL
@@ -266,6 +278,12 @@ export async function removeProfileAvatar(profileId: string) {
 }
 
 export async function uploadPlayerAvatar(playerId: string, file: File) {
+  // SECURITY: Verify caller is admin before using service role
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
   const supabase = getServerSupabase();
 
   // Validate file type
