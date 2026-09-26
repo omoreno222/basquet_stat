@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { UserRole } from '@/types/database';
 import Link from 'next/link';
-import { createUser, updateUserRoles, linkParentToPlayer, unlinkParentFromPlayer } from '../actions';
+import Image from 'next/image';
+import { createUser, updateUserRoles, linkParentToPlayer, unlinkParentFromPlayer, uploadProfileAvatar, removeProfileAvatar } from '../actions';
 
 interface UserWithRoles {
   id: string;
@@ -12,6 +13,7 @@ interface UserWithRoles {
   full_name: string | null;
   role: UserRole;
   roles?: UserRole[];
+  avatar_url: string | null;
 }
 
 export default function UsersPage() {
@@ -34,6 +36,8 @@ export default function UsersPage() {
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [uploadingAvatar, setUploadingAvatar] = useState<string | null>(null);
+  const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
   const availableRoles: UserRole[] = ['admin', 'team_manager', 'coach', 'parent', 'player'];
 
@@ -165,6 +169,45 @@ export default function UsersPage() {
     }
 
     loadData();
+  }
+
+  async function handleAvatarUpload(userId: string, file: File) {
+    setUploadingAvatar(userId);
+    setError('');
+    setSuccess('');
+
+    const result = await uploadProfileAvatar(userId, file);
+    setUploadingAvatar(null);
+
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+
+    setSuccess('Avatar uploaded successfully');
+    loadData();
+  }
+
+  async function handleAvatarRemove(userId: string) {
+    if (!confirm('Are you sure you want to remove this avatar?')) {
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+
+    const result = await removeProfileAvatar(userId);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+
+    setSuccess('Avatar removed successfully');
+    loadData();
+  }
+
+  function triggerFileInput(userId: string) {
+    fileInputRefs.current[userId]?.click();
   }
 
   if (loading) {
@@ -386,11 +429,30 @@ export default function UsersPage() {
                 users.map((user) => (
                   <li key={user.id} className="px-6 py-4 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-medium text-gray-900">
-                          {user.full_name || user.email}
-                        </h3>
-                        <p className="text-sm text-gray-500">{user.email}</p>
+                      <div className="flex items-center gap-4">
+                        <div className="relative">
+                          {user.avatar_url ? (
+                            <Image
+                              src={user.avatar_url}
+                              alt={user.full_name || user.email}
+                              width={48}
+                              height={48}
+                              className="rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center">
+                              <span className="text-gray-500 text-lg font-medium">
+                                {(user.full_name || user.email).charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-medium text-gray-900">
+                            {user.full_name || user.email}
+                          </h3>
+                          <p className="text-sm text-gray-500">{user.email}</p>
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <div className="flex flex-wrap gap-1">
@@ -403,6 +465,31 @@ export default function UsersPage() {
                             </span>
                           ))}
                         </div>
+                        <input
+                          type="file"
+                          ref={(el) => (fileInputRefs.current[user.id] = el)}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleAvatarUpload(user.id, file);
+                          }}
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                        />
+                        <button
+                          onClick={() => triggerFileInput(user.id)}
+                          disabled={uploadingAvatar === user.id}
+                          className="bg-green-500 hover:bg-green-700 text-white px-3 py-1 rounded text-sm whitespace-nowrap disabled:opacity-50"
+                        >
+                          {uploadingAvatar === user.id ? 'Uploading...' : user.avatar_url ? 'Change Photo' : 'Add Photo'}
+                        </button>
+                        {user.avatar_url && (
+                          <button
+                            onClick={() => handleAvatarRemove(user.id)}
+                            className="bg-orange-500 hover:bg-orange-700 text-white px-3 py-1 rounded text-sm whitespace-nowrap"
+                          >
+                            Remove
+                          </button>
+                        )}
                         <button
                           onClick={() => handleEditRole(user)}
                           className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm whitespace-nowrap"

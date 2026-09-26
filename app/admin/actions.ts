@@ -145,3 +145,191 @@ export async function unlinkParentFromPlayer(parentId: string, playerId: string)
 
   return { success: true };
 }
+
+export async function uploadProfileAvatar(profileId: string, file: File) {
+  const supabase = getServerSupabase();
+
+  // Validate file type
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  if (!allowedTypes.includes(file.type)) {
+    return { error: 'Invalid file type. Only JPEG, PNG, and WebP are allowed.' };
+  }
+
+  // Validate file size (5MB limit)
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    return { error: 'File size exceeds 5MB limit.' };
+  }
+
+  // Get file extension
+  const ext = file.name.split('.').pop() || 'jpg';
+  const filePath = `profiles/${profileId}/avatar.${ext}`;
+
+  // Delete old avatar if exists
+  const { data: existingFiles } = await supabase.storage
+    .from('avatars')
+    .list(`profiles/${profileId}`);
+
+  if (existingFiles && existingFiles.length > 0) {
+    const filesToDelete = existingFiles.map(f => `profiles/${profileId}/${f.name}`);
+    await supabase.storage.from('avatars').remove(filesToDelete);
+  }
+
+  // Upload new avatar
+  const { error: uploadError } = await supabase.storage
+    .from('avatars')
+    .upload(filePath, file, {
+      cacheControl: '3600',
+      upsert: true,
+    });
+
+  if (uploadError) {
+    return { error: uploadError.message };
+  }
+
+  // Get public URL
+  const { data: { publicUrl } } = supabase.storage
+    .from('avatars')
+    .getPublicUrl(filePath);
+
+  // Update profile with avatar URL
+  const { error: updateError } = await supabase
+    .from('profiles')
+    .update({ avatar_url: publicUrl })
+    .eq('id', profileId);
+
+  if (updateError) {
+    return { error: updateError.message };
+  }
+
+  return { success: true, url: publicUrl };
+}
+
+export async function removeProfileAvatar(profileId: string) {
+  const supabase = getServerSupabase();
+
+  // Get current avatar URL
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('avatar_url')
+    .eq('id', profileId)
+    .single();
+
+  if (profile?.avatar_url) {
+    // Delete from storage
+    const { data: existingFiles } = await supabase.storage
+      .from('avatars')
+      .list(`profiles/${profileId}`);
+
+    if (existingFiles && existingFiles.length > 0) {
+      const filesToDelete = existingFiles.map(f => `profiles/${profileId}/${f.name}`);
+      await supabase.storage.from('avatars').remove(filesToDelete);
+    }
+  }
+
+  // Update profile to remove avatar URL
+  const { error } = await supabase
+    .from('profiles')
+    .update({ avatar_url: null })
+    .eq('id', profileId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  return { success: true };
+}
+
+export async function uploadPlayerAvatar(playerId: string, file: File) {
+  const supabase = getServerSupabase();
+
+  // Validate file type
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  if (!allowedTypes.includes(file.type)) {
+    return { error: 'Invalid file type. Only JPEG, PNG, and WebP are allowed.' };
+  }
+
+  // Validate file size (5MB limit)
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    return { error: 'File size exceeds 5MB limit.' };
+  }
+
+  // Get file extension
+  const ext = file.name.split('.').pop() || 'jpg';
+  const filePath = `players/${playerId}/avatar.${ext}`;
+
+  // Delete old avatar if exists
+  const { data: existingFiles } = await supabase.storage
+    .from('avatars')
+    .list(`players/${playerId}`);
+
+  if (existingFiles && existingFiles.length > 0) {
+    const filesToDelete = existingFiles.map(f => `players/${playerId}/${f.name}`);
+    await supabase.storage.from('avatars').remove(filesToDelete);
+  }
+
+  // Upload new avatar
+  const { error: uploadError } = await supabase.storage
+    .from('avatars')
+    .upload(filePath, file, {
+      cacheControl: '3600',
+      upsert: true,
+    });
+
+  if (uploadError) {
+    return { error: uploadError.message };
+  }
+
+  // Get public URL
+  const { data: { publicUrl } } = supabase.storage
+    .from('avatars')
+    .getPublicUrl(filePath);
+
+  // Update player with avatar URL
+  const { error: updateError } = await supabase
+    .from('players')
+    .update({ avatar_url: publicUrl })
+    .eq('id', playerId);
+
+  if (updateError) {
+    return { error: updateError.message };
+  }
+
+  return { success: true, url: publicUrl };
+}
+
+export async function removePlayerAvatar(playerId: string) {
+  const supabase = getServerSupabase();
+
+  // Get current avatar URL
+  const { data: player } = await supabase
+    .from('players')
+    .select('avatar_url')
+    .eq('id', playerId)
+    .single();
+
+  if (player?.avatar_url) {
+    // Delete from storage
+    const { data: existingFiles } = await supabase.storage
+      .from('avatars')
+      .list(`players/${playerId}`);
+
+    if (existingFiles && existingFiles.length > 0) {
+      const filesToDelete = existingFiles.map(f => `players/${playerId}/${f.name}`);
+      await supabase.storage.from('avatars').remove(filesToDelete);
+    }
+  }
+
+  // Update player to remove avatar URL
+  const { error } = await supabase
+    .from('players')
+    .update({ avatar_url: null })
+    .eq('id', playerId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  return { success: true };
+}

@@ -9,6 +9,7 @@ export interface Profile {
   full_name: string | null;
   role: UserRole;
   language: Locale;
+  avatar_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -45,6 +46,7 @@ export interface Player {
   jersey_number: number;
   position: string | null;
   date_of_birth: string | null;
+  avatar_url: string | null;
   created_at: string;
   updated_at: string;
 }
