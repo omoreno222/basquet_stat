@@ -50,7 +50,7 @@ export function ShotActionModal({
                 2P MADE
               </button>
               <button
-                onClick={() => onAction(false, 0)}
+                onClick={() => onAction(false, 2)}
                 className={`px-6 py-6 rounded-lg text-xl font-bold transition-all touch-manipulation ${
                   !isLikely3pt
                     ? 'bg-red-600 hover:bg-red-700 ring-4 ring-red-400'
@@ -77,7 +77,7 @@ export function ShotActionModal({
                 3P MADE
               </button>
               <button
-                onClick={() => onAction(false, 0)}
+                onClick={() => onAction(false, 3)}
                 className={`px-6 py-6 rounded-lg text-xl font-bold transition-all touch-manipulation ${
                   isLikely3pt
                     ? 'bg-orange-600 hover:bg-orange-700 ring-4 ring-orange-400'

@@ -467,7 +467,7 @@ export default function UsersPage() {
                         </div>
                         <input
                           type="file"
-                          ref={(el) => (fileInputRefs.current[user.id] = el)}
+                          ref={(el) => { fileInputRefs.current[user.id] = el; }}
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (file) handleAvatarUpload(user.id, file);

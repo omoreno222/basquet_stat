@@ -208,6 +208,15 @@ export function BasketballCourt({
         stroke="#ffffff"
         strokeWidth="3"
       />
+      {/* Dashed inner half of FT circle */}
+      <path
+        d={`M ${leftFreeThrowX} ${RIM_Y - FT_CIRCLE_RADIUS} 
+            A ${FT_CIRCLE_RADIUS} ${FT_CIRCLE_RADIUS} 0 0 0 ${leftFreeThrowX} ${RIM_Y + FT_CIRCLE_RADIUS}`}
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="3"
+        strokeDasharray="10,5"
+      />
       
       {/* Restricted area semicircle */}
       <path
@@ -251,7 +260,7 @@ export function BasketballCourt({
       {/* Basket/hoop - left */}
       <circle cx={leftRimX} cy={leftRimY} r="22.5" fill="none" stroke="#ff4444" strokeWidth="3" />
       
-      {/* Backboard - left (120cm wide, at 1.2m = 120cm from baseline) */}
+      {/* Backboard - left (1.8m = 180cm wide, at 1.2m = 120cm from baseline) */}
       <line 
         x1="120" 
         y1={RIM_Y - 90} 
@@ -298,6 +307,15 @@ export function BasketballCourt({
         fill="none"
         stroke="#ffffff"
         strokeWidth="3"
+      />
+      {/* Dashed inner half of FT circle */}
+      <path
+        d={`M ${rightFreeThrowX} ${RIM_Y - FT_CIRCLE_RADIUS} 
+            A ${FT_CIRCLE_RADIUS} ${FT_CIRCLE_RADIUS} 0 0 1 ${rightFreeThrowX} ${RIM_Y + FT_CIRCLE_RADIUS}`}
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="3"
+        strokeDasharray="10,5"
       />
       
       {/* Restricted area semicircle */}
@@ -405,12 +423,53 @@ export function isInsideThreePointLine(
   const dy = courtY - rimY;
   const distFromRim = Math.sqrt(dx * dx + dy * dy);
   
-  // Inside 3pt arc?
-  if (distFromRim < 675) {
-    // Also check if in corner-3 zone (within straight segments)
-    const isInCorner = (courtY < 90 || courtY > 1410) && Math.abs(dx) < Math.sqrt(675 * 675 - 660 * 660);
-    return !isInCorner;
+  // FIBA 3-point line is 6.75m (675cm) from rim - use strict > for line itself
+  if (distFromRim > 675) {
+    return false; // Outside arc = 3-pointer
   }
   
-  return false;
+  // Inside arc radius, but check corner-3 zone (within straight segments)
+  // Corner 3s: y < 90 or y > 1410 (0.9m from sidelines)
+  const isInCorner = (courtY < 90 || courtY > 1410);
+  if (isInCorner) {
+    // In corner zone, check if beyond the arc meeting point (~299cm from baseline)
+    const meetX = attackingRight ? COURT_LENGTH - 299 : 299;
+    const isPastMeetingPoint = attackingRight ? courtX > meetX : courtX < meetX;
+    return !isPastMeetingPoint; // Past meeting point = 3-pointer even in corner
+  }
+  
+  return true; // Inside arc and not in corner-3 zone = 2-pointer
+}
+
+/**
+ * Helper function to calculate shot zone from world coordinates
+ * Returns zone 1-4 based on FIBA court geometry
+ */
+export function calculateShotZone(
+  worldX: number,
+  worldY: number,
+  attackingRight: boolean
+): number {
+  // Convert world coords (0-1) to meters
+  const courtX = worldX * 28; // 28m court length
+  const courtY = worldY * 15; // 15m court width
+  
+  // Attacking basket rim position (1.575m from baseline, 7.5m from sideline)
+  const rimX = attackingRight ? 28 - 1.575 : 1.575;
+  const rimY = 7.5;
+  
+  // Distance from rim in meters
+  const dx = courtX - rimX;
+  const dy = courtY - rimY;
+  const distFromRim = Math.sqrt(dx * dx + dy * dy);
+  
+  // Zone classification based on distance and position
+  if (distFromRim < 3.0) {
+    return 1; // Paint/close range
+  } else if (distFromRim < 5.0) {
+    // Mid-range, distinguish left/right
+    return dx > 0 ? 2 : 3;
+  } else {
+    return 4; // Long range / 3-point area
+  }
 }

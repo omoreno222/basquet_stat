@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { BasketballCourt } from './components/BasketballCourt';
+import { BasketballCourt, calculateShotZone } from './components/BasketballCourt';
 import { PlayerSelectionModal } from './components/PlayerSelectionModal';
 import { ShotActionModal } from './components/ShotActionModal';
 import { SlotBActionModal } from './components/SlotBActionModal';
@@ -381,16 +381,8 @@ export default function GameCapturePage() {
     // Transform world coordinates to normalized attacking coordinates
     const normalized = worldToNormalized(tapCoordinates.x, tapCoordinates.y);
 
-    // Calculate zone (in normalized space, attacking right basket)
-    let zone = 1;
-    const dx = normalized.x - 0.975; // Distance from right basket
-    const dy = normalized.y - 0.5;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    
-    if (distance < 0.15) zone = 1; // Paint
-    else if (normalized.x > 0.5 && distance < 0.3) zone = 2; // Right side
-    else if (normalized.x <= 0.5 && distance < 0.3) zone = 3; // Left side
-    else zone = 4; // Beyond 3pt
+    // Calculate zone using shared FIBA geometry helper
+    const zone = calculateShotZone(normalized.x, normalized.y, true); // Always normalized to attacking right
 
     const elapsed = 600000 - clockRemaining;
 
@@ -687,6 +679,15 @@ export default function GameCapturePage() {
 
   const attacking = isAttackingRight();
   const isOffense = possession === 'home';
+  
+  // Possession highlight: show which half has possession (not which we're attacking)
+  // When we have possession (offense), highlight our attacking half
+  // When opponent has possession, highlight their attacking half (opposite of ours)
+  const highlightRight = isOffense ? attacking : !attacking;
+
+  const connectionColor = connectedCount > 0
+    ? 'text-green-400'
+    : 'text-red-400';
 
   return (
     <div className="fixed inset-0 bg-gray-900 text-white flex flex-col overflow-hidden">
@@ -694,20 +695,20 @@ export default function GameCapturePage() {
       <div className="flex items-center justify-between bg-gray-800 border-b-2 border-orange-500 px-3 py-2 flex-shrink-0 gap-4" style={{ minHeight: '56px' }}>
         {/* LEFT: Clock Block (Horizontal Layout) */}
         {userSlot === 'a' ? (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap-0 whitespace-nowrap">
             {/* Time & Period */}
             <div className="flex flex-col items-center">
               <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
-              <div className="text-xs text-gray-400">Period {currentPeriod}</div>
+              <div className="text-xs text-gray-400">P{currentPeriod}</div>
             </div>
             
             {/* START/STOP */}
             <button
               onClick={toggleClock}
-              className={`px-4 py-2 rounded-lg font-bold text-sm ${
+              className={`px-3 py-2 rounded-lg font-bold text-sm ${
                 clockRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
               }`}
-              style={{ minWidth: '80px', minHeight: '44px' }}
+              style={{ minWidth: '70px', minHeight: '44px' }}
             >
               {clockRunning ? 'STOP' : 'START'}
             </button>
@@ -715,84 +716,83 @@ export default function GameCapturePage() {
             {/* Next Period */}
             <button 
               onClick={nextPeriod} 
-              className="px-4 py-2 bg-blue-500 hover:bg-blue-600 rounded-lg text-sm font-medium whitespace-nowrap" 
+              className="px-3 py-2 bg-blue-500 hover:bg-blue-600 rounded-lg text-xs font-medium whitespace-nowrap" 
               style={{ minHeight: '44px' }}
             >
-              Next Period
+              Next
             </button>
             
             {/* Flip Court */}
             <button 
               onClick={flipCourt} 
-              className="px-4 py-2 bg-purple-500 hover:bg-purple-600 rounded-lg text-sm font-medium whitespace-nowrap" 
+              className="px-3 py-2 bg-purple-500 hover:bg-purple-600 rounded-lg text-xs font-medium" 
               title="Flip which basket we attack"
               style={{ minHeight: '44px' }}
             >
-              ↔ Flip Court
+              ↔
             </button>
             
-            {/* Possession */}
-            <div className="flex items-center gap-2 text-sm border-l border-gray-600 pl-3">
-              <span className="text-gray-400">Possession:</span>
-              <span className="font-medium">{possession === 'home' ? game.teams?.name : game.opponent_name}</span>
+            {/* Possession - Compact */}
+            <div className="flex items-center gap-1 text-xs border-l border-gray-600 pl-2">
+              <span className="text-gray-400">Poss:</span>
+              <span className="font-medium max-w-[100px] truncate">{possession === 'home' ? game.teams?.name : game.opponent_name}</span>
               <button onClick={flipPossession} className="text-orange-400 hover:text-orange-300 font-medium">
                 Switch
               </button>
             </div>
-            
-            {/* Attack Direction */}
-            <div className="text-xs text-gray-500">
-              {attacking ? 'Attack Right →' : '← Attack Left'}
-            </div>
           </div>
         ) : (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 whitespace-nowrap">
             {/* Time & Period */}
             <div className="flex flex-col items-center">
               <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
-              <div className="text-xs text-gray-400">Period {currentPeriod}</div>
+              <div className="text-xs text-gray-400">P{currentPeriod}</div>
             </div>
             
-            {/* Possession (View Only) */}
-            <div className="text-sm text-gray-400">
-              Possession: <span className="font-medium text-white">{possession === 'home' ? game.teams?.name : game.opponent_name}</span>
-            </div>
-            
-            {/* Attack Direction */}
-            <div className="text-xs text-gray-500">
-              {attacking ? 'Attack Right →' : '← Attack Left'}
+            {/* Possession (View Only) - Compact */}
+            <div className="text-xs text-gray-400">
+              Poss: <span className="font-medium text-white max-w-[100px] truncate inline-block">{possession === 'home' ? game.teams?.name : game.opponent_name}</span>
             </div>
           </div>
         )}
         
         {/* RIGHT: Score + Connection + Opponent Control */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 whitespace-nowrap">
           {/* Team Names & Score */}
-          <div className="text-lg font-bold whitespace-nowrap">
-            {game.teams?.name} <span className="text-2xl text-orange-400">{teamScore}</span> - <span className="text-2xl text-blue-400">{opponentScore}</span> {game.opponent_name}
+          <div className="text-base font-bold">
+            <span className="hidden sm:inline">{game.teams?.name}</span>
+            <span className="sm:hidden">{game.teams?.name?.substring(0, 8)}</span>
+            {' '}
+            <span className="text-2xl text-orange-400">{teamScore}</span>
+            {' - '}
+            <span className="text-2xl text-blue-400">{opponentScore}</span>
+            {' '}
+            <span className="hidden sm:inline">{game.opponent_name}</span>
+            <span className="sm:hidden">{game.opponent_name?.substring(0, 8)}</span>
           </div>
           
           {/* Connection Status */}
-          <div className="text-xs whitespace-nowrap">
-            <span className={connectionColor}>● {connectionText}</span>
+          <div className="text-xs">
+            <span className={connectionColor}>●</span>
             {connectedCount > 0 && <span className="ml-1 text-gray-400">({connectedCount})</span>}
           </div>
           
-          {/* Opponent Score Control (Slot A only) */}
+          {/* Opponent Score Control (Slot A only) - No duplicate number */}
           {userSlot === 'a' && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <button 
                 onClick={() => updateOpponentScore(-1)} 
-                className="w-11 h-11 bg-gray-600 hover:bg-gray-700 rounded-lg text-xl font-bold flex items-center justify-center"
+                className="w-10 h-10 bg-gray-600 hover:bg-gray-700 rounded-lg text-lg font-bold flex items-center justify-center"
                 style={{ minWidth: '44px', minHeight: '44px' }}
+                title="Decrease opponent score"
               >
                 -
               </button>
-              <div className="text-2xl font-bold min-w-[2rem] text-center text-blue-400">{opponentScore}</div>
               <button 
                 onClick={() => updateOpponentScore(1)} 
-                className="w-11 h-11 bg-gray-600 hover:bg-gray-700 rounded-lg text-xl font-bold flex items-center justify-center"
+                className="w-10 h-10 bg-gray-600 hover:bg-gray-700 rounded-lg text-lg font-bold flex items-center justify-center"
                 style={{ minWidth: '44px', minHeight: '44px' }}
+                title="Increase opponent score"
               >
                 +
               </button>
@@ -803,7 +803,7 @@ export default function GameCapturePage() {
 
       {/* Court Area - Maintains 28:15 Aspect Ratio */}
       <div className="flex-1 relative overflow-hidden bg-gray-950 flex items-center justify-center">
-        <div className="w-full h-full max-w-full max-h-full" style={{ aspectRatio: '28 / 15' }}>
+        <div className="w-full h-full">
           <BasketballCourt
             onCourtTap={handleCourtTap}
             shotMarkers={shotMarkers}

@@ -341,7 +341,7 @@ export default function PlayersPage() {
                       <div className="flex gap-2">
                         <input
                           type="file"
-                          ref={(el) => (fileInputRefs.current[player.id] = el)}
+                          ref={(el) => { fileInputRefs.current[player.id] = el; }}
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (file) handleAvatarUpload(player.id, file);

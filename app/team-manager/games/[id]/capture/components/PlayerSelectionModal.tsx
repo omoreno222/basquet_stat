@@ -69,27 +69,29 @@ export function PlayerSelectionModal({
               className="flex flex-col items-center gap-3 p-4 bg-gray-700 hover:bg-orange-600 rounded-xl transition-all transform hover:scale-105 touch-manipulation"
               style={{ minHeight: '180px' }}
             >
-              {/* Player Photo or Initials */}
-              <div className="relative w-24 h-24 rounded-full overflow-hidden border-4 border-gray-600 bg-gray-600">
-                {player.avatar_url ? (
-                  <Image
-                    src={player.avatar_url}
-                    alt={player.full_name}
-                    width={96}
-                    height={96}
-                    className="object-cover w-full h-full"
-                    unoptimized={!player.avatar_url.includes('supabase.co')}
-                  />
-                ) : (
-                  <div
-                    className="w-full h-full flex items-center justify-center text-2xl font-bold text-white"
-                    style={{ backgroundColor: getPlayerColor(player.id) }}
-                  >
-                    {getInitials(player.full_name)}
-                  </div>
-                )}
+              {/* Player Photo or Initials - Wrapped for badge positioning */}
+              <div className="relative w-24 h-24">
+                <div className="w-full h-full rounded-full overflow-hidden border-4 border-gray-600 bg-gray-600">
+                  {player.avatar_url ? (
+                    <Image
+                      src={player.avatar_url}
+                      alt={player.full_name}
+                      width={96}
+                      height={96}
+                      className="object-cover w-full h-full"
+                      unoptimized={!player.avatar_url.includes('supabase.co')}
+                    />
+                  ) : (
+                    <div
+                      className="w-full h-full flex items-center justify-center text-2xl font-bold text-white"
+                      style={{ backgroundColor: getPlayerColor(player.id) }}
+                    >
+                      {getInitials(player.full_name)}
+                    </div>
+                  )}
+                </div>
                 
-                {/* Jersey Number Badge */}
+                {/* Jersey Number Badge - Outside clipped circle */}
                 <div className="absolute bottom-0 right-0 bg-orange-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold border-2 border-gray-800">
                   {player.jersey_number}
                 </div>
