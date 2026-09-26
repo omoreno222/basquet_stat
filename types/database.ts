@@ -13,6 +13,12 @@ export interface Profile {
   updated_at: string;
 }
 
+export interface ProfileRole {
+  profile_id: string;
+  role: UserRole;
+  created_at: string;
+}
+
 export interface Season {
   id: string;
   name: string;

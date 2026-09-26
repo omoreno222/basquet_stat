@@ -19,11 +19,41 @@ async function seed() {
     // Create users with Supabase Auth
     const users = [];
     const userConfigs = [
-      { email: 'oscar@basquet.local', password: 'basquet2024', role: 'admin', full_name: 'Oscar Admin' },
-      { email: 'manager@basquet.local', password: 'basquet2024', role: 'team_manager', full_name: 'Team Manager' },
-      { email: 'coach@basquet.local', password: 'basquet2024', role: 'coach', full_name: 'Head Coach' },
-      { email: 'parent@basquet.local', password: 'basquet2024', role: 'parent', full_name: 'Parent User' },
-      { email: 'player@basquet.local', password: 'basquet2024', role: 'player', full_name: 'Player User' },
+      { 
+        email: 'oscar@basquet.local', 
+        password: 'basquet2024', 
+        role: 'admin', 
+        roles: ['admin', 'team_manager'],
+        full_name: 'Oscar Admin' 
+      },
+      { 
+        email: 'manager@basquet.local', 
+        password: 'basquet2024', 
+        role: 'team_manager', 
+        roles: ['team_manager', 'coach'],
+        full_name: 'Team Manager' 
+      },
+      { 
+        email: 'coach@basquet.local', 
+        password: 'basquet2024', 
+        role: 'coach', 
+        roles: ['coach'],
+        full_name: 'Head Coach' 
+      },
+      { 
+        email: 'parent@basquet.local', 
+        password: 'basquet2024', 
+        role: 'parent', 
+        roles: ['parent'],
+        full_name: 'Parent User' 
+      },
+      { 
+        email: 'player@basquet.local', 
+        password: 'basquet2024', 
+        role: 'player', 
+        roles: ['player'],
+        full_name: 'Player User' 
+      },
     ];
 
     console.log('Creating users...');
@@ -56,7 +86,22 @@ async function seed() {
         if (profileError) {
           console.error(`Error creating profile for ${config.email}:`, profileError);
         } else {
-          console.log(`✓ Created user: ${config.email} (${config.role})`);
+          // Insert roles into profile_roles table
+          const roleInserts = config.roles.map(role => ({
+            profile_id: authData.user.id,
+            role: role,
+          }));
+
+          const { error: rolesError } = await supabase
+            .from('profile_roles')
+            .upsert(roleInserts, { onConflict: 'profile_id,role' });
+
+          if (rolesError) {
+            console.error(`Error creating roles for ${config.email}:`, rolesError);
+          } else {
+            const rolesStr = config.roles.join(', ');
+            console.log(`✓ Created user: ${config.email} (${rolesStr})`);
+          }
         }
       }
     }
@@ -433,6 +478,42 @@ async function seed() {
       { key: 'trke_admin_role', locale: 'en', value: 'Role' },
       { key: 'trke_admin_role', locale: 'es', value: 'Rol' },
       { key: 'trke_admin_role', locale: 'ca', value: 'Rol' },
+      
+      { key: 'trke_admin_roles', locale: 'en', value: 'Roles' },
+      { key: 'trke_admin_roles', locale: 'es', value: 'Roles' },
+      { key: 'trke_admin_roles', locale: 'ca', value: 'Rols' },
+      
+      { key: 'trke_admin_roles_select', locale: 'en', value: 'Roles (select at least one)' },
+      { key: 'trke_admin_roles_select', locale: 'es', value: 'Roles (seleccionar al menos uno)' },
+      { key: 'trke_admin_roles_select', locale: 'ca', value: 'Rols (seleccionar almenys un)' },
+      
+      { key: 'trke_admin_role_admin', locale: 'en', value: 'Admin' },
+      { key: 'trke_admin_role_admin', locale: 'es', value: 'Administrador' },
+      { key: 'trke_admin_role_admin', locale: 'ca', value: 'Administrador' },
+      
+      { key: 'trke_admin_role_team_manager', locale: 'en', value: 'Team Manager' },
+      { key: 'trke_admin_role_team_manager', locale: 'es', value: 'Gestor de Equipo' },
+      { key: 'trke_admin_role_team_manager', locale: 'ca', value: 'Gestor d\'Equip' },
+      
+      { key: 'trke_admin_role_coach', locale: 'en', value: 'Coach' },
+      { key: 'trke_admin_role_coach', locale: 'es', value: 'Entrenador' },
+      { key: 'trke_admin_role_coach', locale: 'ca', value: 'Entrenador' },
+      
+      { key: 'trke_admin_role_parent', locale: 'en', value: 'Parent' },
+      { key: 'trke_admin_role_parent', locale: 'es', value: 'Padre/Madre' },
+      { key: 'trke_admin_role_parent', locale: 'ca', value: 'Pare/Mare' },
+      
+      { key: 'trke_admin_role_player', locale: 'en', value: 'Player' },
+      { key: 'trke_admin_role_player', locale: 'es', value: 'Jugador' },
+      { key: 'trke_admin_role_player', locale: 'ca', value: 'Jugador' },
+      
+      { key: 'trke_admin_edit_roles', locale: 'en', value: 'Edit Roles' },
+      { key: 'trke_admin_edit_roles', locale: 'es', value: 'Editar Roles' },
+      { key: 'trke_admin_edit_roles', locale: 'ca', value: 'Editar Rols' },
+      
+      { key: 'trke_admin_update_roles', locale: 'en', value: 'Update Roles' },
+      { key: 'trke_admin_update_roles', locale: 'es', value: 'Actualizar Roles' },
+      { key: 'trke_admin_update_roles', locale: 'ca', value: 'Actualitzar Rols' },
     ];
 
     const { error: translationError } = await supabase

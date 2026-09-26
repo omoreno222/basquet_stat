@@ -4,21 +4,29 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { UserRole } from '@/types/database';
 import Link from 'next/link';
-import { createUser, updateUserRole, linkParentToPlayer, unlinkParentFromPlayer } from '../actions';
+import { createUser, updateUserRoles, linkParentToPlayer, unlinkParentFromPlayer } from '../actions';
+
+interface UserWithRoles {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: UserRole;
+  roles?: UserRole[];
+}
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<UserWithRoles[]>([]);
   const [players, setPlayers] = useState<any[]>([]);
   const [parentLinks, setParentLinks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [showLinkForm, setShowLinkForm] = useState(false);
-  const [editingUser, setEditingUser] = useState<any>(null);
+  const [editingUser, setEditingUser] = useState<UserWithRoles | null>(null);
   const [formData, setFormData] = useState({
     email: '',
     password: '',
     full_name: '',
-    role: 'player' as UserRole,
+    roles: ['player'] as UserRole[],
   });
   const [linkFormData, setLinkFormData] = useState({
     parent_id: '',
@@ -27,42 +35,71 @@ export default function UsersPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  const availableRoles: UserRole[] = ['admin', 'team_manager', 'coach', 'parent', 'player'];
+
   useEffect(() => {
     loadData();
   }, []);
 
   async function loadData() {
-    const [usersData, playersData, linksData] = await Promise.all([
-      supabase.from('profiles').select('*').order('email'),
+    // Load users with their profile_roles
+    const { data: usersData } = await supabase
+      .from('profiles')
+      .select('*')
+      .order('email');
+
+    // Load profile_roles for each user
+    const { data: rolesData } = await supabase
+      .from('profile_roles')
+      .select('profile_id, role');
+
+    // Merge roles into users
+    const usersWithRoles = usersData?.map(user => ({
+      ...user,
+      roles: rolesData?.filter(r => r.profile_id === user.id).map(r => r.role) || [user.role],
+    })) || [];
+
+    setUsers(usersWithRoles);
+
+    // Load other data
+    const [playersData, linksData] = await Promise.all([
       supabase.from('players').select('*').order('full_name'),
       supabase.from('parent_player_links').select('*, profiles(full_name, email), players(full_name, jersey_number)'),
     ]);
 
-    if (usersData.data) setUsers(usersData.data);
     if (playersData.data) setPlayers(playersData.data);
     if (linksData.data) setParentLinks(linksData.data);
     setLoading(false);
   }
 
   function resetForm() {
-    setFormData({ email: '', password: '', full_name: '', role: 'player' });
+    setFormData({ email: '', password: '', full_name: '', roles: ['player'] });
     setEditingUser(null);
     setShowForm(false);
     setError('');
     setSuccess('');
   }
 
-  function handleEditRole(user: any) {
+  function handleEditRole(user: UserWithRoles) {
     setEditingUser(user);
     setFormData({
       email: user.email,
       password: '',
       full_name: user.full_name || '',
-      role: user.role,
+      roles: user.roles || [user.role],
     });
     setShowForm(true);
     setError('');
     setSuccess('');
+  }
+
+  function toggleRole(role: UserRole) {
+    setFormData(prev => {
+      const roles = prev.roles.includes(role)
+        ? prev.roles.filter(r => r !== role)
+        : [...prev.roles, role];
+      return { ...prev, roles };
+    });
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -70,19 +107,24 @@ export default function UsersPage() {
     setError('');
     setSuccess('');
 
+    if (formData.roles.length === 0) {
+      setError('At least one role must be selected');
+      return;
+    }
+
     if (editingUser) {
-      const result = await updateUserRole(editingUser.id, formData.role);
+      const result = await updateUserRoles(editingUser.id, formData.roles);
       if (result.error) {
         setError(result.error);
         return;
       }
-      setSuccess('User role updated successfully');
+      setSuccess('User roles updated successfully');
     } else {
       if (!formData.password || formData.password.length < 6) {
         setError('Password must be at least 6 characters');
         return;
       }
-      const result = await createUser(formData);
+      const result = await createUser({ ...formData, role: formData.roles[0] });
       if (result.error) {
         setError(result.error);
         return;
@@ -180,7 +222,7 @@ export default function UsersPage() {
           <div className="mb-6 px-4">
             <div className="bg-white shadow rounded-lg p-6">
               <h2 className="text-lg font-bold mb-4">
-                {editingUser ? 'Edit User Role' : 'Create User'}
+                {editingUser ? 'Edit User Roles' : 'Create User'}
               </h2>
               <form onSubmit={handleSubmit}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -226,20 +268,23 @@ export default function UsersPage() {
                   )}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Role *
+                      Roles * (select at least one)
                     </label>
-                    <select
-                      required
-                      value={formData.role}
-                      onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
-                      className="w-full border rounded px-3 py-2"
-                    >
-                      <option value="admin">Admin</option>
-                      <option value="team_manager">Team Manager</option>
-                      <option value="coach">Coach</option>
-                      <option value="parent">Parent</option>
-                      <option value="player">Player</option>
-                    </select>
+                    <div className="space-y-2 border rounded px-3 py-2">
+                      {availableRoles.map((role) => (
+                        <label key={role} className="flex items-center space-x-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formData.roles.includes(role)}
+                            onChange={() => toggleRole(role)}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-sm capitalize">
+                            {role.replace('_', ' ')}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 <div className="mt-4 flex gap-2">
@@ -247,7 +292,7 @@ export default function UsersPage() {
                     type="submit"
                     className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
                   >
-                    {editingUser ? 'Update Role' : 'Create User'}
+                    {editingUser ? 'Update Roles' : 'Create User'}
                   </button>
                   <button
                     type="button"
@@ -347,14 +392,21 @@ export default function UsersPage() {
                         <p className="text-sm text-gray-500">{user.email}</p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="px-2 py-1 text-xs font-semibold text-purple-800 bg-purple-100 rounded uppercase">
-                          {user.role}
-                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {(user.roles && user.roles.length > 0 ? user.roles : [user.role]).map((role) => (
+                            <span 
+                              key={role}
+                              className="px-2 py-1 text-xs font-semibold text-purple-800 bg-purple-100 rounded uppercase"
+                            >
+                              {role.replace('_', ' ')}
+                            </span>
+                          ))}
+                        </div>
                         <button
                           onClick={() => handleEditRole(user)}
-                          className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"
+                          className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm whitespace-nowrap"
                         >
-                          Edit Role
+                          Edit Roles
                         </button>
                       </div>
                     </div>

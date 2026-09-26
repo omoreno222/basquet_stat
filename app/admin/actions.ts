@@ -7,6 +7,7 @@ export async function createUser(formData: {
   password: string;
   full_name: string;
   role: string;
+  roles?: string[];
 }) {
   const supabase = getServerSupabase();
   
@@ -21,18 +22,40 @@ export async function createUser(formData: {
   }
 
   if (authData.user) {
+    // Determine roles: use roles array if provided, otherwise fall back to single role
+    const rolesToAssign = formData.roles && formData.roles.length > 0 
+      ? formData.roles 
+      : [formData.role];
+    
+    // Use first role as primary role for profiles.role (backward compatibility)
+    const primaryRole = rolesToAssign[0];
+
     const { error: profileError } = await supabase
       .from('profiles')
       .insert({
         id: authData.user.id,
         email: formData.email,
         full_name: formData.full_name,
-        role: formData.role,
+        role: primaryRole,
         language: 'en',
       });
 
     if (profileError) {
       return { error: profileError.message };
+    }
+
+    // Insert all roles into profile_roles table
+    const roleInserts = rolesToAssign.map(role => ({
+      profile_id: authData.user.id,
+      role: role,
+    }));
+
+    const { error: rolesError } = await supabase
+      .from('profile_roles')
+      .insert(roleInserts);
+
+    if (rolesError) {
+      return { error: rolesError.message };
     }
 
     return { success: true, userId: authData.user.id };
@@ -41,19 +64,56 @@ export async function createUser(formData: {
   return { error: 'Failed to create user' };
 }
 
-export async function updateUserRole(userId: string, role: string) {
+export async function updateUserRoles(userId: string, roles: string[]) {
   const supabase = getServerSupabase();
   
-  const { error } = await supabase
+  if (!roles || roles.length === 0) {
+    return { error: 'At least one role must be selected' };
+  }
+
+  // Use first role as primary role for profiles.role (backward compatibility)
+  const primaryRole = roles[0];
+
+  // Update primary role in profiles
+  const { error: profileError } = await supabase
     .from('profiles')
-    .update({ role })
+    .update({ role: primaryRole })
     .eq('id', userId);
 
-  if (error) {
-    return { error: error.message };
+  if (profileError) {
+    return { error: profileError.message };
+  }
+
+  // Delete existing roles
+  const { error: deleteError } = await supabase
+    .from('profile_roles')
+    .delete()
+    .eq('profile_id', userId);
+
+  if (deleteError) {
+    return { error: deleteError.message };
+  }
+
+  // Insert new roles
+  const roleInserts = roles.map(role => ({
+    profile_id: userId,
+    role: role,
+  }));
+
+  const { error: insertError } = await supabase
+    .from('profile_roles')
+    .insert(roleInserts);
+
+  if (insertError) {
+    return { error: insertError.message };
   }
 
   return { success: true };
+}
+
+// Keep old function for backward compatibility, but delegate to updateUserRoles
+export async function updateUserRole(userId: string, role: string) {
+  return updateUserRoles(userId, [role]);
 }
 
 export async function linkParentToPlayer(parentId: string, playerId: string) {
