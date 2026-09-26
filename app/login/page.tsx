@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -62,7 +63,16 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
       <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-6 text-center">BasquetStat</h1>
+        <div className="flex justify-center mb-6">
+          <Image 
+            src="/images/seasonmath-logo.png" 
+            alt="SeasonMath" 
+            width={200} 
+            height={200}
+            priority
+            className="h-auto"
+          />
+        </div>
         <h2 className="text-xl mb-6 text-center text-gray-600">Sign In</h2>
         
         {error && (
