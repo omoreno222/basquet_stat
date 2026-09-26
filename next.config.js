@@ -1,7 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverActions: {
-    bodySizeLimit: '5mb', // Match Storage bucket 5MB limit for avatar uploads
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '5mb', // Match Storage bucket 5MB limit for avatar uploads
+    },
   },
   images: {
     remotePatterns: [
