@@ -12,6 +12,29 @@ import { SlotBActionModal } from './components/SlotBActionModal';
 
 type ConnectionStatus = 'connected' | 'reconnecting' | 'offline';
 
+/**
+ * COORDINATE SYSTEM CONVENTION:
+ * 
+ * WORLD COORDINATES (what we display and where users tap):
+ * - Full court: x ∈ [0, 1] from left to right, y ∈ [0, 1] from top to bottom
+ * - Left basket at x ≈ 0.025, right basket at x ≈ 0.975
+ * 
+ * NORMALIZED ATTACKING COORDINATES (what we store in DB):
+ * - Always stored as if attacking the RIGHT basket (x ≈ 0.975)
+ * - This makes shot charts/heatmaps consistent across periods
+ * - coord_x and coord_y in game_events table use this convention
+ * 
+ * TRANSFORMATION:
+ * - When attacking right (Q1-Q2 if attack_right_first=true, Q3-Q4 if false):
+ *   normalized_x = world_x, normalized_y = world_y
+ * - When attacking left (Q3-Q4 if attack_right_first=true, Q1-Q2 if false):
+ *   normalized_x = 1 - world_x (horizontal flip)
+ *   normalized_y = world_y (vertical stays same)
+ * 
+ * DISPLAY TRANSFORMATION (for shot markers):
+ * - Reverse the above: if we're attacking left, flip stored coords back to world
+ */
+
 export default function GameCapturePage() {
   const params = useParams();
   const router = useRouter();
@@ -33,6 +56,7 @@ export default function GameCapturePage() {
   const [possession, setPossession] = useState<'home' | 'away'>('home');
   const [teamScore, setTeamScore] = useState(0);
   const [opponentScore, setOpponentScore] = useState(0);
+  const [attackRightFirst, setAttackRightFirst] = useState(true);
 
   // UI state
   const [showPlayerPicker, setShowPlayerPicker] = useState(false);
@@ -46,6 +70,31 @@ export default function GameCapturePage() {
   // Refs
   const channelRef = useRef<RealtimeChannel | null>(null);
   const clockIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Determine which basket we're attacking based on period and initial direction
+  // FIBA: Switch at halftime. Q1-Q2 one direction, Q3-Q4+ the other.
+  const isAttackingRight = () => {
+    const isFirstHalf = currentPeriod <= 2;
+    return isFirstHalf ? attackRightFirst : !attackRightFirst;
+  };
+
+  // Transform world coordinates to normalized attacking coordinates (for storage)
+  const worldToNormalized = (worldX: number, worldY: number) => {
+    const attacking = isAttackingRight();
+    return {
+      x: attacking ? worldX : 1 - worldX,
+      y: worldY,
+    };
+  };
+
+  // Transform normalized attacking coordinates to world coordinates (for display)
+  const normalizedToWorld = (normX: number, normY: number) => {
+    const attacking = isAttackingRight();
+    return {
+      x: attacking ? normX : 1 - normX,
+      y: normY,
+    };
+  };
 
   useEffect(() => {
     loadData();
@@ -144,6 +193,7 @@ export default function GameCapturePage() {
       setPossession(gameData.possession || 'home');
       setTeamScore(gameData.team_score || 0);
       setOpponentScore(gameData.opponent_score || 0);
+      setAttackRightFirst(gameData.attack_right_first ?? true);
 
       const newSlot = 
         profile.id === gameData.slot_a_user_id ? 'a' :
@@ -241,6 +291,9 @@ export default function GameCapturePage() {
             setPossession(newData.possession);
             setTeamScore(newData.team_score);
             setOpponentScore(newData.opponent_score);
+            if (newData.attack_right_first !== undefined) {
+              setAttackRightFirst(newData.attack_right_first);
+            }
 
             if (
               newData.slot_a_user_id !== game?.slot_a_user_id ||
@@ -305,8 +358,8 @@ export default function GameCapturePage() {
     alert(`Period ${currentPeriod} ended`);
   }
 
-  function handleCourtTap(x: number, y: number) {
-    setTapCoordinates({ x, y });
+  function handleCourtTap(worldX: number, worldY: number) {
+    setTapCoordinates({ x: worldX, y: worldY });
     setShowPlayerPicker(true);
   }
 
@@ -325,13 +378,19 @@ export default function GameCapturePage() {
   async function handleShotAction(made: boolean, points: number) {
     if (!selectedPlayer || !tapCoordinates) return;
 
-    // Calculate zone
+    // Transform world coordinates to normalized attacking coordinates
+    const normalized = worldToNormalized(tapCoordinates.x, tapCoordinates.y);
+
+    // Calculate zone (in normalized space, attacking right basket)
     let zone = 1;
-    const distance = Math.sqrt(tapCoordinates.x * tapCoordinates.x + tapCoordinates.y * tapCoordinates.y);
-    if (distance < 0.3) zone = 1;
-    else if (tapCoordinates.x > 0.5 && distance < 0.7) zone = 2;
-    else if (tapCoordinates.x <= 0.5 && distance < 0.7) zone = 3;
-    else zone = 4;
+    const dx = normalized.x - 0.975; // Distance from right basket
+    const dy = normalized.y - 0.5;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    if (distance < 0.15) zone = 1; // Paint
+    else if (normalized.x > 0.5 && distance < 0.3) zone = 2; // Right side
+    else if (normalized.x <= 0.5 && distance < 0.3) zone = 3; // Left side
+    else zone = 4; // Beyond 3pt
 
     const elapsed = 600000 - clockRemaining;
 
@@ -346,8 +405,8 @@ export default function GameCapturePage() {
         elapsed_ms: elapsed,
         points,
         made,
-        coord_x: tapCoordinates.x,
-        coord_y: tapCoordinates.y,
+        coord_x: normalized.x,
+        coord_y: normalized.y,
         zone,
         is_offensive: possession === 'home',
         recorded_by_user_id: currentUser.id,
@@ -385,6 +444,9 @@ export default function GameCapturePage() {
       eventType = 'rebound';
     }
 
+    // Transform world coordinates to normalized
+    const normalized = worldToNormalized(tapCoordinates.x, tapCoordinates.y);
+
     const { error } = await supabase
       .from('game_events')
       .insert({
@@ -394,8 +456,8 @@ export default function GameCapturePage() {
         period_number: currentPeriod,
         clock_remaining_ms: clockRemaining,
         elapsed_ms: elapsed,
-        coord_x: tapCoordinates.x,
-        coord_y: tapCoordinates.y,
+        coord_x: normalized.x,
+        coord_y: normalized.y,
         is_offensive: actionType === 'rebound_off' || actionType === 'steal' || actionType === 'assist',
         recorded_by_user_id: currentUser.id,
       });
@@ -537,6 +599,13 @@ export default function GameCapturePage() {
     await updateGameState({ possession: newPossession });
   }
 
+  async function flipCourt() {
+    if (userSlot !== 'a') return;
+    const newDirection = !attackRightFirst;
+    setAttackRightFirst(newDirection);
+    await updateGameState({ attack_right_first: newDirection });
+  }
+
   async function updateOpponentScore(delta: number) {
     if (userSlot !== 'a') return;
     const newScore = Math.max(0, opponentScore + delta);
@@ -609,16 +678,22 @@ export default function GameCapturePage() {
     connectionStatus === 'reconnecting' ? 'Reconnecting...' :
     'Offline';
 
-  // Get shot markers for court
+  // Get shot markers for court (transform normalized coords to world coords for display)
   const shotMarkers = events
     .filter(e => e.event_type === 'shot' && e.coord_x != null && e.coord_y != null)
-    .map(e => ({
-      id: e.id,
-      x: e.coord_x,
-      y: e.coord_y,
-      made: e.made,
-      points: e.points || 0,
-    }));
+    .map(e => {
+      const world = normalizedToWorld(e.coord_x, e.coord_y);
+      return {
+        id: e.id,
+        x: world.x,
+        y: world.y,
+        made: e.made,
+        points: e.points || 0,
+      };
+    });
+
+  const attacking = isAttackingRight();
+  const isOffense = possession === 'home';
 
   return (
     <div className="fixed inset-0 bg-gray-900 text-white overflow-hidden">
@@ -627,6 +702,8 @@ export default function GameCapturePage() {
         <BasketballCourt
           onCourtTap={handleCourtTap}
           shotMarkers={shotMarkers}
+          attackingRight={attacking}
+          isOffense={isOffense}
         />
       </div>
 
@@ -661,9 +738,17 @@ export default function GameCapturePage() {
 
           <button
             onClick={nextPeriod}
-            className="w-full px-3 py-2 bg-blue-500 hover:bg-blue-600 rounded text-sm font-medium mb-3"
+            className="w-full px-3 py-2 bg-blue-500 hover:bg-blue-600 rounded text-sm font-medium mb-2"
           >
             Next Period
+          </button>
+
+          <button
+            onClick={flipCourt}
+            className="w-full px-3 py-2 bg-purple-500 hover:bg-purple-600 rounded text-sm font-medium mb-3"
+            title="Flip which basket we attack (for when game starts the other way)"
+          >
+            ↔ Flip Court
           </button>
 
           <div className="text-xs text-center">
@@ -676,6 +761,10 @@ export default function GameCapturePage() {
             >
               Switch
             </button>
+          </div>
+          
+          <div className="text-xs text-center text-gray-500 mt-2">
+            Attack: {attacking ? 'Right →' : '← Left'}
           </div>
         </div>
       )}
@@ -841,6 +930,7 @@ export default function GameCapturePage() {
           playerJersey={selectedPlayer.jersey_number}
           coordinateX={tapCoordinates.x}
           coordinateY={tapCoordinates.y}
+          attackingRight={attacking}
           onAction={handleShotAction}
           onClose={() => {
             setShowShotActions(false);

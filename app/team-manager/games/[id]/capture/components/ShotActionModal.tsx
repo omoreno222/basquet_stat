@@ -3,8 +3,9 @@
 interface ShotActionModalProps {
   playerName: string;
   playerJersey: number;
-  coordinateX: number;
-  coordinateY: number;
+  coordinateX: number; // World coordinate (0-1, left to right)
+  coordinateY: number; // World coordinate (0-1, top to bottom)
+  attackingRight: boolean; // Which basket we're attacking
   onAction: (made: boolean, points: number) => void;
   onClose: () => void;
 }
@@ -14,23 +15,32 @@ export function ShotActionModal({
   playerJersey,
   coordinateX,
   coordinateY,
+  attackingRight,
   onAction,
   onClose
 }: ShotActionModalProps) {
-  // Detect if tap was inside 3pt line
-  // Simplified 3pt detection: use distance from basket + court position
-  const basketX = 0.5;
-  const basketY = 0.05; // Near top baseline
+  // Determine basket position we're attacking
+  const basketX = attackingRight ? 0.975 : 0.025; // Right basket (0.975) or left basket (0.025)
+  const basketY = 0.5; // Center court vertically
+  
+  // Calculate distance from attacking basket
   const dx = coordinateX - basketX;
   const dy = coordinateY - basketY;
   const distance = Math.sqrt(dx * dx + dy * dy);
   
-  // Corners: x near edges (< 0.15 or > 0.85) and y < 0.25
-  const isCorner = (coordinateX < 0.15 || coordinateX > 0.85) && coordinateY < 0.25;
+  // Detect if shot is in corner 3 area (near sideline, close to basket)
+  // Corners are at y < 0.19 or y > 0.81 (top/bottom ~88px from edges in 470px court)
+  const isNearSideline = coordinateY < 0.19 || coordinateY > 0.81;
   
-  // FIBA 3pt: ~6.75m arc, ~6.60m corner (normalized)
-  // Rough threshold: distance > 0.35 OR corner shot within first 25%
-  const isLikely3pt = distance > 0.35 || isCorner;
+  // FIBA 3pt: ~6.75m arc, ~6.60m corner
+  // In our full-court normalized system:
+  // Corner 3: near sideline + within ~0.18 from basket horizontally
+  const isCorner3 = isNearSideline && Math.abs(dx) < 0.18;
+  
+  // Arc 3: distance > ~0.22 from basket (in full-court normalized coords)
+  const isArc3 = distance > 0.22;
+  
+  const isLikely3pt = isCorner3 || isArc3;
   
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4">
