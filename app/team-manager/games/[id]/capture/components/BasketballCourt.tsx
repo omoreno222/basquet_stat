@@ -16,13 +16,14 @@ interface BasketballCourtProps {
 
 /**
  * FIBA Basketball Court - Exact Dimensions (in meters):
- * - Court: 28m × 15m
+ * - Court: 28m × 15m (aspect ratio 1.8667:1)
  * - Basket (rim center): 1.575m from baseline, centered at y=7.5m
  * - 3-point line: 6.75m radius arc + corner straights at 0.9m from sidelines
  * - Key: 4.9m wide × 5.8m long, free-throw circle radius 1.8m
  * - Restricted area: 1.25m radius from rim
  * 
  * SVG viewBox: 2800 × 1500 (1 unit = 1cm for precision)
+ * MUST maintain aspect ratio - no stretching!
  */
 
 export function BasketballCourt({ 
@@ -37,10 +38,43 @@ export function BasketballCourt({
 
     const svg = e.currentTarget;
     const rect = svg.getBoundingClientRect();
-    const worldX = (e.clientX - rect.left) / rect.width;
-    const worldY = (e.clientY - rect.top) / rect.height;
-
-    onCourtTap(worldX, worldY);
+    
+    // Get the actual rendered SVG dimensions (accounting for aspect ratio preservation)
+    const svgWidth = rect.width;
+    const svgHeight = rect.height;
+    
+    // Calculate click position relative to SVG
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+    
+    // The SVG maintains 28:15 aspect ratio with "meet", so calculate letterboxing
+    const svgAspect = 2800 / 1500; // 1.8667
+    const containerAspect = svgWidth / svgHeight;
+    
+    let actualWidth, actualHeight, offsetX, offsetY;
+    
+    if (containerAspect > svgAspect) {
+      // Container is wider - letterbox on sides
+      actualHeight = svgHeight;
+      actualWidth = svgHeight * svgAspect;
+      offsetX = (svgWidth - actualWidth) / 2;
+      offsetY = 0;
+    } else {
+      // Container is taller - letterbox on top/bottom
+      actualWidth = svgWidth;
+      actualHeight = svgWidth / svgAspect;
+      offsetX = 0;
+      offsetY = (svgHeight - actualHeight) / 2;
+    }
+    
+    // Normalize to 0-1 range accounting for letterboxing
+    const worldX = (clickX - offsetX) / actualWidth;
+    const worldY = (clickY - offsetY) / actualHeight;
+    
+    // Only register clicks within the actual court bounds
+    if (worldX >= 0 && worldX <= 1 && worldY >= 0 && worldY <= 1) {
+      onCourtTap(worldX, worldY);
+    }
   };
 
   const highlightRight = isOffense ? attackingRight : !attackingRight;
@@ -49,7 +83,7 @@ export function BasketballCourt({
   const COURT_LENGTH = 2800; // 28m
   const COURT_WIDTH = 1500; // 15m
   const RIM_FROM_BASELINE = 157.5; // 1.575m
-  const RIM_Y = 750; // 7.5m (center)
+  const RIM_Y = 750; // 7.5m (center of court width)
   const THREE_PT_RADIUS = 675; // 6.75m
   const CORNER_THREE_FROM_SIDELINE = 90; // 0.9m
   const KEY_WIDTH = 490; // 4.9m
@@ -59,22 +93,21 @@ export function BasketballCourt({
   const CENTER_CIRCLE_RADIUS = 180; // 1.8m
 
   // Calculate 3-point corner meeting point
-  // Where straight line at y=90 meets arc of radius 675 centered at (157.5, 750)
-  const cornerDistFromRim = RIM_Y - CORNER_THREE_FROM_SIDELINE; // 660
-  const threePtMeetX = RIM_FROM_BASELINE + Math.sqrt(THREE_PT_RADIUS * THREE_PT_RADIUS - cornerDistFromRim * cornerDistFromRim); // ≈299
+  const cornerDistFromRim = RIM_Y - CORNER_THREE_FROM_SIDELINE; // 660cm
+  const threePtMeetX = RIM_FROM_BASELINE + Math.sqrt(THREE_PT_RADIUS * THREE_PT_RADIUS - cornerDistFromRim * cornerDistFromRim); // ≈299cm
 
   // Left basket coordinates
   const leftRimX = RIM_FROM_BASELINE;
   const leftRimY = RIM_Y;
-  const leftKeyLeft = (COURT_WIDTH - KEY_WIDTH) / 2; // 505
-  const leftKeyRight = (COURT_WIDTH + KEY_WIDTH) / 2; // 995
-  const leftFreeThrowX = KEY_LENGTH;
+  const leftKeyTop = (COURT_WIDTH - KEY_WIDTH) / 2; // 505cm from top edge
+  const leftKeyBottom = (COURT_WIDTH + KEY_WIDTH) / 2; // 995cm from top edge
+  const leftFreeThrowX = KEY_LENGTH; // 580cm from left baseline
 
   // Right basket coordinates (mirrored)
   const rightRimX = COURT_LENGTH - RIM_FROM_BASELINE;
   const rightRimY = RIM_Y;
-  const rightKeyLeft = leftKeyLeft;
-  const rightKeyRight = leftKeyRight;
+  const rightKeyTop = leftKeyTop;
+  const rightKeyBottom = leftKeyBottom;
   const rightFreeThrowX = COURT_LENGTH - KEY_LENGTH;
 
   return (
@@ -139,16 +172,38 @@ export function BasketballCourt({
       
       {/* LEFT BASKET HALF */}
       
-      {/* Paint/Key - tinted */}
-      <rect x="0" y={leftKeyLeft} width={KEY_LENGTH} height={KEY_WIDTH} fill="url(#paintTint)" />
-      <rect x="0" y={leftKeyLeft} width={KEY_LENGTH} height={KEY_WIDTH} fill="none" stroke="#ffffff" strokeWidth="3" />
+      {/* Paint/Key - tinted rectangle from baseline */}
+      <rect 
+        x="0" 
+        y={leftKeyTop} 
+        width={KEY_LENGTH} 
+        height={KEY_WIDTH} 
+        fill="url(#paintTint)" 
+      />
+      <rect 
+        x="0" 
+        y={leftKeyTop} 
+        width={KEY_LENGTH} 
+        height={KEY_WIDTH} 
+        fill="none" 
+        stroke="#ffffff" 
+        strokeWidth="3" 
+      />
       
       {/* Free-throw line */}
-      <line x1={leftFreeThrowX} y1={leftKeyLeft} x2={leftFreeThrowX} y2={leftKeyRight} stroke="#ffffff" strokeWidth="3" />
+      <line 
+        x1={leftFreeThrowX} 
+        y1={leftKeyTop} 
+        x2={leftFreeThrowX} 
+        y2={leftKeyBottom} 
+        stroke="#ffffff" 
+        strokeWidth="3" 
+      />
       
       {/* Free-throw circle (solid half toward center) */}
       <path
-        d={`M ${leftFreeThrowX} ${RIM_Y - FT_CIRCLE_RADIUS} A ${FT_CIRCLE_RADIUS} ${FT_CIRCLE_RADIUS} 0 0 1 ${leftFreeThrowX} ${RIM_Y + FT_CIRCLE_RADIUS}`}
+        d={`M ${leftFreeThrowX} ${RIM_Y - FT_CIRCLE_RADIUS} 
+            A ${FT_CIRCLE_RADIUS} ${FT_CIRCLE_RADIUS} 0 0 1 ${leftFreeThrowX} ${RIM_Y + FT_CIRCLE_RADIUS}`}
         fill="none"
         stroke="#ffffff"
         strokeWidth="3"
@@ -156,7 +211,8 @@ export function BasketballCourt({
       
       {/* Restricted area semicircle */}
       <path
-        d={`M ${leftRimX} ${leftRimY - RESTRICTED_RADIUS} A ${RESTRICTED_RADIUS} ${RESTRICTED_RADIUS} 0 0 1 ${leftRimX} ${leftRimY + RESTRICTED_RADIUS}`}
+        d={`M ${leftRimX} ${leftRimY - RESTRICTED_RADIUS} 
+            A ${RESTRICTED_RADIUS} ${RESTRICTED_RADIUS} 0 0 1 ${leftRimX} ${leftRimY + RESTRICTED_RADIUS}`}
         fill="none"
         stroke="#ffffff"
         strokeWidth="2"
@@ -195,7 +251,7 @@ export function BasketballCourt({
       {/* Basket/hoop - left */}
       <circle cx={leftRimX} cy={leftRimY} r="22.5" fill="none" stroke="#ff4444" strokeWidth="3" />
       
-      {/* Backboard - left (120cm wide, at 1.2m from baseline) */}
+      {/* Backboard - left (120cm wide, at 1.2m = 120cm from baseline) */}
       <line 
         x1="120" 
         y1={RIM_Y - 90} 
@@ -207,16 +263,38 @@ export function BasketballCourt({
       
       {/* RIGHT BASKET HALF */}
       
-      {/* Paint/Key - tinted */}
-      <rect x={rightFreeThrowX} y={rightKeyLeft} width={KEY_LENGTH} height={KEY_WIDTH} fill="url(#paintTint)" />
-      <rect x={rightFreeThrowX} y={rightKeyLeft} width={KEY_LENGTH} height={KEY_WIDTH} fill="none" stroke="#ffffff" strokeWidth="3" />
+      {/* Paint/Key - tinted rectangle from baseline */}
+      <rect 
+        x={rightFreeThrowX} 
+        y={rightKeyTop} 
+        width={KEY_LENGTH} 
+        height={KEY_WIDTH} 
+        fill="url(#paintTint)" 
+      />
+      <rect 
+        x={rightFreeThrowX} 
+        y={rightKeyTop} 
+        width={KEY_LENGTH} 
+        height={KEY_WIDTH} 
+        fill="none" 
+        stroke="#ffffff" 
+        strokeWidth="3" 
+      />
       
       {/* Free-throw line */}
-      <line x1={rightFreeThrowX} y1={rightKeyLeft} x2={rightFreeThrowX} y2={rightKeyRight} stroke="#ffffff" strokeWidth="3" />
+      <line 
+        x1={rightFreeThrowX} 
+        y1={rightKeyTop} 
+        x2={rightFreeThrowX} 
+        y2={rightKeyBottom} 
+        stroke="#ffffff" 
+        strokeWidth="3" 
+      />
       
       {/* Free-throw circle */}
       <path
-        d={`M ${rightFreeThrowX} ${RIM_Y - FT_CIRCLE_RADIUS} A ${FT_CIRCLE_RADIUS} ${FT_CIRCLE_RADIUS} 0 0 0 ${rightFreeThrowX} ${RIM_Y + FT_CIRCLE_RADIUS}`}
+        d={`M ${rightFreeThrowX} ${RIM_Y - FT_CIRCLE_RADIUS} 
+            A ${FT_CIRCLE_RADIUS} ${FT_CIRCLE_RADIUS} 0 0 0 ${rightFreeThrowX} ${RIM_Y + FT_CIRCLE_RADIUS}`}
         fill="none"
         stroke="#ffffff"
         strokeWidth="3"
@@ -224,7 +302,8 @@ export function BasketballCourt({
       
       {/* Restricted area semicircle */}
       <path
-        d={`M ${rightRimX} ${rightRimY - RESTRICTED_RADIUS} A ${RESTRICTED_RADIUS} ${RESTRICTED_RADIUS} 0 0 0 ${rightRimX} ${rightRimY + RESTRICTED_RADIUS}`}
+        d={`M ${rightRimX} ${rightRimY - RESTRICTED_RADIUS} 
+            A ${RESTRICTED_RADIUS} ${RESTRICTED_RADIUS} 0 0 0 ${rightRimX} ${rightRimY + RESTRICTED_RADIUS}`}
         fill="none"
         stroke="#ffffff"
         strokeWidth="2"

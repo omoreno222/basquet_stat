@@ -765,14 +765,16 @@ export default function GameCapturePage() {
         </div>
       </div>
 
-      {/* Court Area - Fills Remaining Space */}
-      <div className="flex-1 relative overflow-hidden">
-        <BasketballCourt
-          onCourtTap={handleCourtTap}
-          shotMarkers={shotMarkers}
-          attackingRight={attacking}
-          isOffense={isOffense}
-        />
+      {/* Court Area - Maintains 28:15 Aspect Ratio */}
+      <div className="flex-1 relative overflow-hidden bg-gray-950 flex items-center justify-center">
+        <div className="w-full h-full max-w-full max-h-full" style={{ aspectRatio: '28 / 15' }}>
+          <BasketballCourt
+            onCourtTap={handleCourtTap}
+            shotMarkers={shotMarkers}
+            attackingRight={attacking}
+            isOffense={isOffense}
+          />
+        </div>
       </div>
 
       {/* Bottom Bar - Actions & Events */}
