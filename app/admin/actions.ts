@@ -343,6 +343,12 @@ export async function uploadPlayerAvatar(playerId: string, file: File) {
 }
 
 export async function removePlayerAvatar(playerId: string) {
+  // SECURITY: Verify caller is admin before using service role
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
   const supabase = getServerSupabase();
 
   // Get current avatar URL
