@@ -1,9 +1,12 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+
+type ConnectionStatus = 'connected' | 'reconnecting' | 'offline';
 
 export default function GameCapturePage() {
   const params = useParams();
@@ -16,7 +19,8 @@ export default function GameCapturePage() {
   const [userSlot, setUserSlot] = useState<'a' | 'b' | null>(null);
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<any[]>([]);
-  const [connectedUsers, setConnectedUsers] = useState<string[]>([]);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('offline');
+  const [presenceState, setPresenceState] = useState<any>({});
   
   // Game state
   const [clockRunning, setClockRunning] = useState(false);
@@ -30,54 +34,83 @@ export default function GameCapturePage() {
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [shotMode, setShotMode] = useState(false);
 
+  // Refs to track channel and cleanup
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const clockIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     loadData();
-    setupRealtimeSubscription();
+    const cleanup = setupRealtimeSubscription();
 
     return () => {
-      // Cleanup realtime subscription
+      cleanup();
     };
   }, [gameId]);
 
-  // Clock ticker
+  // Clock ticker - ONLY for Slot A (clock authority)
+  // Slot B receives clock updates via Realtime only
   useEffect(() => {
-    if (!clockRunning) return;
+    // Clear any existing interval
+    if (clockIntervalRef.current) {
+      clearInterval(clockIntervalRef.current);
+      clockIntervalRef.current = null;
+    }
 
-    const interval = setInterval(() => {
+    // Only Slot A runs the clock ticker and writes to DB
+    if (userSlot !== 'a' || !clockRunning) return;
+
+    clockIntervalRef.current = setInterval(() => {
       setClockRemaining(prev => {
         const newTime = Math.max(0, prev - 100);
         if (newTime === 0) {
           setClockRunning(false);
           handlePeriodEnd();
+          // Write final state immediately
+          updateGameState({ clock_running: false, clock_remaining_ms: 0 });
         }
         return newTime;
       });
     }, 100);
 
-    return () => clearInterval(interval);
-  }, [clockRunning]);
+    return () => {
+      if (clockIntervalRef.current) {
+        clearInterval(clockIntervalRef.current);
+        clockIntervalRef.current = null;
+      }
+    };
+  }, [clockRunning, userSlot]);
 
-  // Sync clock to database periodically
+  // Periodic clock sync to DB - ONLY for Slot A as safety net
+  // Primary writes happen immediately on user actions
   useEffect(() => {
-    if (!game) return;
+    if (userSlot !== 'a' || !clockRunning || !game) return;
 
     const interval = setInterval(() => {
+      // Light safety sync - main writes are immediate
       supabase
         .from('games')
         .update({
-          clock_running: clockRunning,
           clock_remaining_ms: clockRemaining,
-          current_period: currentPeriod,
-          possession,
-          team_score: teamScore,
-          opponent_score: opponentScore,
         })
         .eq('id', gameId)
         .then();
-    }, 2000);
+    }, 3000); // Every 3 seconds as safety net only
 
     return () => clearInterval(interval);
-  }, [game, clockRunning, clockRemaining, currentPeriod, possession, teamScore, opponentScore]);
+  }, [userSlot, clockRunning, clockRemaining, game, gameId]);
+
+  // Helper to update game state immediately (for Slot A actions)
+  async function updateGameState(updates: any) {
+    const { error } = await supabase
+      .from('games')
+      .update(updates)
+      .eq('id', gameId);
+
+    if (error) {
+      console.error('Failed to update game state:', error);
+    }
+    return !error;
+  }
 
   async function loadData() {
     const { data: { user } } = await supabase.auth.getUser();
@@ -112,19 +145,19 @@ export default function GameCapturePage() {
     if (gameData) {
       setGame(gameData);
       setClockRemaining(gameData.clock_remaining_ms || 600000);
+      setClockRunning(gameData.clock_running || false);
       setCurrentPeriod(gameData.current_period || 1);
       setPossession(gameData.possession || 'home');
       setTeamScore(gameData.team_score || 0);
       setOpponentScore(gameData.opponent_score || 0);
 
-      // Determine user slot
-      if (profile.id === gameData.slot_a_user_id) {
-        setUserSlot('a');
-      } else if (profile.id === gameData.slot_b_user_id) {
-        setUserSlot('b');
-      } else if (isAdmin) {
-        setUserSlot('a'); // Admin defaults to A
-      }
+      // Determine user slot and re-evaluate on slot changes
+      const newSlot = 
+        profile.id === gameData.slot_a_user_id ? 'a' :
+        profile.id === gameData.slot_b_user_id ? 'b' :
+        isAdmin ? 'a' : null;
+      
+      setUserSlot(newSlot);
 
       const { data: playersData } = await supabase
         .from('players')
@@ -149,21 +182,59 @@ export default function GameCapturePage() {
 
   function setupRealtimeSubscription() {
     const channel = supabase
-      .channel(`game:${gameId}`)
+      .channel(`game:${gameId}`, {
+        config: {
+          broadcast: { self: true },
+          presence: { key: currentUser?.id || 'anonymous' },
+        },
+      })
+      // Presence tracking for connection indicator
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        setPresenceState(state);
+      })
+      .on('presence', { event: 'join' }, ({ key, newPresences }) => {
+        console.log('User joined:', key, newPresences);
+      })
+      .on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
+        console.log('User left:', key, leftPresences);
+      })
+      // Game events: INSERT, UPDATE, DELETE
       .on(
         'postgres_changes',
         {
-          event: '*',
+          event: 'INSERT',
+          schema: 'public',
+          table: 'game_events',
+          filter: `game_id=eq.${gameId}`,
+        },
+        async (payload) => {
+          // Fetch the full event with player data
+          const { data } = await supabase
+            .from('game_events')
+            .select('*, players(full_name, jersey_number)')
+            .eq('id', payload.new.id)
+            .single();
+
+          if (data) {
+            setEvents(prev => [data, ...prev].slice(0, 20));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
           schema: 'public',
           table: 'game_events',
           filter: `game_id=eq.${gameId}`,
         },
         (payload) => {
-          if (payload.eventType === 'INSERT') {
-            loadData();
-          }
+          // Remove deleted event from local state
+          setEvents(prev => prev.filter(e => e.id !== payload.old.id));
         }
       )
+      // Game state updates
       .on(
         'postgres_changes',
         {
@@ -172,21 +243,79 @@ export default function GameCapturePage() {
           table: 'games',
           filter: `id=eq.${gameId}`,
         },
-        (payload: any) => {
+        async (payload: any) => {
           if (payload.new) {
-            setClockRemaining(payload.new.clock_remaining_ms);
-            setClockRunning(payload.new.clock_running);
-            setCurrentPeriod(payload.new.current_period);
-            setPossession(payload.new.possession);
-            setTeamScore(payload.new.team_score);
-            setOpponentScore(payload.new.opponent_score);
+            const newData = payload.new;
+            
+            // Update all game state from remote
+            setClockRemaining(newData.clock_remaining_ms);
+            setClockRunning(newData.clock_running);
+            setCurrentPeriod(newData.current_period);
+            setPossession(newData.possession);
+            setTeamScore(newData.team_score);
+            setOpponentScore(newData.opponent_score);
+
+            // Handle slot swap: re-evaluate user slot without page reload
+            if (
+              newData.slot_a_user_id !== game?.slot_a_user_id ||
+              newData.slot_b_user_id !== game?.slot_b_user_id
+            ) {
+              const { data: { user } } = await supabase.auth.getUser();
+              const { data: userRoles } = await supabase
+                .from('profile_roles')
+                .select('role')
+                .eq('profile_id', user?.id || '');
+              
+              const roles = userRoles?.map(r => r.role) || [];
+              const isAdmin = roles.includes('admin');
+
+              const newSlot = 
+                user?.id === newData.slot_a_user_id ? 'a' :
+                user?.id === newData.slot_b_user_id ? 'b' :
+                isAdmin ? 'a' : null;
+              
+              setUserSlot(newSlot);
+              
+              // Stop clock ticker if we lost Slot A authority
+              if (newSlot !== 'a' && clockIntervalRef.current) {
+                clearInterval(clockIntervalRef.current);
+                clockIntervalRef.current = null;
+              }
+            }
+
+            // Update game object for reference
+            setGame((prev: any) => ({ ...prev, ...newData }));
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setConnectionStatus('connected');
+          // Track presence
+          channel.track({
+            user_id: currentUser?.id,
+            slot: userSlot,
+            online_at: new Date().toISOString(),
+          });
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setConnectionStatus('reconnecting');
+        } else if (status === 'CLOSED') {
+          setConnectionStatus('offline');
+        }
+      });
 
+    channelRef.current = channel;
+
+    // Cleanup function
     return () => {
-      supabase.removeChannel(channel);
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+      if (clockIntervalRef.current) {
+        clearInterval(clockIntervalRef.current);
+        clockIntervalRef.current = null;
+      }
     };
   }
 
@@ -194,18 +323,68 @@ export default function GameCapturePage() {
     alert(`Period ${currentPeriod} ended`);
   }
 
-  function toggleClock() {
-    setClockRunning(!clockRunning);
+  async function toggleClock() {
+    if (userSlot !== 'a') return;
+    
+    const newState = !clockRunning;
+    setClockRunning(newState);
+    
+    // Immediate write to DB
+    await updateGameState({
+      clock_running: newState,
+      clock_remaining_ms: clockRemaining,
+    });
   }
 
-  function adjustClock(ms: number) {
-    setClockRemaining(prev => Math.max(0, Math.min(600000, prev + ms)));
+  async function adjustClock(ms: number) {
+    if (userSlot !== 'a') return;
+    
+    const newTime = Math.max(0, Math.min(600000, clockRemaining + ms));
+    setClockRemaining(newTime);
+    
+    // Immediate write to DB
+    await updateGameState({
+      clock_remaining_ms: newTime,
+    });
   }
 
-  function nextPeriod() {
-    setCurrentPeriod(prev => prev + 1);
+  async function nextPeriod() {
+    if (userSlot !== 'a') return;
+    
+    const newPeriod = currentPeriod + 1;
+    setCurrentPeriod(newPeriod);
     setClockRemaining(600000);
     setClockRunning(false);
+    
+    // Immediate write to DB
+    await updateGameState({
+      current_period: newPeriod,
+      clock_remaining_ms: 600000,
+      clock_running: false,
+    });
+  }
+
+  async function flipPossession() {
+    if (userSlot !== 'a') return;
+    
+    const newPossession = possession === 'home' ? 'away' : 'home';
+    setPossession(newPossession);
+    
+    // Immediate write to DB
+    await updateGameState({
+      possession: newPossession,
+    });
+  }
+
+  async function updateOpponentScore(newScore: number) {
+    if (userSlot !== 'a') return;
+    
+    setOpponentScore(newScore);
+    
+    // Immediate write to DB
+    await updateGameState({
+      opponent_score: newScore,
+    });
   }
 
   async function recordShot(coordX: number, coordY: number, made: boolean, points: number) {
@@ -245,15 +424,22 @@ export default function GameCapturePage() {
     if (error) {
       alert(`Error: ${error.message}`);
     } else {
-      if (made) {
-        setTeamScore(prev => prev + points);
-        setPossession('away');
-      } else {
-        setPossession('away');
-      }
+      // Update local state
+      const newTeamScore = made ? teamScore + points : teamScore;
+      const newPossession = 'away'; // Possession changes after any shot attempt
+      
+      setTeamScore(newTeamScore);
+      setPossession(newPossession);
       setShotMode(false);
       setSelectedPlayer(null);
-      loadData();
+
+      // Immediate write to DB (Slot A only, but recordShot is Slot A action)
+      if (userSlot === 'a') {
+        await updateGameState({
+          team_score: newTeamScore,
+          possession: newPossession,
+        });
+      }
     }
   }
 
@@ -275,9 +461,8 @@ export default function GameCapturePage() {
 
     if (error) {
       alert(`Error: ${error.message}`);
-    } else {
-      loadData();
     }
+    // Event will be added via Realtime INSERT subscription
   }
 
   async function handleUndo() {
@@ -292,6 +477,15 @@ export default function GameCapturePage() {
       }
     }
 
+    // If it was a made shot, revert the score
+    if (lastEvent.made && lastEvent.points > 0 && userSlot === 'a') {
+      const newTeamScore = Math.max(0, teamScore - lastEvent.points);
+      setTeamScore(newTeamScore);
+      await updateGameState({
+        team_score: newTeamScore,
+      });
+    }
+
     const { error } = await supabase
       .from('game_events')
       .delete()
@@ -299,9 +493,8 @@ export default function GameCapturePage() {
 
     if (error) {
       alert(`Error: ${error.message}`);
-    } else {
-      loadData();
     }
+    // Event will be removed via Realtime DELETE subscription
   }
 
   if (loading) {
@@ -326,6 +519,21 @@ export default function GameCapturePage() {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  // Count connected users from presence
+  const presenceUsers = Object.keys(presenceState);
+  const connectedCount = presenceUsers.length;
+  
+  // Connection status display
+  const connectionColor = 
+    connectionStatus === 'connected' ? 'text-green-400' :
+    connectionStatus === 'reconnecting' ? 'text-yellow-400' :
+    'text-red-400';
+  
+  const connectionText =
+    connectionStatus === 'connected' ? 'Connected' :
+    connectionStatus === 'reconnecting' ? 'Reconnecting...' :
+    'Offline';
+
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       {/* Header */}
@@ -333,14 +541,19 @@ export default function GameCapturePage() {
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-lg font-bold">{game.teams?.name} vs {game.opponent_name}</h1>
-            <p className="text-sm text-gray-400">Slot {userSlot.toUpperCase()}</p>
+            <p className="text-sm text-gray-400">Slot {userSlot.toUpperCase()} {userSlot === 'a' ? '(Clock Authority)' : '(View Only)'}</p>
           </div>
           <div className="text-right">
             <div className="text-3xl font-bold">
               {teamScore} - {opponentScore}
             </div>
-            <div className="text-sm text-gray-400">
-              {connectedUsers.length > 0 && `${connectedUsers.length + 1} connected`}
+            <div className="text-sm">
+              <span className={connectionColor}>● {connectionText}</span>
+              {connectedCount > 0 && (
+                <span className="ml-2 text-gray-400">
+                  {connectedCount} online
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -388,7 +601,7 @@ export default function GameCapturePage() {
             <>
               {' | '}
               <button
-                onClick={() => setPossession(possession === 'home' ? 'away' : 'home')}
+                onClick={flipPossession}
                 className="text-blue-400 hover:text-blue-300"
               >
                 Switch
@@ -413,7 +626,7 @@ export default function GameCapturePage() {
               recordShot={recordShot}
               recordEvent={recordEvent}
               opponentScore={opponentScore}
-              setOpponentScore={setOpponentScore}
+              updateOpponentScore={updateOpponentScore}
             />
           )}
 
@@ -463,7 +676,7 @@ export default function GameCapturePage() {
 }
 
 // Slot A Component
-function SlotAInterface({ players, selectedPlayer, setSelectedPlayer, shotMode, setShotMode, recordShot, recordEvent, opponentScore, setOpponentScore }: any) {
+function SlotAInterface({ players, selectedPlayer, setSelectedPlayer, shotMode, setShotMode, recordShot, recordEvent, opponentScore, updateOpponentScore }: any) {
   const [shotPoints, setShotPoints] = useState(2);
 
   return (
@@ -576,14 +789,14 @@ function SlotAInterface({ players, selectedPlayer, setSelectedPlayer, shotMode, 
         <h3 className="font-bold mb-2">Opponent Score</h3>
         <div className="flex items-center gap-4">
           <button
-            onClick={() => setOpponentScore((prev: number) => Math.max(0, prev - 1))}
+            onClick={() => updateOpponentScore(Math.max(0, opponentScore - 1))}
             className="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded text-2xl"
           >
             -
           </button>
           <div className="text-4xl font-bold">{opponentScore}</div>
           <button
-            onClick={() => setOpponentScore((prev: number) => prev + 1)}
+            onClick={() => updateOpponentScore(opponentScore + 1)}
             className="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded text-2xl"
           >
             +
