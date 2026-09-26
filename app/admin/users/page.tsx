@@ -171,7 +171,8 @@ export default function UsersPage() {
     return <div className="p-8">Loading...</div>;
   }
 
-  const parentUsers = users.filter(u => u.role === 'parent');
+  // Filter users who have the parent role (multi-role support)
+  const parentUsers = users.filter(u => u.roles?.includes('parent') || u.role === 'parent');
 
   return (
     <div className="min-h-screen bg-gray-100">
