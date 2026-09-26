@@ -1,6 +1,7 @@
 'use server';
 
 import { getServerSupabase } from '@/lib/supabase';
+import { assertAdmin } from '@/lib/auth-server';
 
 export async function createUser(formData: {
   email: string;
@@ -9,6 +10,12 @@ export async function createUser(formData: {
   role: string;
   roles?: string[];
 }) {
+  // SECURITY: Verify caller is admin before using service role
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
   const supabase = getServerSupabase();
   
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
@@ -65,6 +72,12 @@ export async function createUser(formData: {
 }
 
 export async function updateUserRoles(userId: string, roles: string[]) {
+  // SECURITY: Verify caller is admin before using service role
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
   const supabase = getServerSupabase();
   
   if (!roles || roles.length === 0) {
@@ -117,6 +130,12 @@ export async function updateUserRole(userId: string, role: string) {
 }
 
 export async function linkParentToPlayer(parentId: string, playerId: string) {
+  // SECURITY: Verify caller is admin before using service role
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
   const supabase = getServerSupabase();
   
   const { error } = await supabase
@@ -131,6 +150,12 @@ export async function linkParentToPlayer(parentId: string, playerId: string) {
 }
 
 export async function unlinkParentFromPlayer(parentId: string, playerId: string) {
+  // SECURITY: Verify caller is admin before using service role
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
   const supabase = getServerSupabase();
   
   const { error } = await supabase
