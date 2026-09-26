@@ -697,72 +697,79 @@ export default function GameCapturePage() {
 
   return (
     <div className="fixed inset-0 bg-gray-900 text-white flex flex-col overflow-hidden">
-      {/* Top Bar - Clock & Scores */}
-      <div className="flex items-center justify-between bg-gray-800 border-b-2 border-orange-500 px-4 py-2 flex-shrink-0" style={{ minHeight: '70px' }}>
-        {/* Left: Clock & Controls (Slot A only) */}
+      {/* Single Compact Top Bar - All Game Info & Controls */}
+      <div className="flex items-center justify-between bg-gray-800 border-b-2 border-orange-500 px-3 py-2 flex-shrink-0 gap-3" style={{ minHeight: '56px' }}>
+        {/* Left: Team Names & Score */}
+        <div className="flex items-center gap-3">
+          <div className="text-lg font-bold whitespace-nowrap">
+            {game.teams?.name} <span className="text-2xl text-orange-400">{teamScore}</span> - <span className="text-2xl text-blue-400">{opponentScore}</span> {game.opponent_name}
+          </div>
+          <div className="text-xs">
+            <span className={connectionColor}>● {connectionText}</span>
+            {connectedCount > 0 && <span className="ml-1 text-gray-400">({connectedCount})</span>}
+          </div>
+        </div>
+        
+        {/* Center: Clock & Controls (Slot A) */}
         {userSlot === 'a' ? (
-          <div className="flex items-center gap-4">
-            <div className="flex flex-col items-center">
-              <div className="text-3xl font-bold">{formatTime(clockRemaining)}</div>
-              <div className="text-xs text-gray-400">Period {currentPeriod}</div>
+          <div className="flex items-center gap-2">
+            <div className="flex flex-col items-center mr-2">
+              <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
+              <div className="text-xs text-gray-400">P{currentPeriod}</div>
             </div>
             <button
               onClick={toggleClock}
-              className={`px-4 py-2 rounded font-bold text-sm ${
+              className={`px-3 py-2 rounded font-bold text-sm ${
                 clockRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
               }`}
+              style={{ minWidth: '60px', minHeight: '44px' }}
             >
               {clockRunning ? 'STOP' : 'START'}
             </button>
             <div className="flex gap-1">
-              <button onClick={() => adjustClock(-10000)} className="px-2 py-1 bg-gray-600 hover:bg-gray-700 rounded text-xs">-10s</button>
-              <button onClick={() => adjustClock(10000)} className="px-2 py-1 bg-gray-600 hover:bg-gray-700 rounded text-xs">+10s</button>
+              <button onClick={() => adjustClock(-10000)} className="px-2 py-2 bg-gray-600 hover:bg-gray-700 rounded text-xs" style={{ minHeight: '44px' }}>-10s</button>
+              <button onClick={() => adjustClock(10000)} className="px-2 py-2 bg-gray-600 hover:bg-gray-700 rounded text-xs" style={{ minHeight: '44px' }}>+10s</button>
             </div>
-            <button onClick={nextPeriod} className="px-3 py-1 bg-blue-500 hover:bg-blue-600 rounded text-xs">Next Period</button>
-            <button onClick={flipCourt} className="px-3 py-1 bg-purple-500 hover:bg-purple-600 rounded text-xs" title="Flip court direction">↔ Flip</button>
-            <div className="text-xs">
-              <span className="text-gray-400">Poss:</span>{' '}
-              <span className="font-medium">{possession === 'home' ? 'Home' : 'Away'}</span>
-              {' | '}
-              <button onClick={flipPossession} className="text-orange-400 hover:text-orange-300">Switch</button>
-            </div>
-            <div className="text-xs text-gray-500">
-              Attack: {attacking ? 'Right →' : '← Left'}
+            <button onClick={nextPeriod} className="px-2 py-2 bg-blue-500 hover:bg-blue-600 rounded text-xs whitespace-nowrap" style={{ minHeight: '44px' }}>Next</button>
+            <button onClick={flipCourt} className="px-2 py-2 bg-purple-500 hover:bg-purple-600 rounded text-xs" title="Flip court" style={{ minHeight: '44px' }}>↔</button>
+            <div className="text-xs border-l border-gray-600 pl-2">
+              <div className="text-gray-400">Poss: <span className="font-medium text-white">{possession === 'home' ? 'Home' : 'Away'}</span></div>
+              <button onClick={flipPossession} className="text-orange-400 hover:text-orange-300 text-xs">Switch</button>
             </div>
           </div>
         ) : (
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <div className="flex flex-col items-center">
-              <div className="text-3xl font-bold">{formatTime(clockRemaining)}</div>
+              <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
               <div className="text-xs text-gray-400">Period {currentPeriod}</div>
             </div>
             <div className="text-xs text-gray-500">
-              Attack: {attacking ? 'Right →' : '← Left'}
+              {attacking ? 'Attack Right →' : '← Attack Left'}
             </div>
           </div>
         )}
         
-        {/* Right: Scores & Connection */}
-        <div className="flex items-center gap-4">
-          <div className="flex flex-col items-center">
-            <div className="text-xs text-gray-400 mb-1">{game.teams?.name} vs {game.opponent_name}</div>
-            <div className="text-3xl font-bold">{teamScore} - {opponentScore}</div>
-            <div className="text-xs mt-1">
-              <span className={connectionColor}>● {connectionText}</span>
-              {connectedCount > 0 && <span className="ml-1 text-gray-400">({connectedCount})</span>}
-            </div>
+        {/* Right: Opponent Score Control (Slot A only) */}
+        {userSlot === 'a' && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">Opp:</span>
+            <button 
+              onClick={() => updateOpponentScore(-1)} 
+              className="w-11 h-11 bg-gray-600 hover:bg-gray-700 rounded text-xl font-bold flex items-center justify-center"
+              style={{ minWidth: '44px', minHeight: '44px' }}
+            >
+              -
+            </button>
+            <div className="text-2xl font-bold min-w-[2rem] text-center text-blue-400">{opponentScore}</div>
+            <button 
+              onClick={() => updateOpponentScore(1)} 
+              className="w-11 h-11 bg-gray-600 hover:bg-gray-700 rounded text-xl font-bold flex items-center justify-center"
+              style={{ minWidth: '44px', minHeight: '44px' }}
+            >
+              +
+            </button>
           </div>
-          {userSlot === 'a' && (
-            <div className="flex flex-col items-center">
-              <div className="text-xs text-gray-400 mb-1">Opponent Score</div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => updateOpponentScore(-1)} className="w-8 h-8 bg-gray-600 hover:bg-gray-700 rounded text-lg font-bold">-</button>
-                <div className="text-2xl font-bold min-w-[2.5rem] text-center">{opponentScore}</div>
-                <button onClick={() => updateOpponentScore(1)} className="w-8 h-8 bg-gray-600 hover:bg-gray-700 rounded text-lg font-bold">+</button>
-              </div>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Court Area - Maintains 28:15 Aspect Ratio */}
@@ -777,43 +784,49 @@ export default function GameCapturePage() {
         </div>
       </div>
 
-      {/* Bottom Bar - Actions & Events */}
-      <div className="flex items-center justify-between bg-gray-800 border-t-2 border-orange-500 px-4 py-2 flex-shrink-0" style={{ minHeight: '60px' }}>
+      {/* Bottom Bar - Compact Actions & Slot Info */}
+      <div className="flex items-center justify-between bg-gray-800 border-t-2 border-orange-500 px-3 py-2 flex-shrink-0 gap-3" style={{ minHeight: '50px' }}>
         {/* Left: Slot A Additional Actions */}
         {userSlot === 'a' ? (
-          <div className="relative">
+          <div className="relative flex items-center gap-2">
+            <span className="text-xs text-orange-400 font-bold">Slot A</span>
             <button
               onClick={() => setShowSlotAMenu(!showSlotAMenu)}
-              className="px-4 py-2 bg-orange-500 hover:bg-orange-600 rounded font-bold text-sm"
+              className="px-3 py-2 bg-orange-500 hover:bg-orange-600 rounded font-bold text-xs"
+              style={{ minHeight: '44px' }}
             >
-              {showSlotAMenu ? 'Close Menu' : 'FT / Foul / Sub'}
+              {showSlotAMenu ? 'Close' : 'FT / Foul / Sub'}
             </button>
 
             {showSlotAMenu && (
-              <div className="absolute bottom-full left-0 mb-2 bg-gray-800 rounded-lg p-3 shadow-2xl border-2 border-orange-500 space-y-2 min-w-[200px]">
+              <div className="absolute bottom-full left-0 mb-2 bg-gray-800 rounded-lg p-3 shadow-2xl border-2 border-orange-500 space-y-2 min-w-[200px] z-50">
                 <p className="text-xs text-gray-400 mb-2">
                   {selectedPlayer ? `#${selectedPlayer.jersey_number} ${selectedPlayer.full_name}` : 'Tap court to select'}
                 </p>
-                <button onClick={() => handleFreeThrow(true)} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 rounded text-sm">FT Made</button>
-                <button onClick={() => handleFreeThrow(false)} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 rounded text-sm">FT Miss</button>
-                <button onClick={handleFoul} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-700 rounded text-sm">Foul</button>
-                <button onClick={handleSubstitution} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 rounded text-sm">Substitution</button>
+                <button onClick={() => handleFreeThrow(true)} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 rounded text-sm" style={{ minHeight: '44px' }}>FT Made</button>
+                <button onClick={() => handleFreeThrow(false)} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 rounded text-sm" style={{ minHeight: '44px' }}>FT Miss</button>
+                <button onClick={handleFoul} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-700 rounded text-sm" style={{ minHeight: '44px' }}>Foul</button>
+                <button onClick={handleSubstitution} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 rounded text-sm" style={{ minHeight: '44px' }}>Substitution</button>
               </div>
+            )}
+            {selectedPlayer && (
+              <span className="text-xs text-gray-400">
+                Selected: #{selectedPlayer.jersey_number} {selectedPlayer.full_name.split(' ')[0]}
+              </span>
             )}
           </div>
         ) : (
-          <div className="text-sm text-gray-400">Slot B: Tap court for rebounds/assists/steals/turnovers</div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-blue-400 font-bold">Slot B</span>
+            <span className="text-xs text-gray-400">Tap court for rebounds/assists/steals/turnovers</span>
+          </div>
         )}
-
-        {/* Center: Slot Indicator */}
-        <div className="text-xs text-gray-400">
-          Slot {userSlot?.toUpperCase()} {userSlot === 'a' && <span className="text-orange-400">(Authority)</span>}
-        </div>
 
         {/* Right: Event Feed Toggle */}
         <button
           onClick={() => setShowEventFeed(!showEventFeed)}
-          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded font-bold text-sm border border-gray-600"
+          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded font-bold text-xs border border-gray-600"
+          style={{ minHeight: '44px' }}
         >
           {showEventFeed ? 'Hide Events' : 'Show Events'}
         </button>
