@@ -69,7 +69,7 @@ export async function middleware(request: NextRequest) {
 
     // Role-based route protection
     const roleRoutes: Record<string, string[]> = {
-      admin: ['/admin'],
+      admin: ['/admin', '/team-manager', '/coach', '/parent', '/player'], // Admin can access all areas
       team_manager: ['/team-manager'],
       coach: ['/coach'],
       parent: ['/parent'],

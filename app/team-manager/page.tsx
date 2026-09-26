@@ -33,16 +33,16 @@ export default function TeamManagerDashboard() {
       return;
     }
 
-    // Check if user has team_manager role (multi-role support)
+    // Check if user has team_manager or admin role (multi-role support)
     const { data: userRoles } = await supabase
       .from('profile_roles')
       .select('role')
       .eq('profile_id', user.id);
 
     const roles = userRoles?.map(r => r.role) || [profileData.role];
-    const hasTeamManagerRole = roles.includes('team_manager');
+    const hasAccess = roles.includes('team_manager') || roles.includes('admin');
 
-    if (!hasTeamManagerRole) {
+    if (!hasAccess) {
       router.push('/login');
       return;
     }
