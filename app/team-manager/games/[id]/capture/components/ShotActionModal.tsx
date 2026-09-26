@@ -1,11 +1,13 @@
 'use client';
 
+import { isInsideThreePointLine } from './BasketballCourt';
+
 interface ShotActionModalProps {
   playerName: string;
   playerJersey: number;
-  coordinateX: number; // World coordinate (0-1, left to right)
-  coordinateY: number; // World coordinate (0-1, top to bottom)
-  attackingRight: boolean; // Which basket we're attacking
+  coordinateX: number; // World coordinate (0-1)
+  coordinateY: number; // World coordinate (0-1)
+  attackingRight: boolean;
   onAction: (made: boolean, points: number) => void;
   onClose: () => void;
 }
@@ -19,28 +21,9 @@ export function ShotActionModal({
   onAction,
   onClose
 }: ShotActionModalProps) {
-  // Determine basket position we're attacking
-  const basketX = attackingRight ? 0.975 : 0.025; // Right basket (0.975) or left basket (0.025)
-  const basketY = 0.5; // Center court vertically
-  
-  // Calculate distance from attacking basket
-  const dx = coordinateX - basketX;
-  const dy = coordinateY - basketY;
-  const distance = Math.sqrt(dx * dx + dy * dy);
-  
-  // Detect if shot is in corner 3 area (near sideline, close to basket)
-  // Corners are at y < 0.19 or y > 0.81 (top/bottom ~88px from edges in 470px court)
-  const isNearSideline = coordinateY < 0.19 || coordinateY > 0.81;
-  
-  // FIBA 3pt: ~6.75m arc, ~6.60m corner
-  // In our full-court normalized system:
-  // Corner 3: near sideline + within ~0.18 from basket horizontally
-  const isCorner3 = isNearSideline && Math.abs(dx) < 0.18;
-  
-  // Arc 3: distance > ~0.22 from basket (in full-court normalized coords)
-  const isArc3 = distance > 0.22;
-  
-  const isLikely3pt = isCorner3 || isArc3;
+  // Use exact FIBA geometry for 2P/3P detection
+  const isInside3pt = isInsideThreePointLine(coordinateX, coordinateY, attackingRight);
+  const isLikely3pt = !isInside3pt;
   
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4">

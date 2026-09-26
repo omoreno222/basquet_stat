@@ -696,9 +696,77 @@ export default function GameCapturePage() {
   const isOffense = possession === 'home';
 
   return (
-    <div className="fixed inset-0 bg-gray-900 text-white overflow-hidden">
-      {/* Basketball Court - Full Viewport */}
-      <div className="absolute inset-0">
+    <div className="fixed inset-0 bg-gray-900 text-white flex flex-col overflow-hidden">
+      {/* Top Bar - Clock & Scores */}
+      <div className="flex items-center justify-between bg-gray-800 border-b-2 border-orange-500 px-4 py-2 flex-shrink-0" style={{ minHeight: '70px' }}>
+        {/* Left: Clock & Controls (Slot A only) */}
+        {userSlot === 'a' ? (
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col items-center">
+              <div className="text-3xl font-bold">{formatTime(clockRemaining)}</div>
+              <div className="text-xs text-gray-400">Period {currentPeriod}</div>
+            </div>
+            <button
+              onClick={toggleClock}
+              className={`px-4 py-2 rounded font-bold text-sm ${
+                clockRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
+              }`}
+            >
+              {clockRunning ? 'STOP' : 'START'}
+            </button>
+            <div className="flex gap-1">
+              <button onClick={() => adjustClock(-10000)} className="px-2 py-1 bg-gray-600 hover:bg-gray-700 rounded text-xs">-10s</button>
+              <button onClick={() => adjustClock(10000)} className="px-2 py-1 bg-gray-600 hover:bg-gray-700 rounded text-xs">+10s</button>
+            </div>
+            <button onClick={nextPeriod} className="px-3 py-1 bg-blue-500 hover:bg-blue-600 rounded text-xs">Next Period</button>
+            <button onClick={flipCourt} className="px-3 py-1 bg-purple-500 hover:bg-purple-600 rounded text-xs" title="Flip court direction">↔ Flip</button>
+            <div className="text-xs">
+              <span className="text-gray-400">Poss:</span>{' '}
+              <span className="font-medium">{possession === 'home' ? 'Home' : 'Away'}</span>
+              {' | '}
+              <button onClick={flipPossession} className="text-orange-400 hover:text-orange-300">Switch</button>
+            </div>
+            <div className="text-xs text-gray-500">
+              Attack: {attacking ? 'Right →' : '← Left'}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col items-center">
+              <div className="text-3xl font-bold">{formatTime(clockRemaining)}</div>
+              <div className="text-xs text-gray-400">Period {currentPeriod}</div>
+            </div>
+            <div className="text-xs text-gray-500">
+              Attack: {attacking ? 'Right →' : '← Left'}
+            </div>
+          </div>
+        )}
+        
+        {/* Right: Scores & Connection */}
+        <div className="flex items-center gap-4">
+          <div className="flex flex-col items-center">
+            <div className="text-xs text-gray-400 mb-1">{game.teams?.name} vs {game.opponent_name}</div>
+            <div className="text-3xl font-bold">{teamScore} - {opponentScore}</div>
+            <div className="text-xs mt-1">
+              <span className={connectionColor}>● {connectionText}</span>
+              {connectedCount > 0 && <span className="ml-1 text-gray-400">({connectedCount})</span>}
+            </div>
+          </div>
+          {userSlot === 'a' && (
+            <div className="flex flex-col items-center">
+              <div className="text-xs text-gray-400 mb-1">Opponent Score</div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => updateOpponentScore(-1)} className="w-8 h-8 bg-gray-600 hover:bg-gray-700 rounded text-lg font-bold">-</button>
+                <div className="text-2xl font-bold min-w-[2.5rem] text-center">{opponentScore}</div>
+                <button onClick={() => updateOpponentScore(1)} className="w-8 h-8 bg-gray-600 hover:bg-gray-700 rounded text-lg font-bold">+</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Court Area - Fills Remaining Space */}
+      <div className="flex-1 relative overflow-hidden">
         <BasketballCourt
           onCourtTap={handleCourtTap}
           shotMarkers={shotMarkers}
@@ -707,158 +775,43 @@ export default function GameCapturePage() {
         />
       </div>
 
-      {/* Top-Left: Clock Controls (Slot A only) */}
-      {userSlot === 'a' && (
-        <div className="absolute top-4 left-4 bg-gray-800 bg-opacity-95 rounded-lg p-4 shadow-2xl border-2 border-orange-500 max-w-xs">
-          <div className="text-4xl font-bold text-center mb-2">{formatTime(clockRemaining)}</div>
-          <div className="text-sm text-center text-gray-400 mb-3">Period {currentPeriod}</div>
-          
-          <div className="flex gap-2 mb-3">
+      {/* Bottom Bar - Actions & Events */}
+      <div className="flex items-center justify-between bg-gray-800 border-t-2 border-orange-500 px-4 py-2 flex-shrink-0" style={{ minHeight: '60px' }}>
+        {/* Left: Slot A Additional Actions */}
+        {userSlot === 'a' ? (
+          <div className="relative">
             <button
-              onClick={toggleClock}
-              className={`flex-1 px-4 py-2 rounded font-bold text-sm ${
-                clockRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
-              }`}
+              onClick={() => setShowSlotAMenu(!showSlotAMenu)}
+              className="px-4 py-2 bg-orange-500 hover:bg-orange-600 rounded font-bold text-sm"
             >
-              {clockRunning ? 'STOP' : 'START'}
+              {showSlotAMenu ? 'Close Menu' : 'FT / Foul / Sub'}
             </button>
-            <button
-              onClick={() => adjustClock(-10000)}
-              className="px-3 py-2 bg-gray-600 hover:bg-gray-700 rounded text-sm"
-            >
-              -10s
-            </button>
-            <button
-              onClick={() => adjustClock(10000)}
-              className="px-3 py-2 bg-gray-600 hover:bg-gray-700 rounded text-sm"
-            >
-              +10s
-            </button>
-          </div>
 
-          <button
-            onClick={nextPeriod}
-            className="w-full px-3 py-2 bg-blue-500 hover:bg-blue-600 rounded text-sm font-medium mb-2"
-          >
-            Next Period
-          </button>
-
-          <button
-            onClick={flipCourt}
-            className="w-full px-3 py-2 bg-purple-500 hover:bg-purple-600 rounded text-sm font-medium mb-3"
-            title="Flip which basket we attack (for when game starts the other way)"
-          >
-            ↔ Flip Court
-          </button>
-
-          <div className="text-xs text-center">
-            <span className="text-gray-400">Possession:</span>{' '}
-            <span className="font-medium">{possession === 'home' ? game.teams?.name : game.opponent_name}</span>
-            {' | '}
-            <button
-              onClick={flipPossession}
-              className="text-orange-400 hover:text-orange-300"
-            >
-              Switch
-            </button>
-          </div>
-          
-          <div className="text-xs text-center text-gray-500 mt-2">
-            Attack: {attacking ? 'Right →' : '← Left'}
-          </div>
-        </div>
-      )}
-
-      {/* Top-Right: Scores & Connection */}
-      <div className="absolute top-4 right-4 space-y-3">
-        {/* Game Score */}
-        <div className="bg-gray-800 bg-opacity-95 rounded-lg p-4 shadow-2xl border-2 border-orange-500 text-center">
-          <div className="text-xs text-gray-400 mb-1">{game.teams?.name} vs {game.opponent_name}</div>
-          <div className="text-4xl font-bold">{teamScore} - {opponentScore}</div>
-          <div className="text-xs mt-1">
-            <span className={connectionColor}>● {connectionText}</span>
-            {connectedCount > 0 && (
-              <span className="ml-1 text-gray-400">({connectedCount})</span>
+            {showSlotAMenu && (
+              <div className="absolute bottom-full left-0 mb-2 bg-gray-800 rounded-lg p-3 shadow-2xl border-2 border-orange-500 space-y-2 min-w-[200px]">
+                <p className="text-xs text-gray-400 mb-2">
+                  {selectedPlayer ? `#${selectedPlayer.jersey_number} ${selectedPlayer.full_name}` : 'Tap court to select'}
+                </p>
+                <button onClick={() => handleFreeThrow(true)} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 rounded text-sm">FT Made</button>
+                <button onClick={() => handleFreeThrow(false)} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 rounded text-sm">FT Miss</button>
+                <button onClick={handleFoul} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-700 rounded text-sm">Foul</button>
+                <button onClick={handleSubstitution} disabled={!selectedPlayer} className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 rounded text-sm">Substitution</button>
+              </div>
             )}
           </div>
-        </div>
-
-        {/* Opponent Score (Slot A only) */}
-        {userSlot === 'a' && (
-          <div className="bg-gray-800 bg-opacity-95 rounded-lg p-4 shadow-2xl border-2 border-blue-500 text-center">
-            <div className="text-xs text-gray-400 mb-2">Opponent Score</div>
-            <div className="flex items-center justify-center gap-3">
-              <button
-                onClick={() => updateOpponentScore(-1)}
-                className="w-12 h-12 bg-gray-600 hover:bg-gray-700 rounded-lg text-2xl font-bold"
-              >
-                -
-              </button>
-              <div className="text-3xl font-bold min-w-[3rem]">{opponentScore}</div>
-              <button
-                onClick={() => updateOpponentScore(1)}
-                className="w-12 h-12 bg-gray-600 hover:bg-gray-700 rounded-lg text-2xl font-bold"
-              >
-                +
-              </button>
-            </div>
-          </div>
+        ) : (
+          <div className="text-sm text-gray-400">Slot B: Tap court for rebounds/assists/steals/turnovers</div>
         )}
-      </div>
 
-      {/* Bottom-Left: Slot A Additional Actions */}
-      {userSlot === 'a' && (
-        <div className="absolute bottom-4 left-4">
-          <button
-            onClick={() => setShowSlotAMenu(!showSlotAMenu)}
-            className="px-6 py-3 bg-orange-500 hover:bg-orange-600 rounded-lg font-bold shadow-2xl"
-          >
-            {showSlotAMenu ? 'Close Menu' : 'FT / Foul / Sub'}
-          </button>
-
-          {showSlotAMenu && (
-            <div className="absolute bottom-16 left-0 bg-gray-800 bg-opacity-95 rounded-lg p-4 shadow-2xl border-2 border-orange-500 space-y-2 min-w-[200px]">
-              <p className="text-xs text-gray-400 mb-2">
-                {selectedPlayer ? `Player: #${selectedPlayer.jersey_number} ${selectedPlayer.full_name}` : 'Tap court to select player'}
-              </p>
-              <button
-                onClick={() => handleFreeThrow(true)}
-                disabled={!selectedPlayer}
-                className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 rounded"
-              >
-                FT Made
-              </button>
-              <button
-                onClick={() => handleFreeThrow(false)}
-                disabled={!selectedPlayer}
-                className="w-full px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 rounded"
-              >
-                FT Miss
-              </button>
-              <button
-                onClick={handleFoul}
-                disabled={!selectedPlayer}
-                className="w-full px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-700 rounded"
-              >
-                Foul
-              </button>
-              <button
-                onClick={handleSubstitution}
-                disabled={!selectedPlayer}
-                className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 rounded"
-              >
-                Substitution
-              </button>
-            </div>
-          )}
+        {/* Center: Slot Indicator */}
+        <div className="text-xs text-gray-400">
+          Slot {userSlot?.toUpperCase()} {userSlot === 'a' && <span className="text-orange-400">(Authority)</span>}
         </div>
-      )}
 
-      {/* Bottom-Right: Event Feed Toggle */}
-      <div className="absolute bottom-4 right-4">
+        {/* Right: Event Feed Toggle */}
         <button
           onClick={() => setShowEventFeed(!showEventFeed)}
-          className="px-6 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg font-bold shadow-2xl border-2 border-gray-600"
+          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded font-bold text-sm border border-gray-600"
         >
           {showEventFeed ? 'Hide Events' : 'Show Events'}
         </button>
@@ -866,7 +819,7 @@ export default function GameCapturePage() {
 
       {/* Event Feed Drawer */}
       {showEventFeed && (
-        <div className="absolute top-0 right-0 bottom-0 w-80 bg-gray-800 bg-opacity-98 shadow-2xl border-l-2 border-orange-500 flex flex-col">
+        <div className="absolute top-0 right-0 bottom-0 w-80 bg-gray-800 bg-opacity-98 shadow-2xl border-l-2 border-orange-500 flex flex-col z-40">
           <div className="p-4 border-b border-gray-700 flex justify-between items-center">
             <h3 className="font-bold text-lg">Event Feed</h3>
             <button
@@ -904,12 +857,6 @@ export default function GameCapturePage() {
           </div>
         </div>
       )}
-
-      {/* Slot indicator (bottom center) */}
-      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-gray-800 bg-opacity-90 px-4 py-2 rounded-full text-sm border border-gray-600">
-        <span className="text-gray-400">Slot {userSlot.toUpperCase()}</span>
-        {userSlot === 'a' && <span className="text-orange-400 ml-2">(Authority)</span>}
-      </div>
 
       {/* Modals */}
       {showPlayerPicker && (
