@@ -572,13 +572,6 @@ export default function GameCapturePage() {
     });
   }
 
-  async function adjustClock(ms: number) {
-    if (userSlot !== 'a') return;
-    const newTime = Math.max(0, Math.min(600000, clockRemaining + ms));
-    setClockRemaining(newTime);
-    await updateGameState({ clock_remaining_ms: newTime });
-  }
-
   async function nextPeriod() {
     if (userSlot !== 'a') return;
     const newPeriod = currentPeriod + 1;
@@ -697,79 +690,115 @@ export default function GameCapturePage() {
 
   return (
     <div className="fixed inset-0 bg-gray-900 text-white flex flex-col overflow-hidden">
-      {/* Single Compact Top Bar - All Game Info & Controls */}
-      <div className="flex items-center justify-between bg-gray-800 border-b-2 border-orange-500 px-3 py-2 flex-shrink-0 gap-3" style={{ minHeight: '56px' }}>
-        {/* Left: Team Names & Score */}
-        <div className="flex items-center gap-3">
-          <div className="text-lg font-bold whitespace-nowrap">
-            {game.teams?.name} <span className="text-2xl text-orange-400">{teamScore}</span> - <span className="text-2xl text-blue-400">{opponentScore}</span> {game.opponent_name}
-          </div>
-          <div className="text-xs">
-            <span className={connectionColor}>● {connectionText}</span>
-            {connectedCount > 0 && <span className="ml-1 text-gray-400">({connectedCount})</span>}
-          </div>
-        </div>
-        
-        {/* Center: Clock & Controls (Slot A) */}
+      {/* Single Compact Top Bar - Clock (Left) & Score (Right) */}
+      <div className="flex items-center justify-between bg-gray-800 border-b-2 border-orange-500 px-3 py-2 flex-shrink-0 gap-4" style={{ minHeight: '56px' }}>
+        {/* LEFT: Clock Block (Horizontal Layout) */}
         {userSlot === 'a' ? (
-          <div className="flex items-center gap-2">
-            <div className="flex flex-col items-center mr-2">
-              <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
-              <div className="text-xs text-gray-400">P{currentPeriod}</div>
-            </div>
-            <button
-              onClick={toggleClock}
-              className={`px-3 py-2 rounded font-bold text-sm ${
-                clockRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
-              }`}
-              style={{ minWidth: '60px', minHeight: '44px' }}
-            >
-              {clockRunning ? 'STOP' : 'START'}
-            </button>
-            <div className="flex gap-1">
-              <button onClick={() => adjustClock(-10000)} className="px-2 py-2 bg-gray-600 hover:bg-gray-700 rounded text-xs" style={{ minHeight: '44px' }}>-10s</button>
-              <button onClick={() => adjustClock(10000)} className="px-2 py-2 bg-gray-600 hover:bg-gray-700 rounded text-xs" style={{ minHeight: '44px' }}>+10s</button>
-            </div>
-            <button onClick={nextPeriod} className="px-2 py-2 bg-blue-500 hover:bg-blue-600 rounded text-xs whitespace-nowrap" style={{ minHeight: '44px' }}>Next</button>
-            <button onClick={flipCourt} className="px-2 py-2 bg-purple-500 hover:bg-purple-600 rounded text-xs" title="Flip court" style={{ minHeight: '44px' }}>↔</button>
-            <div className="text-xs border-l border-gray-600 pl-2">
-              <div className="text-gray-400">Poss: <span className="font-medium text-white">{possession === 'home' ? 'Home' : 'Away'}</span></div>
-              <button onClick={flipPossession} className="text-orange-400 hover:text-orange-300 text-xs">Switch</button>
-            </div>
-          </div>
-        ) : (
           <div className="flex items-center gap-3">
+            {/* Time & Period */}
             <div className="flex flex-col items-center">
               <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
               <div className="text-xs text-gray-400">Period {currentPeriod}</div>
             </div>
+            
+            {/* START/STOP */}
+            <button
+              onClick={toggleClock}
+              className={`px-4 py-2 rounded-lg font-bold text-sm ${
+                clockRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
+              }`}
+              style={{ minWidth: '80px', minHeight: '44px' }}
+            >
+              {clockRunning ? 'STOP' : 'START'}
+            </button>
+            
+            {/* Next Period */}
+            <button 
+              onClick={nextPeriod} 
+              className="px-4 py-2 bg-blue-500 hover:bg-blue-600 rounded-lg text-sm font-medium whitespace-nowrap" 
+              style={{ minHeight: '44px' }}
+            >
+              Next Period
+            </button>
+            
+            {/* Flip Court */}
+            <button 
+              onClick={flipCourt} 
+              className="px-4 py-2 bg-purple-500 hover:bg-purple-600 rounded-lg text-sm font-medium whitespace-nowrap" 
+              title="Flip which basket we attack"
+              style={{ minHeight: '44px' }}
+            >
+              ↔ Flip Court
+            </button>
+            
+            {/* Possession */}
+            <div className="flex items-center gap-2 text-sm border-l border-gray-600 pl-3">
+              <span className="text-gray-400">Possession:</span>
+              <span className="font-medium">{possession === 'home' ? game.teams?.name : game.opponent_name}</span>
+              <button onClick={flipPossession} className="text-orange-400 hover:text-orange-300 font-medium">
+                Switch
+              </button>
+            </div>
+            
+            {/* Attack Direction */}
+            <div className="text-xs text-gray-500">
+              {attacking ? 'Attack Right →' : '← Attack Left'}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            {/* Time & Period */}
+            <div className="flex flex-col items-center">
+              <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
+              <div className="text-xs text-gray-400">Period {currentPeriod}</div>
+            </div>
+            
+            {/* Possession (View Only) */}
+            <div className="text-sm text-gray-400">
+              Possession: <span className="font-medium text-white">{possession === 'home' ? game.teams?.name : game.opponent_name}</span>
+            </div>
+            
+            {/* Attack Direction */}
             <div className="text-xs text-gray-500">
               {attacking ? 'Attack Right →' : '← Attack Left'}
             </div>
           </div>
         )}
         
-        {/* Right: Opponent Score Control (Slot A only) */}
-        {userSlot === 'a' && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">Opp:</span>
-            <button 
-              onClick={() => updateOpponentScore(-1)} 
-              className="w-11 h-11 bg-gray-600 hover:bg-gray-700 rounded text-xl font-bold flex items-center justify-center"
-              style={{ minWidth: '44px', minHeight: '44px' }}
-            >
-              -
-            </button>
-            <div className="text-2xl font-bold min-w-[2rem] text-center text-blue-400">{opponentScore}</div>
-            <button 
-              onClick={() => updateOpponentScore(1)} 
-              className="w-11 h-11 bg-gray-600 hover:bg-gray-700 rounded text-xl font-bold flex items-center justify-center"
-              style={{ minWidth: '44px', minHeight: '44px' }}
-            >
-              +
-            </button>
+        {/* RIGHT: Score + Connection + Opponent Control */}
+        <div className="flex items-center gap-4">
+          {/* Team Names & Score */}
+          <div className="text-lg font-bold whitespace-nowrap">
+            {game.teams?.name} <span className="text-2xl text-orange-400">{teamScore}</span> - <span className="text-2xl text-blue-400">{opponentScore}</span> {game.opponent_name}
           </div>
-        )}
+          
+          {/* Connection Status */}
+          <div className="text-xs whitespace-nowrap">
+            <span className={connectionColor}>● {connectionText}</span>
+            {connectedCount > 0 && <span className="ml-1 text-gray-400">({connectedCount})</span>}
+          </div>
+          
+          {/* Opponent Score Control (Slot A only) */}
+          {userSlot === 'a' && (
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => updateOpponentScore(-1)} 
+                className="w-11 h-11 bg-gray-600 hover:bg-gray-700 rounded-lg text-xl font-bold flex items-center justify-center"
+                style={{ minWidth: '44px', minHeight: '44px' }}
+              >
+                -
+              </button>
+              <div className="text-2xl font-bold min-w-[2rem] text-center text-blue-400">{opponentScore}</div>
+              <button 
+                onClick={() => updateOpponentScore(1)} 
+                className="w-11 h-11 bg-gray-600 hover:bg-gray-700 rounded-lg text-xl font-bold flex items-center justify-center"
+                style={{ minWidth: '44px', minHeight: '44px' }}
+              >
+                +
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Court Area - Maintains 28:15 Aspect Ratio */}
