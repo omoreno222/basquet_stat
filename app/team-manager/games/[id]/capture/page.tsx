@@ -94,6 +94,15 @@ export default function GameCapturePage() {
 
     setCurrentUser(profile);
 
+    // Fetch user roles for multi-role support
+    const { data: userRoles } = await supabase
+      .from('profile_roles')
+      .select('role')
+      .eq('profile_id', user.id);
+
+    const roles = userRoles?.map(r => r.role) || [profile?.role];
+    const isAdmin = roles.includes('admin');
+
     const { data: gameData } = await supabase
       .from('games')
       .select('*, teams(name)')
@@ -113,7 +122,7 @@ export default function GameCapturePage() {
         setUserSlot('a');
       } else if (profile.id === gameData.slot_b_user_id) {
         setUserSlot('b');
-      } else if (profile.role === 'admin') {
+      } else if (isAdmin) {
         setUserSlot('a'); // Admin defaults to A
       }
 
