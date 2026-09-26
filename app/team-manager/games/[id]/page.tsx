@@ -38,6 +38,15 @@ export default function GameDetailPage() {
 
     setCurrentUser(profile);
 
+    // Fetch user roles for multi-role support
+    const { data: userRoles } = await supabase
+      .from('profile_roles')
+      .select('role')
+      .eq('profile_id', user.id);
+
+    const roles = userRoles?.map(r => r.role) || [profile?.role];
+    const isAdmin = roles.includes('admin');
+
     const { data: gameData } = await supabase
       .from('games')
       .select('*, teams(name)')
@@ -65,13 +74,30 @@ export default function GameDetailPage() {
 
       setPlayers(playersData || []);
 
-      const { data: usersData } = await supabase
-        .from('profiles')
-        .select('id, email, full_name')
-        .in('role', ['admin', 'team_manager'])
-        .order('email');
+      // Fetch users who have admin or team_manager role (multi-role support)
+      // We get all profile_roles entries with these roles, then fetch the profiles
+      const { data: eligibleRoles } = await supabase
+        .from('profile_roles')
+        .select('profile_id')
+        .in('role', ['admin', 'team_manager']);
 
-      setUsers(usersData || []);
+      const eligibleUserIds = [...new Set(eligibleRoles?.map(r => r.profile_id) || [])];
+
+      if (eligibleUserIds.length > 0) {
+        const { data: usersData } = await supabase
+          .from('profiles')
+          .select('id, email, full_name')
+          .in('id', eligibleUserIds)
+          .order('email');
+
+        setUsers(usersData || []);
+      } else {
+        setUsers([]);
+      }
+
+      // Store isAdmin for use in canCapture check
+      (profile as any).isAdmin = isAdmin;
+      setCurrentUser(profile);
     }
 
     setLoading(false);
@@ -144,7 +170,7 @@ export default function GameDetailPage() {
   }
 
   const canCapture = currentUser && (
-    currentUser.role === 'admin' ||
+    (currentUser as any).isAdmin ||
     currentUser.id === game.slot_a_user_id ||
     currentUser.id === game.slot_b_user_id
   );

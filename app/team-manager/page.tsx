@@ -28,7 +28,21 @@ export default function TeamManagerDashboard() {
       .eq('id', user.id)
       .single();
 
-    if (!profileData || profileData.role !== 'team_manager') {
+    if (!profileData) {
+      router.push('/login');
+      return;
+    }
+
+    // Check if user has team_manager role (multi-role support)
+    const { data: userRoles } = await supabase
+      .from('profile_roles')
+      .select('role')
+      .eq('profile_id', user.id);
+
+    const roles = userRoles?.map(r => r.role) || [profileData.role];
+    const hasTeamManagerRole = roles.includes('team_manager');
+
+    if (!hasTeamManagerRole) {
       router.push('/login');
       return;
     }

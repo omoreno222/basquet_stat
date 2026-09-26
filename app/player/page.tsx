@@ -27,7 +27,21 @@ export default function PlayerDashboard() {
       .eq('id', user.id)
       .single();
 
-    if (!profileData || profileData.role !== 'player') {
+    if (!profileData) {
+      router.push('/login');
+      return;
+    }
+
+    // Check if user has player role (multi-role support)
+    const { data: userRoles } = await supabase
+      .from('profile_roles')
+      .select('role')
+      .eq('profile_id', user.id);
+
+    const roles = userRoles?.map(r => r.role) || [profileData.role];
+    const hasPlayerRole = roles.includes('player');
+
+    if (!hasPlayerRole) {
       router.push('/login');
       return;
     }

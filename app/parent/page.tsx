@@ -27,7 +27,21 @@ export default function ParentDashboard() {
       .eq('id', user.id)
       .single();
 
-    if (!profileData || profileData.role !== 'parent') {
+    if (!profileData) {
+      router.push('/login');
+      return;
+    }
+
+    // Check if user has parent role (multi-role support)
+    const { data: userRoles } = await supabase
+      .from('profile_roles')
+      .select('role')
+      .eq('profile_id', user.id);
+
+    const roles = userRoles?.map(r => r.role) || [profileData.role];
+    const hasParentRole = roles.includes('parent');
+
+    if (!hasParentRole) {
       router.push('/login');
       return;
     }
