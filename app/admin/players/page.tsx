@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Player, Team } from '@/types/database';
 import Link from 'next/link';
+import Image from 'next/image';
+import { uploadPlayerAvatar, removePlayerAvatar } from '../actions';
 
 export default function PlayersPage() {
   const [players, setPlayers] = useState<any[]>([]);
@@ -19,6 +21,9 @@ export default function PlayersPage() {
     date_of_birth: '',
   });
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [uploadingAvatar, setUploadingAvatar] = useState<string | null>(null);
+  const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
   useEffect(() => {
     loadData();
@@ -109,6 +114,45 @@ export default function PlayersPage() {
     loadData();
   }
 
+  async function handleAvatarUpload(playerId: string, file: File) {
+    setUploadingAvatar(playerId);
+    setError('');
+    setSuccess('');
+
+    const result = await uploadPlayerAvatar(playerId, file);
+    setUploadingAvatar(null);
+
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+
+    setSuccess('Avatar uploaded successfully');
+    loadData();
+  }
+
+  async function handleAvatarRemove(playerId: string) {
+    if (!confirm('Are you sure you want to remove this avatar?')) {
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+
+    const result = await removePlayerAvatar(playerId);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+
+    setSuccess('Avatar removed successfully');
+    loadData();
+  }
+
+  function triggerFileInput(playerId: string) {
+    fileInputRefs.current[playerId]?.click();
+  }
+
   if (loading) {
     return <div className="p-8">Loading...</div>;
   }
@@ -137,6 +181,21 @@ export default function PlayersPage() {
       </nav>
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        {(error || success) && (
+          <div className="mb-4 px-4">
+            {error && (
+              <div className="p-3 bg-red-100 text-red-700 rounded">
+                {error}
+              </div>
+            )}
+            {success && (
+              <div className="p-3 bg-green-100 text-green-700 rounded">
+                {success}
+              </div>
+            )}
+          </div>
+        )}
+
         {showForm && (
           <div className="mb-6 px-4">
             <div className="bg-white shadow rounded-lg p-6">
@@ -247,20 +306,64 @@ export default function PlayersPage() {
                 players.map((player) => (
                   <li key={player.id} className="px-6 py-4 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-medium text-gray-900">
-                          #{player.jersey_number} {player.full_name}
-                        </h3>
-                        <p className="text-sm text-gray-500">
-                          Team: {player.teams?.name || 'N/A'}
-                        </p>
-                        {player.position && (
+                      <div className="flex items-center gap-4">
+                        <div className="relative">
+                          {player.avatar_url ? (
+                            <Image
+                              src={player.avatar_url}
+                              alt={player.full_name}
+                              width={48}
+                              height={48}
+                              className="rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center">
+                              <span className="text-gray-500 text-lg font-medium">
+                                {player.full_name.charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-medium text-gray-900">
+                            #{player.jersey_number} {player.full_name}
+                          </h3>
                           <p className="text-sm text-gray-500">
-                            Position: {player.position}
+                            Team: {player.teams?.name || 'N/A'}
                           </p>
-                        )}
+                          {player.position && (
+                            <p className="text-sm text-gray-500">
+                              Position: {player.position}
+                            </p>
+                          )}
+                        </div>
                       </div>
                       <div className="flex gap-2">
+                        <input
+                          type="file"
+                          ref={(el) => (fileInputRefs.current[player.id] = el)}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleAvatarUpload(player.id, file);
+                          }}
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                        />
+                        <button
+                          onClick={() => triggerFileInput(player.id)}
+                          disabled={uploadingAvatar === player.id}
+                          className="bg-green-500 hover:bg-green-700 text-white px-3 py-1 rounded text-sm whitespace-nowrap disabled:opacity-50"
+                        >
+                          {uploadingAvatar === player.id ? 'Uploading...' : player.avatar_url ? 'Change Photo' : 'Add Photo'}
+                        </button>
+                        {player.avatar_url && (
+                          <button
+                            onClick={() => handleAvatarRemove(player.id)}
+                            className="bg-orange-500 hover:bg-orange-700 text-white px-3 py-1 rounded text-sm whitespace-nowrap"
+                          >
+                            Remove
+                          </button>
+                        )}
                         <button
                           onClick={() => handleEdit(player)}
                           className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"
