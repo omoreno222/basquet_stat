@@ -8,6 +8,7 @@ import Image from 'next/image';
 import { Profile, Game } from '@/lib/types';
 import { Club } from '@/types/database';
 import { ClubLogo } from '@/components/ClubLogo';
+import { TeamManagerNavPills } from '@/components/NavPills';
 
 interface GameWithTeam extends Game {
   teams?: { 
@@ -102,7 +103,7 @@ export default function TeamManagerDashboard() {
                 height={120}
                 className="h-10 w-auto"
               />
-              <span className="text-lg font-semibold text-white">Team Manager</span>
+              <span className="font-display text-lg font-semibold text-white">Team Manager</span>
             </div>
             <div className="flex items-center space-x-4">
               <span className="text-gray-700">Welcome, {profile?.full_name || profile?.email}</span>
@@ -116,6 +117,7 @@ export default function TeamManagerDashboard() {
           </div>
         </div>
       </nav>
+      <TeamManagerNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">

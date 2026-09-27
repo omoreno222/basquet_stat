@@ -15,6 +15,10 @@ const config: Config = {
           dark: '#1e3a8a',    // Slightly darker blue for dark mode (blue-900)
         },
       },
+      fontFamily: {
+        sans: ['var(--font-manrope)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['var(--font-sora)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      },
     },
   },
   plugins: [],

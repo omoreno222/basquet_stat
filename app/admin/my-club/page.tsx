@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { ClubLogo } from '@/components/ClubLogo';
 import { uploadClubLogo, removeClubLogo } from '../actions';
+import { AdminNavPills } from '@/components/NavPills';
 
 interface Club {
   id: string;
@@ -163,6 +164,7 @@ export default function MyClubPage() {
             </div>
           </div>
         </nav>
+        <AdminNavPills />
         <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0">
             <div className="bg-white shadow rounded-lg p-6">
@@ -188,6 +190,7 @@ export default function MyClubPage() {
           </div>
         </div>
       </nav>
+      <AdminNavPills />
 
       <div className="max-w-3xl mx-auto py-6 sm:px-6 lg:px-8">
         {(error || success) && (

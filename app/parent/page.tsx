@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Profile, Player } from '@/lib/types';
+import { ParentNavPills } from '@/components/NavPills';
 
 interface PlayerWithTeam extends Player {
   teams?: { name: string };
@@ -99,7 +100,7 @@ export default function ParentDashboard() {
                 height={120}
                 className="h-10 w-auto"
               />
-              <span className="text-lg font-semibold text-white">Parent</span>
+              <span className="font-display text-lg font-semibold text-white">Parent</span>
             </div>
             <div className="flex items-center space-x-4">
               <span className="text-gray-700">Welcome, {profile?.full_name || profile?.email}</span>
@@ -113,6 +114,7 @@ export default function ParentDashboard() {
           </div>
         </div>
       </nav>
+      <ParentNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">

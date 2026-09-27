@@ -8,6 +8,7 @@ import { Profile, Player, Game } from '@/lib/types';
 import { Club } from '@/types/database';
 import { ClubLogo } from '@/components/ClubLogo';
 import { canStartGame, formatTimeUntilStart, type GameStartCheck } from '@/lib/game-start-window';
+import { TeamManagerNavPills } from '@/components/NavPills';
 
 interface GameWithTeam extends Game {
   teams?: { 
@@ -225,6 +226,7 @@ export default function GameDetailPage() {
           </div>
         </div>
       </nav>
+      <TeamManagerNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">

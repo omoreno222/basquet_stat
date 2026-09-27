@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { Translation } from '@/lib/types';
+import { AdminNavPills } from '@/components/NavPills';
 
 export default function TranslationsPage() {
   const [translations, setTranslations] = useState<Translation[]>([]);
@@ -104,6 +105,7 @@ export default function TranslationsPage() {
           </div>
         </div>
       </nav>
+      <AdminNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {error && (

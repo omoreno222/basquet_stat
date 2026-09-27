@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Season } from '@/types/database';
+import { AdminNavPills } from '@/components/NavPills';
 import Link from 'next/link';
 
 export default function SeasonsPage() {
@@ -147,6 +148,7 @@ export default function SeasonsPage() {
           </div>
         </div>
       </nav>
+      <AdminNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {showForm && (

@@ -1167,7 +1167,7 @@ export default function GameCapturePage() {
   return (
     <div className="fixed inset-0 bg-gray-900 text-white flex flex-col overflow-hidden">
       {/* Single Compact Top Bar - Clock (Left) & Score (Right) */}
-      <div className="flex items-center justify-between bg-gray-800 border-b-2 border-orange-500 px-3 py-2 flex-shrink-0 gap-4" style={{ minHeight: '56px' }}>
+      <div className="flex items-center justify-between bg-gray-800 border-b-2 border-orange-500 px-3 py-2 flex-shrink-0 gap-4 overflow-x-auto" style={{ minHeight: '56px' }}>
         {/* LEFT: Clock Block (Horizontal Layout) */}
         {userSlot === 'a' ? (
           <div className="flex items-center gap-2 flex-wrap-0 whitespace-nowrap">
@@ -1191,7 +1191,7 @@ export default function GameCapturePage() {
             
             {/* Time & Period */}
             <div className="flex flex-col items-center">
-              <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
+              <div className="text-2xl font-bold leading-none tabular-nums">{formatTime(clockRemaining)}</div>
               <div className="text-xs text-gray-400">{getPeriodLabel(currentPeriod)}</div>
             </div>
             
@@ -1238,7 +1238,7 @@ export default function GameCapturePage() {
           <div className="flex items-center gap-2 whitespace-nowrap">
             {/* Time & Period */}
             <div className="flex flex-col items-center">
-              <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
+              <div className="text-2xl font-bold leading-none tabular-nums">{formatTime(clockRemaining)}</div>
               <div className="text-xs text-gray-400">{getPeriodLabel(currentPeriod)}</div>
             </div>
             
@@ -1260,9 +1260,9 @@ export default function GameCapturePage() {
             />
             <span className="hidden sm:inline">{game.teams?.name}</span>
             <span className="sm:hidden">{game.teams?.name?.substring(0, 8)}</span>
-            <span className="text-2xl text-orange-400">{teamScore}</span>
+            <span className="text-2xl text-orange-400 tabular-nums">{teamScore}</span>
             <span className="text-gray-400">-</span>
-            <span className="text-2xl text-blue-400">{opponentScore}</span>
+            <span className="text-2xl text-blue-400 tabular-nums">{opponentScore}</span>
             <span className="hidden sm:inline">{game.opponent_name}</span>
             <span className="sm:hidden">{game.opponent_name?.substring(0, 8)}</span>
           </div>

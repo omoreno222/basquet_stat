@@ -7,6 +7,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { createUserWithPassword, resetUserPassword } from '@/lib/password-auth';
 import { updateUserRoles, linkParentToPlayer, unlinkParentFromPlayer, uploadProfileAvatar, removeProfileAvatar, linkPlayerAccount, unlinkPlayerAccount } from '../actions';
+import { AdminNavPills } from '@/components/NavPills';
 import { Player } from '@/lib/types';
 
 interface UserWithRoles {
@@ -396,6 +397,7 @@ export default function UsersPage() {
           </div>
         </div>
       </nav>
+      <AdminNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {(error || success) && (

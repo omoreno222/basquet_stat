@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Game, GameStatus, Club } from '@/types/database';
+import { AdminNavPills } from '@/components/NavPills';
 import { Team } from '@/lib/types';
 import Link from 'next/link';
 import { ClubLogo } from '@/components/ClubLogo';
@@ -211,6 +212,7 @@ export default function GamesPage() {
           </div>
         </div>
       </nav>
+      <AdminNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {showForm && (

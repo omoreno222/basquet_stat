@@ -1,9 +1,22 @@
 import type { Metadata } from 'next';
+import { Manrope, Sora } from 'next/font/google';
 import './globals.css';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import { Footer } from '@/components/Footer';
 import packageJson from '../package.json';
+
+const sora = Sora({
+  subsets: ['latin', 'latin-ext'],
+  display: 'swap',
+  variable: '--font-sora',
+});
+
+const manrope = Manrope({
+  subsets: ['latin', 'latin-ext'],
+  display: 'swap',
+  variable: '--font-manrope',
+});
 
 export const metadata: Metadata = {
   title: 'SeasonMath',
@@ -77,8 +90,8 @@ export default async function RootLayout({
   }, {}) || {};
 
   return (
-    <html lang="en" className={theme}>
-      <body className="antialiased flex flex-col min-h-screen">
+    <html lang="en" className={`${theme} ${sora.variable} ${manrope.variable}`}>
+      <body className="font-sans antialiased flex flex-col min-h-screen">
         <div className="flex-grow">
           {children}
         </div>
