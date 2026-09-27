@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { supabase } from '@/lib/supabase';
 import { getInitials, validatePhone, validateEmail, validatePassword, getRoleBadgeClasses, getRoleTranslationKey, type UserRole } from '@/lib/profile-utils';
 import { ClubLogo } from '@/components/ClubLogo';
+import { Club } from '@/types/database';
 
 interface Profile {
   id: string;
@@ -23,6 +24,7 @@ interface Team {
   name: string;
   category: string;
   logo_url?: string | null;
+  clubs?: Club;
 }
 
 interface LinkedPlayer {
@@ -126,7 +128,7 @@ export default function ProfilePage() {
       if (userRoles.includes('parent')) {
         const { data: links } = await supabase
           .from('parent_player_links')
-          .select('player_id, players(id, full_name, jersey_number, team_id, teams(id, name, category, logo_url))')
+          .select('player_id, players(id, full_name, jersey_number, team_id, teams(id, name, category, logo_url, clubs(id, name, short_name, logo_url, primary_color, secondary_color, created_at, updated_at)))')
           .eq('parent_id', userId);
 
         if (links) {
@@ -136,14 +138,27 @@ export default function ProfilePage() {
               id: string;
               full_name: string;
               jersey_number: number;
-              teams: Team;
+              teams: {
+                id: string;
+                name: string;
+                category: string;
+                logo_url?: string | null;
+                clubs?: Club | Club[];
+              };
             };
             if (player) {
+              const team: Team = {
+                id: player.teams.id,
+                name: player.teams.name,
+                category: player.teams.category,
+                logo_url: player.teams.logo_url,
+                clubs: Array.isArray(player.teams.clubs) ? player.teams.clubs[0] : player.teams.clubs,
+              };
               players.push({
                 id: player.id,
                 full_name: player.full_name,
                 jersey_number: player.jersey_number,
-                team: player.teams,
+                team,
               });
             }
           });
@@ -155,17 +170,24 @@ export default function ProfilePage() {
       if (userRoles.includes('player')) {
         const { data: playerData } = await supabase
           .from('players')
-          .select('id, full_name, jersey_number, team_id, teams(id, name, category, logo_url)')
+          .select('id, full_name, jersey_number, team_id, teams(id, name, category, logo_url, clubs(id, name, short_name, logo_url, primary_color, secondary_color, created_at, updated_at))')
           .eq('user_id', userId)
           .maybeSingle();
 
         if (playerData && playerData.teams) {
           const team = Array.isArray(playerData.teams) ? playerData.teams[0] : playerData.teams;
+          const teamWithClub: Team = {
+            id: team.id,
+            name: team.name,
+            category: team.category,
+            logo_url: team.logo_url,
+            clubs: Array.isArray(team.clubs) ? team.clubs[0] : team.clubs,
+          };
           setLinkedPlayers([{
             id: playerData.id,
             full_name: playerData.full_name,
             jersey_number: playerData.jersey_number,
-            team: team as Team,
+            team: teamWithClub,
           }]);
         }
       }
@@ -629,17 +651,26 @@ export default function ProfilePage() {
               <div className="space-y-3">
                 {linkedPlayers.map((player) => (
                   <div key={player.id} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded">
-                    <ClubLogo 
-                      logoUrl={player.team.logo_url} 
-                      clubName={player.team.name} 
-                      size="sm"
-                    />
+                    {player.team.clubs ? (
+                      <ClubLogo 
+                        logoUrl={player.team.clubs.logo_url} 
+                        clubName={player.team.clubs.name} 
+                        size="sm"
+                      />
+                    ) : player.team.logo_url ? (
+                      <ClubLogo 
+                        logoUrl={player.team.logo_url} 
+                        clubName={player.team.name} 
+                        size="sm"
+                      />
+                    ) : null}
                     <div className="w-10 h-10 rounded-full bg-orange-500 text-white flex items-center justify-center font-bold flex-shrink-0">
                       {player.jersey_number}
                     </div>
                     <div>
                       <p className="font-medium text-gray-900 dark:text-gray-100">{player.full_name}</p>
                       <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {player.team.clubs?.name && <span>{player.team.clubs.name} • </span>}
                         {player.team.name} ({player.team.category})
                       </p>
                     </div>
