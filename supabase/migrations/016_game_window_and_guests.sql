@@ -1,5 +1,11 @@
--- Migration 016: Game Window, Auto-Close, and Guest Players
--- Adds game opening window (30 min before), configurable periods, auto-close, and guest player support
+-- Migration 016: Game Window, Auto-Close, Guest Players, and Player Team Access
+-- Adds game opening window (30 min before), configurable periods, auto-close, guest player support,
+-- and expands player role RLS to allow viewing own team's stats
+
+-- NOTE: Player accounts
+-- The existing players.user_id column links player records to user accounts (profiles.id).
+-- Admins should set this in /admin/users when a player has their own login.
+-- A player can have both a parent account linked (via parent_player_links) and their own account (user_id).
 
 -- Add regular_periods column (default 4 for FIBA: Q1, Q2, Q3, Q4)
 ALTER TABLE games ADD COLUMN IF NOT EXISTS regular_periods SMALLINT NOT NULL DEFAULT 4;
@@ -96,6 +102,125 @@ END;
 $$;
 
 COMMENT ON FUNCTION can_start_game(UUID, BOOLEAN) IS 'Check if a game can be started (30 min before scheduled time, or admin override)';
+
+-- Helper function: check if current user is a player on a specific team
+CREATE OR REPLACE FUNCTION is_player_of_team(p_team_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM players
+    WHERE user_id = auth.uid()
+    AND team_id = p_team_id
+  );
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION is_player_of_team(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION is_player_of_team(UUID) TO authenticated;
+
+COMMENT ON FUNCTION is_player_of_team(UUID) IS 'Check if current user is a player on the specified team';
+
+-- Helper function: get teams the current user plays for
+CREATE OR REPLACE FUNCTION get_user_player_teams()
+RETURNS TABLE(team_id UUID)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT players.team_id
+  FROM players
+  WHERE players.user_id = auth.uid();
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION get_user_player_teams() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION get_user_player_teams() TO authenticated;
+
+COMMENT ON FUNCTION get_user_player_teams() IS 'Get all teams the current user plays for';
+
+-- Update players RLS: players can see teammates on their own teams
+DROP POLICY IF EXISTS "Players can view their own team" ON players;
+CREATE POLICY "Players can view their own team"
+  ON players
+  FOR SELECT
+  TO authenticated
+  USING (
+    -- Player can see teammates on any team they belong to
+    team_id IN (SELECT get_user_player_teams())
+  );
+
+-- Update games RLS: players can see their team's games
+DROP POLICY IF EXISTS "Players can view their team games" ON games;
+CREATE POLICY "Players can view their team games"
+  ON games
+  FOR SELECT
+  TO authenticated
+  USING (
+    -- Player can see games for teams they belong to
+    team_id IN (SELECT get_user_player_teams())
+  );
+
+-- Update game_events RLS: players can see events from their team's games
+DROP POLICY IF EXISTS "Players can view their team events" ON game_events;
+CREATE POLICY "Players can view their team events"
+  ON game_events
+  FOR SELECT
+  TO authenticated
+  USING (
+    -- Player can see events from games of teams they belong to
+    game_id IN (
+      SELECT id FROM games
+      WHERE team_id IN (SELECT get_user_player_teams())
+    )
+  );
+
+-- Update starting_lineups RLS: players can see their team's lineups
+DROP POLICY IF EXISTS "Players can view their team lineups" ON starting_lineups;
+CREATE POLICY "Players can view their team lineups"
+  ON starting_lineups
+  FOR SELECT
+  TO authenticated
+  USING (
+    -- Player can see lineups from games of teams they belong to
+    game_id IN (
+      SELECT id FROM games
+      WHERE team_id IN (SELECT get_user_player_teams())
+    )
+  );
+
+-- Update game_periods RLS: players can see periods from their team's games
+DROP POLICY IF EXISTS "Players can view their team game periods" ON game_periods;
+CREATE POLICY "Players can view their team game periods"
+  ON game_periods
+  FOR SELECT
+  TO authenticated
+  USING (
+    -- Player can see periods from games of teams they belong to
+    game_id IN (
+      SELECT id FROM games
+      WHERE team_id IN (SELECT get_user_player_teams())
+    )
+  );
+
+-- Update game_guest_players RLS: players can see guests in their team's games
+DROP POLICY IF EXISTS "Players can view their team guest players" ON game_guest_players;
+CREATE POLICY "Players can view their team guest players"
+  ON game_guest_players
+  FOR SELECT
+  TO authenticated
+  USING (
+    -- Player can see guests from games of teams they belong to
+    game_id IN (
+      SELECT id FROM games
+      WHERE team_id IN (SELECT get_user_player_teams())
+    )
+  );
 
 -- Function to check if game should auto-close
 CREATE OR REPLACE FUNCTION should_auto_close_game(

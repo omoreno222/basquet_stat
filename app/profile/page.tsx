@@ -154,7 +154,7 @@ export default function ProfilePage() {
         const { data: playerData } = await supabase
           .from('players')
           .select('id, full_name, jersey_number, team_id, teams(id, name, category)')
-          .eq('profile_id', userId)
+          .eq('user_id', userId)
           .maybeSingle();
 
         if (playerData && playerData.teams) {
