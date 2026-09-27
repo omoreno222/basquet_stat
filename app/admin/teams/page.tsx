@@ -2,52 +2,116 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Season, Team } from '@/types/database';
+import { Season, Team, Club, TeamCategory, TeamGender } from '@/types/database';
 import Link from 'next/link';
+import { ClubLogo } from '@/components/ClubLogo';
 
-interface TeamWithSeason extends Team {
+interface TeamWithRelations extends Team {
   seasons?: { name: string };
+  clubs?: Club;
 }
 
+const TEAM_CATEGORIES: { value: TeamCategory; label: string }[] = [
+  { value: 'premini', label: 'PreMini' },
+  { value: 'mini', label: 'Mini' },
+  { value: 'infantil', label: 'Infantil' },
+  { value: 'cadete', label: 'Cadete' },
+  { value: 'junior', label: 'Junior' },
+  { value: 'sub22', label: 'Sub-22' },
+  { value: 'senior', label: 'Senior' },
+];
+
+const TEAM_GENDERS: { value: TeamGender; label: string }[] = [
+  { value: 'male', label: 'Male' },
+  { value: 'female', label: 'Female' },
+  { value: 'mixed', label: 'Mixed' },
+];
+
 export default function TeamsPage() {
-  const [teams, setTeams] = useState<TeamWithSeason[]>([]);
+  const [teams, setTeams] = useState<TeamWithRelations[]>([]);
   const [seasons, setSeasons] = useState<Season[]>([]);
+  const [clubs, setClubs] = useState<Club[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingTeam, setEditingTeam] = useState<Team | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     season_id: '',
+    club_id: '',
+    category: 'senior' as TeamCategory,
+    gender: 'mixed' as TeamGender,
   });
   const [error, setError] = useState('');
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [userClubId, setUserClubId] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
   }, []);
 
   async function loadData() {
-    const [teamsData, seasonsData] = await Promise.all([
-      supabase.from('teams').select('*, seasons(name)').order('name'),
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // Check if user is platform admin or club admin
+    const { data: roles } = await supabase
+      .from('profile_roles')
+      .select('role, club_id')
+      .eq('user_id', user.id);
+
+    const platformAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
+    const clubAdmin = roles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
+
+    setIsPlatformAdmin(platformAdmin);
+    setUserClubId(clubAdmin?.club_id || null);
+
+    // Load teams based on access
+    let teamsQuery = supabase
+      .from('teams')
+      .select('*, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color)')
+      .order('name');
+
+    if (!platformAdmin && clubAdmin?.club_id) {
+      teamsQuery = teamsQuery.eq('club_id', clubAdmin.club_id);
+    }
+
+    const [teamsData, seasonsData, clubsData] = await Promise.all([
+      teamsQuery,
       supabase.from('seasons').select('*').order('start_date', { ascending: false }),
+      platformAdmin 
+        ? supabase.from('clubs').select('*').order('name')
+        : clubAdmin?.club_id 
+          ? supabase.from('clubs').select('*').eq('id', clubAdmin.club_id)
+          : Promise.resolve({ data: [] }),
     ]);
 
     if (teamsData.data) setTeams(teamsData.data);
     if (seasonsData.data) setSeasons(seasonsData.data);
+    if (clubsData.data) setClubs(clubsData.data);
     setLoading(false);
   }
 
   function resetForm() {
-    setFormData({ name: '', season_id: '' });
+    setFormData({ 
+      name: '', 
+      season_id: '', 
+      club_id: userClubId || '',
+      category: 'senior',
+      gender: 'mixed',
+    });
     setEditingTeam(null);
     setShowForm(false);
     setError('');
   }
 
-  function handleEdit(team: TeamWithSeason) {
+  function handleEdit(team: TeamWithRelations) {
     setEditingTeam(team);
     setFormData({
       name: team.name,
       season_id: team.season_id,
+      club_id: team.club_id || '',
+      category: team.category || 'senior',
+      gender: team.gender || 'mixed',
     });
     setShowForm(true);
     setError('');
@@ -57,10 +121,15 @@ export default function TeamsPage() {
     e.preventDefault();
     setError('');
 
+    const submitData = {
+      ...formData,
+      club_id: formData.club_id || null,
+    };
+
     if (editingTeam) {
       const { error: updateError } = await supabase
         .from('teams')
-        .update(formData)
+        .update(submitData)
         .eq('id', editingTeam.id);
 
       if (updateError) {
@@ -70,7 +139,7 @@ export default function TeamsPage() {
     } else {
       const { error: insertError } = await supabase
         .from('teams')
-        .insert([formData]);
+        .insert([submitData]);
 
       if (insertError) {
         setError(insertError.message);
@@ -143,7 +212,7 @@ export default function TeamsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Team Name
+                      Team Name *
                     </label>
                     <input
                       type="text"
@@ -153,9 +222,76 @@ export default function TeamsPage() {
                       className="w-full border rounded px-3 py-2"
                     />
                   </div>
+                  {isPlatformAdmin && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Club *
+                      </label>
+                      <select
+                        required
+                        value={formData.club_id}
+                        onChange={(e) => setFormData({ ...formData, club_id: e.target.value })}
+                        className="w-full border rounded px-3 py-2"
+                      >
+                        <option value="">Select a club</option>
+                        {clubs.map((club) => (
+                          <option key={club.id} value={club.id}>
+                            {club.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {!isPlatformAdmin && userClubId && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Club
+                      </label>
+                      <input
+                        type="text"
+                        disabled
+                        value={clubs.find(c => c.id === userClubId)?.name || ''}
+                        className="w-full border rounded px-3 py-2 bg-gray-100"
+                      />
+                    </div>
+                  )}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Season
+                      Category *
+                    </label>
+                    <select
+                      required
+                      value={formData.category}
+                      onChange={(e) => setFormData({ ...formData, category: e.target.value as TeamCategory })}
+                      className="w-full border rounded px-3 py-2"
+                    >
+                      {TEAM_CATEGORIES.map((cat) => (
+                        <option key={cat.value} value={cat.value}>
+                          {cat.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Gender *
+                    </label>
+                    <select
+                      required
+                      value={formData.gender}
+                      onChange={(e) => setFormData({ ...formData, gender: e.target.value as TeamGender })}
+                      className="w-full border rounded px-3 py-2"
+                    >
+                      {TEAM_GENDERS.map((gen) => (
+                        <option key={gen.value} value={gen.value}>
+                          {gen.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Season *
                     </label>
                     <select
                       required
@@ -201,11 +337,23 @@ export default function TeamsPage() {
                 teams.map((team) => (
                   <li key={team.id} className="px-6 py-4 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-medium text-gray-900">{team.name}</h3>
-                        <p className="text-sm text-gray-500">
-                          Season: {team.seasons?.name || 'N/A'}
-                        </p>
+                      <div className="flex items-center gap-4">
+                        {team.clubs && (
+                          <ClubLogo 
+                            logoUrl={team.clubs.logo_url} 
+                            clubName={team.clubs.name} 
+                            size="sm"
+                          />
+                        )}
+                        <div>
+                          <h3 className="text-lg font-medium text-gray-900">{team.name}</h3>
+                          <div className="text-sm text-gray-500">
+                            {team.clubs?.name && <span>Club: {team.clubs.name} • </span>}
+                            <span>Season: {team.seasons?.name || 'N/A'}</span>
+                            {team.category && <span> • {TEAM_CATEGORIES.find(c => c.value === team.category)?.label}</span>}
+                            {team.gender && <span> • {TEAM_GENDERS.find(g => g.value === team.gender)?.label}</span>}
+                          </div>
+                        </div>
                       </div>
                       <div className="flex gap-2">
                         <button

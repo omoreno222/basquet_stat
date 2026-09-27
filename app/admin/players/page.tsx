@@ -2,26 +2,31 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Player } from '@/types/database';
+import { Player, Club } from '@/types/database';
 import { Team } from '@/lib/types';
 import Link from 'next/link';
 import Image from 'next/image';
 import { uploadPlayerAvatar, removePlayerAvatar } from '../actions';
+import { ClubLogo } from '@/components/ClubLogo';
 
 interface PlayerWithTeam extends Player {
   teams?: { 
     name: string;
     seasons?: { name: string };
+    clubs?: Club;
   };
 }
 
 interface TeamWithSeason extends Team {
   seasons?: { name: string };
+  clubs?: Club;
+  club_id?: string | null;
 }
 
 export default function PlayersPage() {
   const [players, setPlayers] = useState<PlayerWithTeam[]>([]);
   const [teams, setTeams] = useState<TeamWithSeason[]>([]);
+  const [clubs, setClubs] = useState<Club[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingPlayer, setEditingPlayer] = useState<Player | null>(null);
@@ -29,6 +34,7 @@ export default function PlayersPage() {
     full_name: '',
     jersey_number: '',
     team_id: '',
+    club_id: '',
     position: '',
     date_of_birth: '',
   });
@@ -36,24 +42,74 @@ export default function PlayersPage() {
   const [success, setSuccess] = useState('');
   const [uploadingAvatar, setUploadingAvatar] = useState<string | null>(null);
   const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [userClubId, setUserClubId] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
   }, []);
 
   async function loadData() {
-    const [playersData, teamsData] = await Promise.all([
-      supabase.from('players').select('*, teams(name, seasons(name))').order('full_name'),
-      supabase.from('teams').select('*, seasons(name)').order('name'),
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // Check if user is platform admin or club admin
+    const { data: roles } = await supabase
+      .from('profile_roles')
+      .select('role, club_id')
+      .eq('user_id', user.id);
+
+    const platformAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
+    const clubAdmin = roles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
+
+    setIsPlatformAdmin(platformAdmin);
+    setUserClubId(clubAdmin?.club_id || null);
+
+    // Load players based on access
+    let playersQuery = supabase
+      .from('players')
+      .select('*, teams(name, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
+      .order('full_name');
+
+    if (!platformAdmin && clubAdmin?.club_id) {
+      playersQuery = playersQuery.eq('club_id', clubAdmin.club_id);
+    }
+
+    // Load teams based on access
+    let teamsQuery = supabase
+      .from('teams')
+      .select('*, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color)')
+      .order('name');
+
+    if (!platformAdmin && clubAdmin?.club_id) {
+      teamsQuery = teamsQuery.eq('club_id', clubAdmin.club_id);
+    }
+
+    const [playersData, teamsData, clubsData] = await Promise.all([
+      playersQuery,
+      teamsQuery,
+      platformAdmin 
+        ? supabase.from('clubs').select('*').order('name')
+        : clubAdmin?.club_id 
+          ? supabase.from('clubs').select('*').eq('id', clubAdmin.club_id)
+          : Promise.resolve({ data: [] }),
     ]);
 
     if (playersData.data) setPlayers(playersData.data);
     if (teamsData.data) setTeams(teamsData.data);
+    if (clubsData.data) setClubs(clubsData.data);
     setLoading(false);
   }
 
   function resetForm() {
-    setFormData({ full_name: '', jersey_number: '', team_id: '', position: '', date_of_birth: '' });
+    setFormData({ 
+      full_name: '', 
+      jersey_number: '', 
+      team_id: '', 
+      club_id: userClubId || '',
+      position: '', 
+      date_of_birth: '' 
+    });
     setEditingPlayer(null);
     setShowForm(false);
     setError('');
@@ -65,6 +121,7 @@ export default function PlayersPage() {
       full_name: player.full_name,
       jersey_number: player.jersey_number.toString(),
       team_id: player.team_id,
+      club_id: player.club_id || '',
       position: player.position || '',
       date_of_birth: player.date_of_birth || '',
     });
@@ -81,6 +138,7 @@ export default function PlayersPage() {
       jersey_number: parseInt(formData.jersey_number),
       position: formData.position || null,
       date_of_birth: formData.date_of_birth || null,
+      club_id: formData.club_id || null,
     };
 
     if (editingPlayer) {
@@ -258,13 +316,48 @@ export default function PlayersPage() {
                       className="w-full border rounded px-3 py-2"
                     >
                       <option value="">Select a team</option>
-                      {teams.map((team) => (
-                        <option key={team.id} value={team.id}>
-                          {team.name} ({team.seasons?.name})
-                        </option>
-                      ))}
+                      {teams
+                        .filter(team => !formData.club_id || team.club_id === formData.club_id)
+                        .map((team) => (
+                          <option key={team.id} value={team.id}>
+                            {team.name} ({team.seasons?.name})
+                          </option>
+                        ))}
                     </select>
                   </div>
+                  {isPlatformAdmin && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Club *
+                      </label>
+                      <select
+                        required
+                        value={formData.club_id}
+                        onChange={(e) => setFormData({ ...formData, club_id: e.target.value })}
+                        className="w-full border rounded px-3 py-2"
+                      >
+                        <option value="">Select a club</option>
+                        {clubs.map((club) => (
+                          <option key={club.id} value={club.id}>
+                            {club.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {!isPlatformAdmin && userClubId && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Club
+                      </label>
+                      <input
+                        type="text"
+                        disabled
+                        value={clubs.find(c => c.id === userClubId)?.name || ''}
+                        className="w-full border rounded px-3 py-2 bg-gray-100"
+                      />
+                    </div>
+                  )}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Position
@@ -336,13 +429,21 @@ export default function PlayersPage() {
                             </div>
                           )}
                         </div>
+                        {player.teams?.clubs && (
+                          <ClubLogo 
+                            logoUrl={player.teams.clubs.logo_url} 
+                            clubName={player.teams.clubs.name} 
+                            size="sm"
+                          />
+                        )}
                         <div>
                           <h3 className="text-lg font-medium text-gray-900">
                             #{player.jersey_number} {player.full_name}
                           </h3>
-                          <p className="text-sm text-gray-500">
-                            Team: {player.teams?.name || 'N/A'}
-                          </p>
+                          <div className="text-sm text-gray-500">
+                            {player.teams?.clubs?.name && <span>Club: {player.teams.clubs.name} • </span>}
+                            <span>Team: {player.teams?.name || 'N/A'}</span>
+                          </div>
                           {player.position && (
                             <p className="text-sm text-gray-500">
                               Position: {player.position}

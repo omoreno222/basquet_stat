@@ -12,6 +12,8 @@ import { type UserRole } from '@/lib/profile-utils';
 export default function AdminDashboard() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [roles, setRoles] = useState<UserRole[]>([]);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [isClubAdmin, setIsClubAdmin] = useState(false);
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -37,19 +39,25 @@ export default function AdminDashboard() {
     // Check if user has admin role (multi-role support)
     const { data: userRoles } = await supabase
       .from('profile_roles')
-      .select('role')
-      .eq('profile_id', user.id);
+      .select('role, club_id')
+      .eq('user_id', user.id);
 
     const roles = userRoles?.map(r => r.role) || [profileData.role];
-    const hasAdminRole = roles.includes('admin');
+    const hasAdminRole = roles.includes('admin') || roles.includes('club_admin');
 
     if (!hasAdminRole) {
       router.push('/login');
       return;
     }
 
+    // Determine admin type
+    const platformAdmin = userRoles?.some(r => r.role === 'admin' && r.club_id === null) || false;
+    const clubAdmin = userRoles?.some(r => r.role === 'club_admin' || (r.role === 'admin' && r.club_id !== null)) || false;
+
     setProfile(profileData);
     setRoles(roles as UserRole[]);
+    setIsPlatformAdmin(platformAdmin);
+    setIsClubAdmin(clubAdmin || platformAdmin);
 
     // Load translations
     const locale = profileData.locale || profileData.language || 'en';
@@ -104,6 +112,28 @@ export default function AdminDashboard() {
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {isPlatformAdmin && (
+              <Link href="/admin/clubs">
+                <div className="bg-white overflow-hidden shadow rounded-lg hover:shadow-lg transition-shadow cursor-pointer">
+                  <div className="px-4 py-5 sm:p-6">
+                    <h3 className="text-lg font-medium text-gray-900">Clubs</h3>
+                    <p className="mt-1 text-sm text-gray-500">Manage basketball clubs</p>
+                  </div>
+                </div>
+              </Link>
+            )}
+
+            {isClubAdmin && !isPlatformAdmin && (
+              <Link href="/admin/my-club">
+                <div className="bg-white overflow-hidden shadow rounded-lg hover:shadow-lg transition-shadow cursor-pointer">
+                  <div className="px-4 py-5 sm:p-6">
+                    <h3 className="text-lg font-medium text-gray-900">My Club</h3>
+                    <p className="mt-1 text-sm text-gray-500">Manage club settings</p>
+                  </div>
+                </div>
+              </Link>
+            )}
+
             <Link href="/admin/seasons">
               <div className="bg-white overflow-hidden shadow rounded-lg hover:shadow-lg transition-shadow cursor-pointer">
                 <div className="px-4 py-5 sm:p-6">

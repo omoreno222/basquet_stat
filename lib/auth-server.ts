@@ -75,7 +75,157 @@ export async function userHasRole(userId: string, role: string): Promise<boolean
 }
 
 /**
+ * Assert that the current user is a platform admin (admin role with no club_id)
+ * Platform admins can manage all clubs and global resources
+ */
+export async function assertPlatformAdmin() {
+  const { user, error } = await getAuthenticatedUser();
+
+  if (error || !user) {
+    return { error: 'Unauthorized: Not authenticated', userId: null };
+  }
+
+  const cookieStore = await cookies();
+  const token = cookieStore.get('sb-access-token')?.value;
+
+  if (!token) {
+    return { error: 'Unauthorized: Not authenticated', userId: null };
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
+
+  const { data, error: queryError } = await supabase
+    .from('profile_roles')
+    .select('role, club_id')
+    .eq('user_id', user.id)
+    .eq('role', 'admin')
+    .is('club_id', null)
+    .single();
+
+  if (queryError || !data) {
+    return { error: 'Unauthorized: Platform admin access required', userId: null };
+  }
+
+  return { error: null, userId: user.id };
+}
+
+/**
+ * Assert that the current user is a club admin for the specified club
+ * Platform admins pass this check for any club
+ * Club admins pass only for their own club
+ */
+export async function assertClubAdmin(clubId: string) {
+  const { user, error } = await getAuthenticatedUser();
+
+  if (error || !user) {
+    return { error: 'Unauthorized: Not authenticated', userId: null };
+  }
+
+  const cookieStore = await cookies();
+  const token = cookieStore.get('sb-access-token')?.value;
+
+  if (!token) {
+    return { error: 'Unauthorized: Not authenticated', userId: null };
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
+
+  // Check if user is platform admin (admin with no club_id)
+  const { data: platformAdmin } = await supabase
+    .from('profile_roles')
+    .select('role, club_id')
+    .eq('user_id', user.id)
+    .eq('role', 'admin')
+    .is('club_id', null)
+    .single();
+
+  if (platformAdmin) {
+    return { error: null, userId: user.id, isPlatformAdmin: true };
+  }
+
+  // Check if user is club_admin for this specific club
+  const { data: clubAdmin } = await supabase
+    .from('profile_roles')
+    .select('role, club_id')
+    .eq('user_id', user.id)
+    .in('role', ['club_admin', 'admin'])
+    .eq('club_id', clubId)
+    .single();
+
+  if (!clubAdmin) {
+    return { error: 'Unauthorized: Club admin access required for this club', userId: null, isPlatformAdmin: false };
+  }
+
+  return { error: null, userId: user.id, isPlatformAdmin: false };
+}
+
+/**
+ * Get the club ID(s) that the current user has access to
+ * Returns null for platform admins (access to all clubs)
+ * Returns array of club IDs for club-scoped users
+ */
+export async function getUserClubs() {
+  const { user, error } = await getAuthenticatedUser();
+
+  if (error || !user) {
+    return { error: 'Unauthorized: Not authenticated', clubIds: null, isPlatformAdmin: false };
+  }
+
+  const cookieStore = await cookies();
+  const token = cookieStore.get('sb-access-token')?.value;
+
+  if (!token) {
+    return { error: 'Unauthorized: Not authenticated', clubIds: null, isPlatformAdmin: false };
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
+
+  // Check if user is platform admin
+  const { data: platformAdmin } = await supabase
+    .from('profile_roles')
+    .select('role, club_id')
+    .eq('user_id', user.id)
+    .eq('role', 'admin')
+    .is('club_id', null)
+    .single();
+
+  if (platformAdmin) {
+    return { error: null, clubIds: null, isPlatformAdmin: true };
+  }
+
+  // Get all clubs user has access to
+  const { data: roles } = await supabase
+    .from('profile_roles')
+    .select('club_id')
+    .eq('user_id', user.id)
+    .not('club_id', 'is', null);
+
+  const clubIds = [...new Set((roles || []).map(r => r.club_id).filter(Boolean))];
+
+  return { error: null, clubIds, isPlatformAdmin: false };
+}
+
+/**
  * Assert that the current user is an admin
+ * @deprecated Use assertPlatformAdmin() or assertClubAdmin(clubId) instead
  * Throws an error or returns an error object if not authenticated or not admin
  * 
  * Usage in server actions:

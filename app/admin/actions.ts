@@ -1,7 +1,7 @@
 'use server';
 
 import { getServerSupabase } from '@/lib/supabase';
-import { assertAdmin } from '@/lib/auth-server';
+import { assertAdmin, assertPlatformAdmin, assertClubAdmin } from '@/lib/auth-server';
 
 export async function createUser(formData: {
   email: string;
@@ -212,7 +212,7 @@ export async function unlinkPlayerAccount(playerId: string) {
 }
 
 export async function uploadClubLogo(clubId: string, file: File) {
-  const authCheck = await assertAdmin();
+  const authCheck = await assertClubAdmin(clubId);
   if (authCheck.error) {
     return { error: authCheck.error };
   }
@@ -276,7 +276,7 @@ export async function uploadClubLogo(clubId: string, file: File) {
 }
 
 export async function removeClubLogo(clubId: string) {
-  const authCheck = await assertAdmin();
+  const authCheck = await assertClubAdmin(clubId);
   if (authCheck.error) {
     return { error: authCheck.error };
   }
