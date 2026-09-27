@@ -14,6 +14,12 @@ ALTER TABLE profiles ADD COLUMN IF NOT EXISTS locale TEXT
   CHECK (locale IN ('en', 'es', 'ca')) 
   DEFAULT 'en';
 
+-- Add must_change_password flag for forced password changes
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false;
+
+-- Add password_reset_requested_at for rate limiting
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS password_reset_requested_at TIMESTAMPTZ;
+
 -- Backfill locale from language where locale is null
 UPDATE profiles SET locale = language WHERE locale IS NULL AND language IS NOT NULL;
 
@@ -22,6 +28,8 @@ COMMENT ON COLUMN profiles.first_name IS 'User first name';
 COMMENT ON COLUMN profiles.last_name IS 'User last name';
 COMMENT ON COLUMN profiles.phone IS 'User phone number (optional)';
 COMMENT ON COLUMN profiles.locale IS 'User preferred language for UI (en/es/ca)';
+COMMENT ON COLUMN profiles.must_change_password IS 'Flag to force password change on next login (set after password reset or initial creation)';
+COMMENT ON COLUMN profiles.password_reset_requested_at IS 'Timestamp of last password reset request (for rate limiting)';
 
 -- RLS Policy: Allow users to update their own profile (safe columns only)
 -- This policy allows users to update first_name, last_name, avatar_url, locale, phone
@@ -253,7 +261,74 @@ VALUES
   
   ('trke_update', 'en', 'Update'),
   ('trke_update', 'es', 'Actualizar'),
-  ('trke_update', 'ca', 'Actualitzar')
+  ('trke_update', 'ca', 'Actualitzar'),
+  
+  -- Forgot password
+  ('trke_forgot_password', 'en', 'Forgot Password'),
+  ('trke_forgot_password', 'es', 'Olvidé mi Contraseña'),
+  ('trke_forgot_password', 'ca', 'He Oblidat la Contrasenya'),
+  
+  ('trke_forgot_password_instructions', 'en', 'Enter your email address and we will send you a new password.'),
+  ('trke_forgot_password_instructions', 'es', 'Introduce tu dirección de correo y te enviaremos una nueva contraseña.'),
+  ('trke_forgot_password_instructions', 'ca', 'Introdueix la teva adreça de correu i t''enviarem una nova contrasenya.'),
+  
+  ('trke_send_password', 'en', 'Send New Password'),
+  ('trke_send_password', 'es', 'Enviar Nueva Contraseña'),
+  ('trke_send_password', 'ca', 'Enviar Nova Contrasenya'),
+  
+  ('trke_password_reset_sent', 'en', 'If an account exists with that email, a new password has been sent.'),
+  ('trke_password_reset_sent', 'es', 'Si existe una cuenta con ese correo, se ha enviado una nueva contraseña.'),
+  ('trke_password_reset_sent', 'ca', 'Si existeix un compte amb aquest correu, s''ha enviat una nova contrasenya.'),
+  
+  ('trke_rate_limit_exceeded', 'en', 'Too many requests. Please try again later.'),
+  ('trke_rate_limit_exceeded', 'es', 'Demasiadas solicitudes. Por favor intenta más tarde.'),
+  ('trke_rate_limit_exceeded', 'ca', 'Massa sol·licituds. Si us plau, prova més tard.'),
+  
+  -- Password change required
+  ('trke_must_change_password', 'en', 'You must change your password'),
+  ('trke_must_change_password', 'es', 'Debes cambiar tu contraseña'),
+  ('trke_must_change_password', 'ca', 'Has de canviar la teva contrasenya'),
+  
+  ('trke_current_password', 'en', 'Current Password'),
+  ('trke_current_password', 'es', 'Contraseña Actual'),
+  ('trke_current_password', 'ca', 'Contrasenya Actual'),
+  
+  ('trke_current_password_required', 'en', 'Current password is required'),
+  ('trke_current_password_required', 'es', 'Se requiere la contraseña actual'),
+  ('trke_current_password_required', 'ca', 'Es requereix la contrasenya actual'),
+  
+  ('trke_incorrect_password', 'en', 'Incorrect password'),
+  ('trke_incorrect_password', 'es', 'Contraseña incorrecta'),
+  ('trke_incorrect_password', 'ca', 'Contrasenya incorrecta'),
+  
+  -- Admin user creation
+  ('trke_create_user', 'en', 'Create User'),
+  ('trke_create_user', 'es', 'Crear Usuario'),
+  ('trke_create_user', 'ca', 'Crear Usuari'),
+  
+  ('trke_user_created', 'en', 'User created and welcome email sent'),
+  ('trke_user_created', 'es', 'Usuario creado y correo de bienvenida enviado'),
+  ('trke_user_created', 'ca', 'Usuari creat i correu de benvinguda enviat'),
+  
+  ('trke_email_send_failed', 'en', 'User created but email failed to send'),
+  ('trke_email_send_failed', 'es', 'Usuario creado pero el correo no se pudo enviar'),
+  ('trke_email_send_failed', 'ca', 'Usuari creat però el correu no s''ha pogut enviar'),
+  
+  ('trke_resend_password', 'en', 'Resend Password'),
+  ('trke_resend_password', 'es', 'Reenviar Contraseña'),
+  ('trke_resend_password', 'ca', 'Reenviar Contrasenya'),
+  
+  ('trke_reset_user_password', 'en', 'Reset Password'),
+  ('trke_reset_user_password', 'es', 'Restablecer Contraseña'),
+  ('trke_reset_user_password', 'ca', 'Restablir Contrasenya'),
+  
+  ('trke_password_reset_confirm', 'en', 'Generate new password and email to user?'),
+  ('trke_password_reset_confirm', 'es', '¿Generar nueva contraseña y enviarla al usuario?'),
+  ('trke_password_reset_confirm', 'ca', 'Generar nova contrasenya i enviar-la a l''usuari?'),
+  
+  ('trke_email_not_configured', 'en', 'Email service not configured. Please contact support.'),
+  ('trke_email_not_configured', 'es', 'Servicio de correo no configurado. Por favor contacta a soporte.'),
+  ('trke_email_not_configured', 'ca', 'Servei de correu no configurat. Si us plau, contacta amb suport.')
 
 ON CONFLICT (key, locale) DO UPDATE
 SET value = EXCLUDED.value,
