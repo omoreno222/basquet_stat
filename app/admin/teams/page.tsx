@@ -54,10 +54,17 @@ export default function TeamsPage() {
     if (!user) return;
 
     // Check if user is platform admin or club admin
-    const { data: roles } = await supabase
+    const { data: roles, error: rolesError } = await supabase
       .from('profile_roles')
       .select('role, club_id')
-      .eq('user_id', user.id);
+      .eq('profile_id', user.id);
+
+    if (rolesError) {
+      console.error('Error loading roles:', rolesError);
+      setError('Failed to load user roles');
+      setLoading(false);
+      return;
+    }
 
     const platformAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
     const clubAdmin = roles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
@@ -121,12 +128,25 @@ export default function TeamsPage() {
     e.preventDefault();
     setError('');
 
+    const finalClubId = formData.club_id || userClubId || null;
+    
+    if (!finalClubId) {
+      setError('Club is required. Please select a club.');
+      return;
+    }
+
     const submitData = {
       ...formData,
-      club_id: formData.club_id || userClubId || null,
+      club_id: finalClubId,
     };
 
     if (editingTeam) {
+      // Don't allow changing club_id in edit mode
+      if (submitData.club_id !== editingTeam.club_id) {
+        setError('Cannot change team club. Delete and recreate the team if needed.');
+        return;
+      }
+      
       const { error: updateError } = await supabase
         .from('teams')
         .update(submitData)
@@ -231,7 +251,8 @@ export default function TeamsPage() {
                         required
                         value={formData.club_id}
                         onChange={(e) => setFormData({ ...formData, club_id: e.target.value })}
-                        className="w-full border rounded px-3 py-2"
+                        disabled={!!editingTeam}
+                        className={`w-full border rounded px-3 py-2 ${editingTeam ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                       >
                         <option value="">Select a club</option>
                         {clubs.map((club) => (
@@ -240,6 +261,11 @@ export default function TeamsPage() {
                           </option>
                         ))}
                       </select>
+                      {editingTeam && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          Club cannot be changed when editing a team
+                        </p>
+                      )}
                     </div>
                   )}
                   {!isPlatformAdmin && userClubId && (

@@ -36,10 +36,14 @@ export async function canStartGame(gameId: string, userId: string): Promise<Game
   }
 
   // Check if user is admin
-  const { data: roles } = await supabase
+  const { data: roles, error: rolesError } = await supabase
     .from('profile_roles')
     .select('role, club_id')
-    .eq('user_id', userId);
+    .eq('profile_id', userId);
+
+  if (rolesError) {
+    console.error('Error loading roles:', rolesError);
+  }
 
   const isAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
 

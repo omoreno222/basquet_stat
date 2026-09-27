@@ -47,10 +47,17 @@ export default function GamesPage() {
     if (!user) return;
 
     // Check if user is platform admin or club admin
-    const { data: roles } = await supabase
+    const { data: roles, error: rolesError } = await supabase
       .from('profile_roles')
       .select('role, club_id')
-      .eq('user_id', user.id);
+      .eq('profile_id', user.id);
+
+    if (rolesError) {
+      console.error('Error loading roles:', rolesError);
+      setError('Failed to load user roles');
+      setLoading(false);
+      return;
+    }
 
     const platformAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
     const clubAdmin = roles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);

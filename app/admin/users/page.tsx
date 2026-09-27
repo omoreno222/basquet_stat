@@ -79,10 +79,17 @@ export default function UsersPage() {
     if (!user) return;
 
     // Check if user is platform admin or club admin
-    const { data: currentUserRoles } = await supabase
+    const { data: currentUserRoles, error: rolesError } = await supabase
       .from('profile_roles')
       .select('role, club_id')
-      .eq('user_id', user.id);
+      .eq('profile_id', user.id);
+
+    if (rolesError) {
+      console.error('Error loading roles:', rolesError);
+      setError('Failed to load user roles');
+      setLoading(false);
+      return;
+    }
 
     const platformAdmin = currentUserRoles?.some(r => r.role === 'admin' && r.club_id === null) || false;
     const clubAdminRole = currentUserRoles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
@@ -99,11 +106,11 @@ export default function UsersPage() {
     // Load profile_roles for each user (with club info)
     const { data: rolesData } = await supabase
       .from('profile_roles')
-      .select('user_id, role, club_id, clubs(id, name, short_name, logo_url, primary_color, secondary_color)');
+      .select('profile_id, role, club_id, clubs(id, name, short_name, logo_url, primary_color, secondary_color)');
 
     // Merge roles into users and filter by club if needed
     const usersWithRoles = usersData?.map(u => {
-      const userRoles = rolesData?.filter(r => r.user_id === u.id) || [];
+      const userRoles = rolesData?.filter(r => r.profile_id === u.id) || [];
       const primaryRole = userRoles[0];
       return {
         ...u,

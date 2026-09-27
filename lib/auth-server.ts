@@ -103,7 +103,7 @@ export async function assertPlatformAdmin() {
   const { data, error: queryError } = await supabase
     .from('profile_roles')
     .select('role, club_id')
-    .eq('user_id', user.id)
+    .eq('profile_id', user.id)
     .eq('role', 'admin')
     .is('club_id', null)
     .single();
@@ -146,7 +146,7 @@ export async function assertClubAdmin(clubId: string) {
   const { data: platformAdmin } = await supabase
     .from('profile_roles')
     .select('role, club_id')
-    .eq('user_id', user.id)
+    .eq('profile_id', user.id)
     .eq('role', 'admin')
     .is('club_id', null)
     .single();
@@ -159,7 +159,7 @@ export async function assertClubAdmin(clubId: string) {
   const { data: clubAdmin } = await supabase
     .from('profile_roles')
     .select('role, club_id')
-    .eq('user_id', user.id)
+    .eq('profile_id', user.id)
     .in('role', ['club_admin', 'admin'])
     .eq('club_id', clubId)
     .single();
@@ -202,7 +202,7 @@ export async function getUserClubs() {
   const { data: platformAdmin } = await supabase
     .from('profile_roles')
     .select('role, club_id')
-    .eq('user_id', user.id)
+    .eq('profile_id', user.id)
     .eq('role', 'admin')
     .is('club_id', null)
     .single();
@@ -215,7 +215,7 @@ export async function getUserClubs() {
   const { data: roles } = await supabase
     .from('profile_roles')
     .select('club_id')
-    .eq('user_id', user.id)
+    .eq('profile_id', user.id)
     .not('club_id', 'is', null);
 
   const clubIds = [...new Set((roles || []).map(r => r.club_id).filter(Boolean))];

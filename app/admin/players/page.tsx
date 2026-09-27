@@ -54,10 +54,17 @@ export default function PlayersPage() {
     if (!user) return;
 
     // Check if user is platform admin or club admin
-    const { data: roles } = await supabase
+    const { data: roles, error: rolesError } = await supabase
       .from('profile_roles')
       .select('role, club_id')
-      .eq('user_id', user.id);
+      .eq('profile_id', user.id);
+
+    if (rolesError) {
+      console.error('Error loading roles:', rolesError);
+      setError('Failed to load user roles');
+      setLoading(false);
+      return;
+    }
 
     const platformAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
     const clubAdmin = roles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
@@ -133,12 +140,21 @@ export default function PlayersPage() {
     e.preventDefault();
     setError('');
 
+    // Derive club_id from selected team
+    const selectedTeam = teams.find(t => t.id === formData.team_id);
+    const derivedClubId = selectedTeam?.club_id;
+
+    if (!derivedClubId) {
+      setError('Selected team has no club. Please select a valid team.');
+      return;
+    }
+
     const submitData = {
       ...formData,
       jersey_number: parseInt(formData.jersey_number),
       position: formData.position || null,
       date_of_birth: formData.date_of_birth || null,
-      club_id: formData.club_id || userClubId || null,
+      club_id: derivedClubId,
     };
 
     if (editingPlayer) {

@@ -42,14 +42,14 @@ export default function MyClubPage() {
       return;
     }
 
-    const { data: roles } = await supabase
+    const { data: roles, error: rolesError } = await supabase
       .from('profile_roles')
       .select('club_id')
-      .eq('user_id', user.id)
+      .eq('profile_id', user.id)
       .in('role', ['club_admin', 'admin'])
       .single();
 
-    if (!roles || !roles.club_id) {
+    if (rolesError || !roles || !roles.club_id) {
       setError('No club assigned');
       setLoading(false);
       return;

@@ -41,10 +41,16 @@ export default function AdminDashboard() {
     }
 
     // Check if user has admin role (multi-role support)
-    const { data: userRoles } = await supabase
+    const { data: userRoles, error: rolesError } = await supabase
       .from('profile_roles')
       .select('role, club_id')
-      .eq('user_id', user.id);
+      .eq('profile_id', user.id);
+
+    if (rolesError) {
+      console.error('Error loading roles:', rolesError);
+      router.push('/login');
+      return;
+    }
 
     const roles = userRoles?.map(r => r.role) || [profileData.role];
     const hasAdminRole = roles.includes('admin') || roles.includes('club_admin');

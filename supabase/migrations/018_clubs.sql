@@ -154,6 +154,10 @@ COMMENT ON COLUMN teams.gender IS 'Team gender (male, female, mixed)';
 COMMENT ON COLUMN players.club_id IS 'Club this player belongs to';
 COMMENT ON COLUMN profile_roles.club_id IS 'Club this role is scoped to (null only for platform admin)';
 
+-- 'admin' role is platform-level only (club admins must not be able to grant legacy is_admin())
+ALTER TABLE profile_roles DROP CONSTRAINT IF EXISTS admin_role_is_platform_only;
+ALTER TABLE profile_roles ADD CONSTRAINT admin_role_is_platform_only CHECK (role <> 'admin' OR club_id IS NULL);
+
 -- ============================================================================
 -- PART 5: SECURITY DEFINER HELPER FUNCTIONS
 -- ============================================================================
@@ -288,6 +292,61 @@ GRANT EXECUTE ON FUNCTION get_managed_club_members() TO authenticated;
 
 COMMENT ON FUNCTION get_managed_club_members() IS 'Get profile IDs of users in clubs the current user manages (RLS-safe)';
 
+-- Get player IDs for children linked to the current user (parent role)
+CREATE OR REPLACE FUNCTION get_user_children_player_ids()
+RETURNS TABLE(player_id UUID)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT ppl.player_id FROM parent_player_links ppl
+  WHERE ppl.parent_id = auth.uid();
+$$;
+
+REVOKE EXECUTE ON FUNCTION get_user_children_player_ids() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION get_user_children_player_ids() TO authenticated;
+
+COMMENT ON FUNCTION get_user_children_player_ids() IS 'Get player IDs for children linked to current user as parent';
+
+-- Get team IDs for teams the current user plays on (player role via players.user_id)
+CREATE OR REPLACE FUNCTION get_user_player_team_ids()
+RETURNS TABLE(team_id UUID)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT p.team_id FROM players p
+  WHERE p.user_id = auth.uid();
+$$;
+
+REVOKE EXECUTE ON FUNCTION get_user_player_team_ids() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION get_user_player_team_ids() TO authenticated;
+
+COMMENT ON FUNCTION get_user_player_team_ids() IS 'Get team IDs where current user is a player';
+
+-- Check if user has privileged club roles (club_admin, team_manager, coach, admin)
+CREATE OR REPLACE FUNCTION has_privileged_club_role(p_club_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM profile_roles pr
+    WHERE pr.profile_id = auth.uid()
+      AND pr.role IN ('admin', 'club_admin', 'team_manager', 'coach')
+      AND (pr.club_id = p_club_id OR pr.club_id IS NULL)
+  );
+$$;
+
+REVOKE EXECUTE ON FUNCTION has_privileged_club_role(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION has_privileged_club_role(UUID) TO authenticated;
+
+COMMENT ON FUNCTION has_privileged_club_role(UUID) IS 'Check if user has club-wide access role in specified club';
+
 -- ============================================================================
 -- PART 6: UPDATE RLS POLICIES
 -- ============================================================================
@@ -347,8 +406,12 @@ CREATE POLICY "Users can view players from their clubs"
   FOR SELECT
   TO authenticated
   USING (
-    club_id IN (SELECT get_user_clubs())
-    OR team_id IN (SELECT get_user_player_teams()) -- keep player self-access
+    -- Platform admin, club admins, coaches, team managers see all players in their clubs
+    (club_id IN (SELECT get_user_clubs()) AND has_privileged_club_role(club_id))
+    -- Players see all players in their own team(s)
+    OR team_id IN (SELECT get_user_player_team_ids())
+    -- Parents see only their own children
+    OR id IN (SELECT get_user_children_player_ids())
   );
 
 DROP POLICY IF EXISTS "Admins can manage players in their clubs" ON players;
@@ -369,12 +432,19 @@ CREATE POLICY "Users can view games from their clubs"
   FOR SELECT
   TO authenticated
   USING (
+    -- Platform admin, club admins, coaches, team managers see all games in their clubs
     team_id IN (
-      SELECT id FROM teams WHERE club_id IN (SELECT get_user_clubs())
+      SELECT id FROM teams 
+      WHERE club_id IN (SELECT get_user_clubs())
+        AND has_privileged_club_role(club_id)
     )
+    -- Players see games of their own team(s)
+    OR team_id IN (SELECT get_user_player_team_ids())
+    -- Parents see games of their children's teams
     OR team_id IN (
-      SELECT team_id FROM players WHERE user_id = auth.uid()
-    ) -- keep player access to own team games
+      SELECT p.team_id FROM players p
+      WHERE p.id IN (SELECT get_user_children_player_ids())
+    )
   );
 
 DROP POLICY IF EXISTS "Admins and team managers can manage games in their clubs" ON games;
@@ -403,15 +473,20 @@ CREATE POLICY "Users can view game events from their clubs"
   FOR SELECT
   TO authenticated
   USING (
+    -- Platform admin, club admins, coaches, team managers see all events in their clubs
     game_id IN (
       SELECT g.id FROM games g
       JOIN teams t ON g.team_id = t.id
       WHERE t.club_id IN (SELECT get_user_clubs())
+        AND has_privileged_club_role(t.club_id)
     )
+    -- Players see all events in their own team's games
     OR game_id IN (
       SELECT g.id FROM games g
-      WHERE g.team_id IN (SELECT get_user_player_teams())
+      WHERE g.team_id IN (SELECT get_user_player_team_ids())
     )
+    -- Parents see only events of their own children
+    OR player_id IN (SELECT get_user_children_player_ids())
   );
 
 DROP POLICY IF EXISTS "Team managers can manage events in their clubs" ON game_events;
@@ -441,15 +516,20 @@ CREATE POLICY "Users can view starting lineups from their clubs"
   FOR SELECT
   TO authenticated
   USING (
+    -- Platform admin, club admins, coaches, team managers see all lineups in their clubs
     game_id IN (
       SELECT g.id FROM games g
       JOIN teams t ON g.team_id = t.id
       WHERE t.club_id IN (SELECT get_user_clubs())
+        AND has_privileged_club_role(t.club_id)
     )
+    -- Players see all lineups in their own team's games
     OR game_id IN (
       SELECT g.id FROM games g
-      WHERE g.team_id IN (SELECT get_user_player_teams())
+      WHERE g.team_id IN (SELECT get_user_player_team_ids())
     )
+    -- Parents see only lineups involving their own children
+    OR player_id IN (SELECT get_user_children_player_ids())
   );
 
 DROP POLICY IF EXISTS "Team managers can manage lineups in their clubs" ON starting_lineups;
@@ -568,7 +648,12 @@ CREATE POLICY "Admins can manage roles in their clubs"
   TO authenticated
   USING (
     is_platform_admin()
-    OR (club_id IS NOT NULL AND has_club_role(club_id, 'club_admin'))
+    OR (
+      club_id IS NOT NULL 
+      AND has_club_role(club_id, 'club_admin')
+      AND role IN ('club_admin', 'team_manager', 'coach', 'parent', 'player')
+      AND club_id IN (SELECT get_user_managed_clubs())
+    )
   );
 
 -- Parent player links RLS (scoped by player's club)
@@ -617,22 +702,29 @@ CREATE POLICY "Club admins can view their club members"
 DROP POLICY IF EXISTS "Anyone can view stints" ON stints;
 DROP POLICY IF EXISTS "Team managers can manage stints" ON stints;
 
+DROP POLICY IF EXISTS "Users can view stints from their clubs" ON stints;
 CREATE POLICY "Users can view stints from their clubs"
   ON stints
   FOR SELECT
   TO authenticated
   USING (
+    -- Platform admin, club admins, coaches, team managers see all stints in their clubs
     game_id IN (
       SELECT g.id FROM games g
       JOIN teams t ON g.team_id = t.id
       WHERE t.club_id IN (SELECT get_user_clubs())
+        AND has_privileged_club_role(t.club_id)
     )
+    -- Players see all stints in their own team's games
     OR game_id IN (
       SELECT g.id FROM games g
-      WHERE g.team_id IN (SELECT get_user_player_teams())
+      WHERE g.team_id IN (SELECT get_user_player_team_ids())
     )
+    -- Parents see only stints of their own children
+    OR player_id IN (SELECT get_user_children_player_ids())
   );
 
+DROP POLICY IF EXISTS "Team managers can manage stints in their clubs" ON stints;
 CREATE POLICY "Team managers can manage stints in their clubs"
   ON stints
   FOR ALL

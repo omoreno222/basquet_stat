@@ -60,7 +60,7 @@ export async function middleware(request: NextRequest) {
     const { data: userRoles, error: rolesError } = await supabase
       .from('profile_roles')
       .select('role')
-      .eq('user_id', user.id);
+      .eq('profile_id', user.id);
 
     if (rolesError) {
       console.error('Roles fetch error:', rolesError);

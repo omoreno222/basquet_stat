@@ -118,7 +118,7 @@ export async function updateUserRoles(userId: string, roles: string[], clubId?: 
   const { error: deleteError } = await supabase
     .from('profile_roles')
     .delete()
-    .eq('user_id', userId);
+    .eq('profile_id', userId);
 
   if (deleteError) {
     return { error: deleteError.message };
@@ -126,7 +126,7 @@ export async function updateUserRoles(userId: string, roles: string[], clubId?: 
 
   // Insert new roles with club_id
   const roleInserts = roles.map(role => ({
-    user_id: userId,
+    profile_id: userId,
     role: role,
     club_id: clubId || null,
   }));
