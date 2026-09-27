@@ -882,6 +882,41 @@ export default function GameCapturePage() {
   async function nextPeriod() {
     if (userSlot !== 'a') return;
     
+    // Check if game should auto-close (end of Q4 or OT with score not tied)
+    if (currentPeriod >= 4) {
+      const isTied = teamScore === opponentScore;
+      
+      if (!isTied) {
+        // Game finished - set status to 'final', stop clock
+        await updateGameState({
+          status: 'final',
+          clock_running: false,
+          clock_remaining_ms: 0,
+        });
+        
+        // Record final period end time
+        await supabase.from('game_periods').upsert({
+          game_id: gameId,
+          period_number: currentPeriod,
+          clock_remaining_ms: 0,
+          duration_ms: getPeriodLengthMs(currentPeriod),
+          is_overtime: currentPeriod > 4,
+        }, {
+          onConflict: 'game_id,period_number'
+        });
+        
+        setClockRunning(false);
+        setClockRemaining(0);
+        
+        // Show game finished overlay (alert for now, could be a modal)
+        alert(`Game Finished!\n\n${game?.teams?.name || 'Team'}: ${teamScore}\n${game?.opponent_name || 'Opponent'}: ${opponentScore}`);
+        return;
+      }
+      
+      // If tied after Q4 or OT, continue to next OT
+      // OT periods are 5 minutes (300,000 ms)
+    }
+    
     // Record period end time in game_periods table
     const { error: periodError } = await supabase
       .from('game_periods')
