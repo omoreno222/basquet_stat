@@ -20,6 +20,10 @@ ALTER TABLE profiles ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAU
 -- Add password_reset_requested_at for rate limiting
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS password_reset_requested_at TIMESTAMPTZ;
 
+-- Add theme preference (light/dark only, no system option)
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS theme TEXT NOT NULL DEFAULT 'light'
+  CHECK (theme IN ('light', 'dark'));
+
 -- Backfill locale from language where locale is null
 UPDATE profiles SET locale = language WHERE locale IS NULL AND language IS NOT NULL;
 
@@ -30,6 +34,7 @@ COMMENT ON COLUMN profiles.phone IS 'User phone number (optional)';
 COMMENT ON COLUMN profiles.locale IS 'User preferred language for UI (en/es/ca)';
 COMMENT ON COLUMN profiles.must_change_password IS 'Flag to force password change on next login (set after password reset or initial creation)';
 COMMENT ON COLUMN profiles.password_reset_requested_at IS 'Timestamp of last password reset request (for rate limiting)';
+COMMENT ON COLUMN profiles.theme IS 'User theme preference (light/dark)';
 
 -- RLS Policy: Allow users to update their own profile (safe columns only)
 -- This policy allows users to update first_name, last_name, avatar_url, locale, phone
@@ -328,7 +333,24 @@ VALUES
   
   ('trke_email_not_configured', 'en', 'Email service not configured. Please contact support.'),
   ('trke_email_not_configured', 'es', 'Servicio de correo no configurado. Por favor contacta a soporte.'),
-  ('trke_email_not_configured', 'ca', 'Servei de correu no configurat. Si us plau, contacta amb suport.')
+  ('trke_email_not_configured', 'ca', 'Servei de correu no configurat. Si us plau, contacta amb suport.'),
+  
+  -- Theme
+  ('trke_theme', 'en', 'Theme'),
+  ('trke_theme', 'es', 'Tema'),
+  ('trke_theme', 'ca', 'Tema'),
+  
+  ('trke_theme_preference', 'en', 'Theme Preference'),
+  ('trke_theme_preference', 'es', 'Preferencia de Tema'),
+  ('trke_theme_preference', 'ca', 'Preferència de Tema'),
+  
+  ('trke_light_mode', 'en', 'Light Mode'),
+  ('trke_light_mode', 'es', 'Modo Claro'),
+  ('trke_light_mode', 'ca', 'Mode Clar'),
+  
+  ('trke_dark_mode', 'en', 'Dark Mode'),
+  ('trke_dark_mode', 'es', 'Modo Oscuro'),
+  ('trke_dark_mode', 'ca', 'Mode Fosc')
 
 ON CONFLICT (key, locale) DO UPDATE
 SET value = EXCLUDED.value,
