@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { Profile, Player, Game } from '@/lib/types';
 import { Club } from '@/types/database';
 import { ClubLogo } from '@/components/ClubLogo';
+import { canStartGame, formatTimeUntilStart, type GameStartCheck } from '@/lib/game-start-window';
 
 interface GameWithTeam extends Game {
   teams?: { 
@@ -41,6 +42,7 @@ export default function GameDetailPage() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [slotAUserId, setSlotAUserId] = useState<string>('');
   const [slotBUserId, setSlotBUserId] = useState<string>('');
+  const [gameStartCheck, setGameStartCheck] = useState<GameStartCheck | null>(null);
 
   const loadData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -110,6 +112,12 @@ export default function GameDetailPage() {
 
       // Set current user with admin status
       setCurrentUser({ ...profile, isAdmin } as UserProfile);
+      
+      // Check game start eligibility
+      if (gameData.status === 'scheduled') {
+        const startCheck = await canStartGame(gameId, user.id);
+        setGameStartCheck(startCheck);
+      }
     }
 
     setLoading(false);
@@ -118,6 +126,18 @@ export default function GameDetailPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Periodic check for game start eligibility (every minute)
+  useEffect(() => {
+    if (!game || game.status !== 'scheduled' || !currentUser) return;
+
+    const interval = setInterval(async () => {
+      const startCheck = await canStartGame(gameId, currentUser.id);
+      setGameStartCheck(startCheck);
+    }, 60000); // Check every minute
+
+    return () => clearInterval(interval);
+  }, [game, currentUser, gameId]);
 
   async function handleAssignSlots() {
     if (!slotAUserId && !slotBUserId) {
@@ -332,13 +352,31 @@ export default function GameDetailPage() {
               <h3 className="text-lg font-bold mb-4">Live Capture</h3>
               
               {game.status === 'scheduled' && (
-                <button
-                  onClick={handleStartGame}
-                  disabled={!game.slot_a_user_id && !game.slot_b_user_id}
-                  className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-300 text-lg font-bold"
-                >
-                  Start Game
-                </button>
+                <div>
+                  <button
+                    onClick={handleStartGame}
+                    disabled={
+                      (!game.slot_a_user_id && !game.slot_b_user_id) || 
+                      (gameStartCheck !== null && !gameStartCheck.canStart)
+                    }
+                    className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-300 text-lg font-bold"
+                  >
+                    {gameStartCheck?.isAdmin ? 'Start Game (Admin Override)' : 'Start Game'}
+                  </button>
+                  
+                  {gameStartCheck && !gameStartCheck.canStart && gameStartCheck.minutesUntilStart && (
+                    <p className="mt-2 text-sm text-orange-600">
+                      Game can be started in {formatTimeUntilStart(gameStartCheck.minutesUntilStart)}
+                      {gameStartCheck.isAdmin && ' (or now as admin)'}
+                    </p>
+                  )}
+                  
+                  {!game.slot_a_user_id && !game.slot_b_user_id && (
+                    <p className="mt-2 text-sm text-red-600">
+                      At least one slot must be assigned
+                    </p>
+                  )}
+                </div>
               )}
 
               {game.status === 'live' && (
