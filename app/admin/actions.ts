@@ -4,77 +4,29 @@ import { getServerSupabase } from '@/lib/supabase';
 import { assertAdmin, assertClubAdmin } from '@/lib/auth-server';
 
 export async function updateUserRoles(userId: string, roles: string[], clubId?: string | null) {
-  // SECURITY: Verify caller is admin before using service role
-  const authCheck = await assertAdmin();
-  if (authCheck.error) {
-    return { error: authCheck.error };
-  }
-
   const supabase = getServerSupabase();
   
   if (!roles || roles.length === 0) {
     return { error: 'At least one role must be selected' };
   }
 
-  // Use first role as primary role for profiles.role (backward compatibility)
-  const primaryRole = roles[0];
+  // Call the secure SQL function that handles all the logic
+  const { data, error } = await supabase.rpc('update_user_roles_safe', {
+    p_user_id: userId,
+    p_roles: roles,
+    p_club_id: clubId || null,
+  });
 
-  // Update primary role in profiles
-  const { error: profileError } = await supabase
-    .from('profiles')
-    .update({ role: primaryRole })
-    .eq('id', userId);
-
-  if (profileError) {
-    return { error: profileError.message };
+  if (error) {
+    return { error: error.message };
   }
 
-  // Delete existing roles for this club only (or all if clubId is null and we're managing platform roles)
-  let deleteQuery = supabase
-    .from('profile_roles')
-    .delete()
-    .eq('profile_id', userId);
-
-  // If clubId is specified, only delete roles for that club
-  if (clubId !== undefined) {
-    if (clubId === null) {
-      // Managing platform roles - delete only platform admin roles (club_id IS NULL)
-      deleteQuery = deleteQuery.is('club_id', null);
-    } else {
-      // Managing club roles - delete only roles for this specific club
-      deleteQuery = deleteQuery.eq('club_id', clubId);
-    }
-  }
-
-  const { error: deleteError } = await deleteQuery;
-
-  if (deleteError) {
-    return { error: deleteError.message };
-  }
-
-  // Insert new roles with appropriate club_id
-  // 'admin' role always gets club_id = null (platform admin)
-  // Other roles get the specified clubId
-  const roleInserts = roles.map(role => ({
-    profile_id: userId,
-    role: role,
-    club_id: role === 'admin' ? null : (clubId || null),
-  }));
-
-  const { error: insertError } = await supabase
-    .from('profile_roles')
-    .insert(roleInserts);
-
-  if (insertError) {
-    return { error: insertError.message };
+  // Check if the function returned an error in the JSON response
+  if (data && typeof data === 'object' && 'error' in data) {
+    return { error: data.error };
   }
 
   return { success: true };
-}
-
-// Keep old function for backward compatibility, but delegate to updateUserRoles
-export async function updateUserRole(userId: string, role: string) {
-  return updateUserRoles(userId, [role]);
 }
 
 export async function linkParentToPlayer(parentId: string, playerId: string) {

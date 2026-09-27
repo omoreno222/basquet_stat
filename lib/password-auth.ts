@@ -90,6 +90,16 @@ export async function createUserWithPassword(formData: {
 
   const supabase = getServerSupabase();
 
+  const rolesToAssign = formData.roles && formData.roles.length > 0 
+    ? formData.roles 
+    : [formData.role];
+
+  // Validate: non-admin roles require a club
+  const hasNonAdminRole = rolesToAssign.some(role => role !== 'admin');
+  if (hasNonAdminRole && !formData.club_id) {
+    return { error: 'A club must be selected for non-admin roles' };
+  }
+
   // Generate temporary password (never logged/shown except in email)
   const tempPassword = generatePassword(12);
 
@@ -105,10 +115,6 @@ export async function createUserWithPassword(formData: {
   }
 
   if (authData.user) {
-    const rolesToAssign = formData.roles && formData.roles.length > 0 
-      ? formData.roles 
-      : [formData.role];
-    
     const primaryRole = rolesToAssign[0];
 
     // Create profile with must_change_password flag
@@ -124,14 +130,16 @@ export async function createUserWithPassword(formData: {
       });
 
     if (profileError) {
-      return { error: profileError.message };
+      // Clean up: delete the auth user
+      await supabase.auth.admin.deleteUser(authData.user.id);
+      return { error: `Failed to create profile: ${profileError.message}` };
     }
 
-    // Insert roles
+    // Insert roles with correct club_id (admin gets null, others get formData.club_id)
     const roleInserts = rolesToAssign.map(role => ({
       profile_id: authData.user.id,
       role: role,
-      club_id: formData.club_id || null,
+      club_id: role === 'admin' ? null : formData.club_id,
     }));
 
     const { error: rolesError } = await supabase
@@ -139,7 +147,10 @@ export async function createUserWithPassword(formData: {
       .insert(roleInserts);
 
     if (rolesError) {
-      return { error: rolesError.message };
+      // Clean up: delete the profile and auth user
+      await supabase.from('profiles').delete().eq('id', authData.user.id);
+      await supabase.auth.admin.deleteUser(authData.user.id);
+      return { error: `Failed to assign roles: ${rolesError.message}` };
     }
 
     // Get club name if provided
@@ -182,12 +193,16 @@ export async function createUserWithPassword(formData: {
 export async function resetUserPassword(userId: string, clubId?: string | null) {
   const supabase = getServerSupabase();
 
+  let callerIsPlatformAdmin = false;
+
   // Verify authorization (platform admin or club admin for that club)
   if (clubId) {
     const authCheck = await assertClubAdmin(clubId);
     if (authCheck.error) {
       return { error: authCheck.error };
     }
+
+    callerIsPlatformAdmin = authCheck.isPlatformAdmin || false;
 
     // Club admin can only reset users within their club
     // Check that the target user has a role in this club
@@ -206,9 +221,9 @@ export async function resetUserPassword(userId: string, clubId?: string | null) 
       return { error: 'User does not belong to your club' };
     }
 
-    // Prevent resetting platform admins (users with admin role and null club_id)
-    const isPlatformAdmin = userRoles.some(r => r.role === 'admin' && r.club_id === null);
-    if (isPlatformAdmin) {
+    // Prevent club admins (not platform admins) from resetting platform administrators
+    const targetIsPlatformAdmin = userRoles.some(r => r.role === 'admin' && r.club_id === null);
+    if (!callerIsPlatformAdmin && targetIsPlatformAdmin) {
       return { error: 'Cannot reset password for platform administrators' };
     }
   } else {
@@ -216,6 +231,7 @@ export async function resetUserPassword(userId: string, clubId?: string | null) 
     if (authCheck.error) {
       return { error: authCheck.error };
     }
+    callerIsPlatformAdmin = true;
   }
 
   // Get user profile

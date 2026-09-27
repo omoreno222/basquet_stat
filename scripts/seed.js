@@ -113,24 +113,40 @@ async function seed() {
       }
     }
 
-    // Create a demo club
-    console.log('Creating demo club...');
-    const { data: club, error: clubError } = await supabase
+    // Get or create demo club (reuse club created by 018 backfill if it exists)
+    console.log('Getting or creating demo club...');
+    let club;
+    
+    // Try to find existing club (created by migration 018 backfill)
+    const { data: existingClub } = await supabase
       .from('clubs')
-      .insert({
-        name: 'Demo Basketball Club',
-        short_name: 'DBC',
-        primary_color: '#1e40af',
-        secondary_color: '#f97316',
-      })
       .select()
+      .limit(1)
       .single();
 
-    if (clubError) {
-      console.error('Error creating club:', clubError);
-      return;
+    if (existingClub) {
+      club = existingClub;
+      console.log('✓ Using existing club:', club.name);
+    } else {
+      // Create new club if none exists
+      const { data: newClub, error: clubError } = await supabase
+        .from('clubs')
+        .insert({
+          name: 'Demo Basketball Club',
+          short_name: 'DBC',
+          primary_color: '#1e40af',
+          secondary_color: '#f97316',
+        })
+        .select()
+        .single();
+
+      if (clubError) {
+        console.error('Error creating club:', clubError);
+        return;
+      }
+      club = newClub;
+      console.log('✓ Created club:', club.name);
     }
-    console.log('✓ Created club:', club.name);
 
     // Update profile_roles to include club_id (except for admin)
     console.log('Updating user roles with club_id...');
@@ -139,7 +155,8 @@ async function seed() {
         const { error: updateError } = await supabase
           .from('profile_roles')
           .update({ club_id: club.id })
-          .eq('profile_id', user.id);
+          .eq('profile_id', user.id)
+          .eq('role', user.role);
 
         if (updateError) {
           console.error(`Error updating roles for ${user.email}:`, updateError);

@@ -479,6 +479,41 @@ export default function UsersPage() {
                       )}
                     </>
                   )}
+                  {editingUser && isPlatformAdmin && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Club
+                      </label>
+                      <select
+                        value={formData.club_id}
+                        onChange={(e) => setFormData({ ...formData, club_id: e.target.value })}
+                        className="w-full border rounded px-3 py-2"
+                      >
+                        <option value="">No club (admin role only)</option>
+                        {clubs.map((club) => (
+                          <option key={club.id} value={club.id}>
+                            {club.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Club for non-admin roles. Admin role ignores this setting.
+                      </p>
+                    </div>
+                  )}
+                  {editingUser && !isPlatformAdmin && userClubId && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Club
+                      </label>
+                      <input
+                        type="text"
+                        disabled
+                        value={clubs.find(c => c.id === userClubId)?.name || ''}
+                        className="w-full border rounded px-3 py-2 bg-gray-100"
+                      />
+                    </div>
+                  )}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Roles * (select at least one)
