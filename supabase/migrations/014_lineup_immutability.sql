@@ -91,3 +91,14 @@ CREATE TRIGGER enforce_lineup_delete_immutability
 -- Add clock_remaining_ms to game_periods for accurate minutes calculation
 -- This records the exact clock time when the period ended (may not be 0:00)
 ALTER TABLE game_periods ADD COLUMN IF NOT EXISTS clock_remaining_ms INTEGER DEFAULT 0;
+
+-- Add game_periods to realtime publication for period end sync
+DO $$ 
+BEGIN 
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname='supabase_realtime' AND tablename='game_periods'
+  ) THEN 
+    ALTER PUBLICATION supabase_realtime ADD TABLE game_periods; 
+  END IF; 
+END $$;

@@ -14,6 +14,7 @@ import { FreeThrowModal } from './components/FreeThrowModal';
 import { FoulModal } from './components/FoulModal';
 import { SubstitutionModal } from './components/SubstitutionModal';
 import { calculateMinutesPlayed, formatMinutes } from '@/lib/stats/minutes';
+import { Profile } from '@/lib/types';
 
 type ConnectionStatus = 'connected' | 'reconnecting' | 'offline';
 
@@ -69,11 +70,6 @@ interface GameEvent {
   player_out?: Player;
 }
 
-interface User {
-  id: string;
-  email: string;
-}
-
 interface PresenceState {
   [key: string]: Array<{
     presence_ref: string;
@@ -112,7 +108,7 @@ export default function GameCapturePage() {
 
   const [game, setGame] = useState<Game | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<Profile | null>(null);
   const [userSlot, setUserSlot] = useState<'a' | 'b' | null>(null);
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<GameEvent[]>([]);
@@ -150,6 +146,22 @@ export default function GameCapturePage() {
   // Refs
   const channelRef = useRef<RealtimeChannel | null>(null);
   const clockIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const gameRef = useRef<Game | null>(null);
+  const userSlotRef = useRef<'a' | 'b' | null>(null);
+  const currentUserRef = useRef<Profile | null>(null);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    gameRef.current = game;
+  }, [game]);
+
+  useEffect(() => {
+    userSlotRef.current = userSlot;
+  }, [userSlot]);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
 
   // Derive on-court players from starting lineup + substitution events using useMemo
   // This ensures it's always up-to-date and avoids stale closure issues
@@ -263,7 +275,7 @@ export default function GameCapturePage() {
 
     if (gameData) {
       setGame(gameData);
-      setClockRemaining(gameData.clock_remaining_ms || 600000);
+      setClockRemaining(gameData.clock_remaining_ms ?? getPeriodLengthMs(gameData.current_period || 1));
       setClockRunning(gameData.clock_running || false);
       setCurrentPeriod(gameData.current_period || 1);
       setPossession(gameData.possession || 'home');
@@ -338,7 +350,7 @@ export default function GameCapturePage() {
       .channel(`game:${gameId}`, {
         config: {
           broadcast: { self: true },
-          presence: { key: currentUser?.id || 'anonymous' },
+          presence: { key: currentUserRef.current?.id || 'anonymous' },
         },
       })
       .on('presence', { event: 'sync' }, () => {
@@ -418,8 +430,8 @@ export default function GameCapturePage() {
             }
 
             if (
-              newData.slot_a_user_id !== game?.slot_a_user_id ||
-              newData.slot_b_user_id !== game?.slot_b_user_id
+              newData.slot_a_user_id !== gameRef.current?.slot_a_user_id ||
+              newData.slot_b_user_id !== gameRef.current?.slot_b_user_id
             ) {
               const { data: { user } } = await supabase.auth.getUser();
               const { data: userRoles } = await supabase
@@ -502,8 +514,8 @@ export default function GameCapturePage() {
         if (status === 'SUBSCRIBED') {
           setConnectionStatus('connected');
           channel.track({
-            user_id: currentUser?.id,
-            slot: userSlot,
+            user_id: currentUserRef.current?.id,
+            slot: userSlotRef.current,
             online_at: new Date().toISOString(),
           });
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
@@ -525,14 +537,16 @@ export default function GameCapturePage() {
         clockIntervalRef.current = null;
       }
     };
-  }, [gameId, currentUser, userSlot, game]);
+  }, [gameId]);
 
   // Effects: run on mount and handle clock ticker
   useEffect(() => {
     loadData();
     const cleanup = setupRealtimeSubscription();
     return () => cleanup();
-  }, [loadData, setupRealtimeSubscription]);
+    // Only run on mount and when gameId changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId]);
 
   // Clock ticker - ONLY for Slot A
   useEffect(() => {
@@ -846,7 +860,7 @@ export default function GameCapturePage() {
     if (userSlot !== 'a') return;
     
     // Record period end time in game_periods table
-    await supabase
+    const { error: periodError } = await supabase
       .from('game_periods')
       .upsert({
         game_id: gameId,
@@ -857,6 +871,12 @@ export default function GameCapturePage() {
       }, {
         onConflict: 'game_id,period_number'
       });
+
+    if (periodError) {
+      console.error('Failed to record period end time:', periodError);
+      alert(`Error recording period end time: ${periodError.message}`);
+      return;
+    }
 
     // Update local period end times
     setPeriodEndTimes(prev => ({
