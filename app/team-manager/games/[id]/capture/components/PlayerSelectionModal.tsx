@@ -101,6 +101,13 @@ export function PlayerSelectionModal({
               <div className="text-sm font-bold text-white text-center leading-tight">
                 {player.full_name}
               </div>
+              
+              {/* Guest Tag */}
+              {player.is_guest && (
+                <div className="text-xs text-purple-400 font-medium text-center">
+                  Guest
+                </div>
+              )}
             </button>
           ))}
         </div>

@@ -14,6 +14,7 @@ import { FreeThrowModal } from './components/FreeThrowModal';
 import { FoulModal } from './components/FoulModal';
 import { SubstitutionModal } from './components/SubstitutionModal';
 import { ChooseSideModal } from './components/ChooseSideModal';
+import { GuestPlayerModal } from './components/GuestPlayerModal';
 import { calculateMinutesPlayed, formatMinutes } from '@/lib/stats/minutes';
 import { Profile } from '@/lib/types';
 import { ClubLogo } from '@/components/ClubLogo';
@@ -25,6 +26,9 @@ interface Player {
   full_name: string;
   jersey_number: number;
   avatar_url: string | null;
+  is_guest?: boolean;
+  guest_team_name?: string;
+  jersey_override?: number;
 }
 
 interface Game {
@@ -47,7 +51,11 @@ interface Game {
   attack_right_first: boolean;
   created_at?: string;
   updated_at?: string;
-  teams?: { name: string; logo_url?: string | null };
+  teams?: { 
+    name: string; 
+    logo_url?: string | null;
+    club_id?: string;
+  };
 }
 
 interface GameEvent {
@@ -148,6 +156,7 @@ export default function GameCapturePage() {
   const [showFoul, setShowFoul] = useState(false);
   const [showSubstitution, setShowSubstitution] = useState(false);
   const [showChooseSide, setShowChooseSide] = useState(false);
+  const [showGuestPlayer, setShowGuestPlayer] = useState(false);
   const [sideChosen, setSideChosen] = useState(false);
   const [startingLineupIds, setStartingLineupIds] = useState<string[]>([]); // Immutable starting 5
   const [startingLineupSet, setStartingLineupSet] = useState(false);
@@ -281,7 +290,7 @@ export default function GameCapturePage() {
 
     const { data: gameData } = await supabase
       .from('games')
-      .select('*, teams(name, logo_url)')
+      .select('*, teams(name, logo_url, club_id)')
       .eq('id', gameId)
       .single();
 
@@ -312,7 +321,32 @@ export default function GameCapturePage() {
         .eq('team_id', gameData.team_id)
         .order('jersey_number');
 
-      setPlayers(playersData || []);
+      // Load guest players for this game
+      const { data: guestsData } = await supabase
+        .from('game_guest_players')
+        .select('player_id, jersey_override, players(id, full_name, jersey_number, avatar_url, teams(name))')
+        .eq('game_id', gameId);
+
+      // Merge regular and guest players
+      const regularPlayers = (playersData || []).map(p => ({
+        ...p,
+        is_guest: false,
+      }));
+
+      const guestPlayers = (guestsData || []).map(g => {
+        const player = (g as any).players;
+        return {
+          id: player.id,
+          full_name: player.full_name,
+          jersey_number: g.jersey_override || player.jersey_number,
+          avatar_url: player.avatar_url,
+          is_guest: true,
+          guest_team_name: player.teams?.name,
+          jersey_override: g.jersey_override,
+        };
+      });
+
+      setPlayers([...regularPlayers, ...guestPlayers]);
 
       const { data: eventsData } = await supabase
         .from('game_events')
@@ -524,6 +558,19 @@ export default function GameCapturePage() {
             });
             setPeriodEndTimes(endTimes);
           }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'game_guest_players',
+          filter: `game_id=eq.${gameId}`,
+        },
+        () => {
+          // Reload players when guests change
+          loadData();
         }
       )
       .subscribe((status) => {
@@ -1296,6 +1343,17 @@ export default function GameCapturePage() {
               Foul
             </button>
             
+            {/* Add Guest Button */}
+            <button
+              onClick={() => setShowGuestPlayer(true)}
+              disabled={!game}
+              className="px-2 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:opacity-50 rounded-lg font-bold text-xs"
+              title="Add guest player from another team"
+              style={{ minHeight: '44px' }}
+            >
+              +G
+            </button>
+            
             {/* Sub Button */}
             <button
               onClick={() => setShowSubstitution(true)}
@@ -1527,6 +1585,16 @@ export default function GameCapturePage() {
           playerMinutes={playerMinutes}
           onConfirm={handleSubstitutionSubmit}
           onClose={() => setShowSubstitution(false)}
+        />
+      )}
+
+      {showGuestPlayer && game && (
+        <GuestPlayerModal
+          gameId={gameId}
+          clubId={game.teams?.club_id || ''}
+          currentTeamId={game.team_id}
+          onClose={() => setShowGuestPlayer(false)}
+          onGuestAdded={() => loadData()}
         />
       )}
     </div>
