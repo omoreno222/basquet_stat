@@ -333,8 +333,10 @@ export default function GameCapturePage() {
         is_guest: false,
       }));
 
-      const guestPlayers = (guestsData || []).map(g => {
-        const player = (g as any).players;
+      // Load guest players with joined data (complex Supabase nested query)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const guestPlayers = (guestsData || []).map((g: any) => {
+        const player = g.players;
         return {
           id: player.id,
           full_name: player.full_name,
@@ -342,7 +344,7 @@ export default function GameCapturePage() {
           avatar_url: player.avatar_url,
           is_guest: true,
           guest_team_name: player.teams?.name,
-          jersey_override: g.jersey_override,
+          jersey_override: g.jersey_override || undefined,
         };
       });
 
@@ -393,8 +395,11 @@ export default function GameCapturePage() {
     }
 
     setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameId, router]);
-
+  
+  // REMOVED loadData from dependencies of setupRealtimeSubscription
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const setupRealtimeSubscription = useCallback(() => {
     const channel = supabase
       .channel(`game:${gameId}`, {

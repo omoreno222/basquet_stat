@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 
@@ -12,15 +12,6 @@ test.describe('Basquet Stat Screenshots', () => {
   test.beforeAll(async () => {
     console.log('Starting screenshot capture...');
     console.log('Artifacts will be saved to:', artifactsDir);
-  });
-
-  // Mock authentication for screenshot generation
-  test.beforeEach(async ({ page }) => {
-    // Inject mock Supabase auth
-    await page.addInitScript(() => {
-      // @ts-ignore
-      window.__SUPABASE_MOCK__ = true;
-    });
   });
 
   test('1. Basketball Court - Both Orientations', async ({ page }) => {

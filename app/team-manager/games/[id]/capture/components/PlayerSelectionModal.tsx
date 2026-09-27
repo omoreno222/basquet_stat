@@ -7,6 +7,8 @@ interface Player {
   full_name: string;
   jersey_number: number;
   avatar_url?: string | null;
+  is_guest?: boolean;
+  guest_team_name?: string;
 }
 
 interface PlayerSelectionModalProps {

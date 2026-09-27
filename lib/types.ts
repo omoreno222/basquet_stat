@@ -6,6 +6,7 @@ export interface Profile {
   full_name: string | null;
   role: string;
   avatar_url: string | null;
+  theme?: string | null;
   created_at: string;
 }
 

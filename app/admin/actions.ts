@@ -542,6 +542,10 @@ export async function removePlayerAvatar(playerId: string) {
 }
 
 /**
- * Reset user password (re-export from password-auth)
+ * Reset user password (wrapper for password-auth function)
  */
-export { resetUserPassword } from '@/lib/password-auth';
+export async function resetUserPassword(userId: string) {
+  'use server';
+  const { resetUserPassword: resetPwd } = await import('@/lib/password-auth');
+  return resetPwd(userId);
+}

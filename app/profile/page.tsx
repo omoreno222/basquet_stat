@@ -81,7 +81,7 @@ export default function ProfilePage() {
         setFirstName(profileData.first_name || '');
         setLastName(profileData.last_name || '');
         setLocale(profileData.locale || profileData.language || 'en');
-        setTheme((profileData as any).theme || 'light');
+        setTheme(profileData.theme || 'light');
         setPhone(profileData.phone || '');
       }
 

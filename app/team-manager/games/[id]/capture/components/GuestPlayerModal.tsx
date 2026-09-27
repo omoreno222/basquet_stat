@@ -46,10 +46,6 @@ export function GuestPlayerModal({ gameId, clubId, currentTeamId, onClose, onGue
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [jerseyOverride, setJerseyOverride] = useState<number | ''>('');
 
-  useEffect(() => {
-    loadPlayers();
-  }, [clubId, currentTeamId]);
-
   async function loadPlayers() {
     setLoading(true);
     
@@ -69,6 +65,10 @@ export function GuestPlayerModal({ gameId, clubId, currentTeamId, onClose, onGue
     
     setLoading(false);
   }
+
+  useEffect(() => {
+    loadPlayers();
+  }, [clubId, currentTeamId]);
 
   async function handleAddGuest() {
     if (!selectedPlayer) return;
