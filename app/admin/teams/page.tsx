@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Season, Team } from '@/types/database';
 import Link from 'next/link';
+import { TeamLogo } from '@/components/TeamLogo';
+import { uploadTeamLogo, removeTeamLogo } from '../actions';
 
 interface TeamWithSeason extends Team {
   seasons?: { name: string };
@@ -20,6 +22,9 @@ export default function TeamsPage() {
     season_id: '',
   });
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [uploadingLogo, setUploadingLogo] = useState<string | null>(null);
+  const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
   useEffect(() => {
     loadData();
@@ -41,6 +46,7 @@ export default function TeamsPage() {
     setEditingTeam(null);
     setShowForm(false);
     setError('');
+    setSuccess('');
   }
 
   function handleEdit(team: TeamWithSeason) {
@@ -51,11 +57,13 @@ export default function TeamsPage() {
     });
     setShowForm(true);
     setError('');
+    setSuccess('');
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
+    setSuccess('');
 
     if (editingTeam) {
       const { error: updateError } = await supabase
@@ -80,6 +88,45 @@ export default function TeamsPage() {
 
     resetForm();
     loadData();
+  }
+
+  async function handleLogoUpload(teamId: string, file: File) {
+    setUploadingLogo(teamId);
+    setError('');
+    setSuccess('');
+
+    const result = await uploadTeamLogo(teamId, file);
+    setUploadingLogo(null);
+
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+
+    setSuccess('Logo uploaded successfully');
+    loadData();
+  }
+
+  async function handleLogoRemove(teamId: string) {
+    if (!confirm('Are you sure you want to remove this logo?')) {
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+
+    const result = await removeTeamLogo(teamId);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+
+    setSuccess('Logo removed successfully');
+    loadData();
+  }
+
+  function triggerFileInput(teamId: string) {
+    fileInputRefs.current[teamId]?.click();
   }
 
   async function handleDelete(id: string) {
@@ -128,6 +175,21 @@ export default function TeamsPage() {
       </nav>
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        {(error || success) && (
+          <div className="mb-4 px-4">
+            {error && (
+              <div className="p-3 bg-red-100 text-red-700 rounded">
+                {error}
+              </div>
+            )}
+            {success && (
+              <div className="p-3 bg-green-100 text-green-700 rounded">
+                {success}
+              </div>
+            )}
+          </div>
+        )}
+
         {showForm && (
           <div className="mb-6 px-4">
             <div className="bg-white shadow rounded-lg p-6">
@@ -201,13 +263,45 @@ export default function TeamsPage() {
                 teams.map((team) => (
                   <li key={team.id} className="px-6 py-4 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-medium text-gray-900">{team.name}</h3>
-                        <p className="text-sm text-gray-500">
-                          Season: {team.seasons?.name || 'N/A'}
-                        </p>
+                      <div className="flex items-center gap-4">
+                        <TeamLogo 
+                          logoUrl={team.logo_url} 
+                          teamName={team.name} 
+                          size="sm"
+                        />
+                        <div>
+                          <h3 className="text-lg font-medium text-gray-900">{team.name}</h3>
+                          <p className="text-sm text-gray-500">
+                            Season: {team.seasons?.name || 'N/A'}
+                          </p>
+                        </div>
                       </div>
                       <div className="flex gap-2">
+                        <input
+                          type="file"
+                          ref={(el) => { fileInputRefs.current[team.id] = el; }}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleLogoUpload(team.id, file);
+                          }}
+                          accept="image/jpeg,image/png,image/webp,image/svg+xml"
+                          className="hidden"
+                        />
+                        <button
+                          onClick={() => triggerFileInput(team.id)}
+                          disabled={uploadingLogo === team.id}
+                          className="bg-green-500 hover:bg-green-700 text-white px-3 py-1 rounded text-sm whitespace-nowrap disabled:opacity-50"
+                        >
+                          {uploadingLogo === team.id ? 'Uploading...' : team.logo_url ? 'Change Logo' : 'Add Logo'}
+                        </button>
+                        {team.logo_url && (
+                          <button
+                            onClick={() => handleLogoRemove(team.id)}
+                            className="bg-orange-500 hover:bg-orange-700 text-white px-3 py-1 rounded text-sm whitespace-nowrap"
+                          >
+                            Remove
+                          </button>
+                        )}
                         <button
                           onClick={() => handleEdit(team)}
                           className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"

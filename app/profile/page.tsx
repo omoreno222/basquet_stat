@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '@/lib/supabase';
 import { getInitials, validatePhone, validateEmail, validatePassword, getRoleBadgeClasses, getRoleTranslationKey, type UserRole } from '@/lib/profile-utils';
+import { TeamLogo } from '@/components/TeamLogo';
 
 interface Profile {
   id: string;
@@ -21,6 +22,7 @@ interface Team {
   id: string;
   name: string;
   category: string;
+  logo_url?: string | null;
 }
 
 interface LinkedPlayer {
@@ -124,7 +126,7 @@ export default function ProfilePage() {
       if (userRoles.includes('parent')) {
         const { data: links } = await supabase
           .from('parent_player_links')
-          .select('player_id, players(id, full_name, jersey_number, team_id, teams(id, name, category))')
+          .select('player_id, players(id, full_name, jersey_number, team_id, teams(id, name, category, logo_url))')
           .eq('parent_id', userId);
 
         if (links) {
@@ -153,7 +155,7 @@ export default function ProfilePage() {
       if (userRoles.includes('player')) {
         const { data: playerData } = await supabase
           .from('players')
-          .select('id, full_name, jersey_number, team_id, teams(id, name, category)')
+          .select('id, full_name, jersey_number, team_id, teams(id, name, category, logo_url)')
           .eq('user_id', userId)
           .maybeSingle();
 
@@ -627,7 +629,12 @@ export default function ProfilePage() {
               <div className="space-y-3">
                 {linkedPlayers.map((player) => (
                   <div key={player.id} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded">
-                    <div className="w-10 h-10 rounded-full bg-orange-500 text-white flex items-center justify-center font-bold">
+                    <TeamLogo 
+                      logoUrl={player.team.logo_url} 
+                      teamName={player.team.name} 
+                      size="sm"
+                    />
+                    <div className="w-10 h-10 rounded-full bg-orange-500 text-white flex items-center justify-center font-bold flex-shrink-0">
                       {player.jersey_number}
                     </div>
                     <div>

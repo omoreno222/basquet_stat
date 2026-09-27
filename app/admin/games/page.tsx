@@ -5,9 +5,10 @@ import { supabase } from '@/lib/supabase';
 import { Game, GameStatus } from '@/types/database';
 import { Team } from '@/lib/types';
 import Link from 'next/link';
+import { TeamLogo } from '@/components/TeamLogo';
 
 interface GameWithTeam extends Game {
-  teams?: { name: string };
+  teams?: { name: string; logo_url?: string | null };
 }
 
 interface TeamWithSeason extends Team {
@@ -37,7 +38,7 @@ export default function GamesPage() {
 
   async function loadData() {
     const [gamesData, teamsData] = await Promise.all([
-      supabase.from('games').select('*, teams(name, seasons(name))').order('game_date', { ascending: false }),
+      supabase.from('games').select('*, teams(name, logo_url, seasons(name))').order('game_date', { ascending: false }),
       supabase.from('teams').select('*, seasons(name)').order('name'),
     ]);
 
@@ -294,16 +295,23 @@ export default function GamesPage() {
                 games.map((game) => (
                   <li key={game.id} className="px-6 py-4 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-medium text-gray-900">
-                          {game.teams?.name} vs {game.opponent_name}
-                        </h3>
-                        <p className="text-sm text-gray-500">
-                          {new Date(game.game_date).toLocaleString()} - {game.venue || 'TBD'}
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          {game.is_home ? 'Home' : 'Away'} · {game.official ? 'Official' : 'Friendly'}
-                        </p>
+                      <div className="flex items-center gap-3">
+                        <TeamLogo 
+                          logoUrl={game.teams?.logo_url} 
+                          teamName={game.teams?.name || 'Team'} 
+                          size="sm"
+                        />
+                        <div>
+                          <h3 className="text-lg font-medium text-gray-900">
+                            {game.teams?.name} vs {game.opponent_name}
+                          </h3>
+                          <p className="text-sm text-gray-500">
+                            {new Date(game.game_date).toLocaleString()} - {game.venue || 'TBD'}
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            {game.is_home ? 'Home' : 'Away'} · {game.official ? 'Official' : 'Friendly'}
+                          </p>
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`px-2 py-1 text-xs font-semibold rounded uppercase ${

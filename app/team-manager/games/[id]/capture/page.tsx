@@ -15,6 +15,7 @@ import { FoulModal } from './components/FoulModal';
 import { SubstitutionModal } from './components/SubstitutionModal';
 import { calculateMinutesPlayed, formatMinutes } from '@/lib/stats/minutes';
 import { Profile } from '@/lib/types';
+import { TeamLogo } from '@/components/TeamLogo';
 
 type ConnectionStatus = 'connected' | 'reconnecting' | 'offline';
 
@@ -45,7 +46,7 @@ interface Game {
   attack_right_first: boolean;
   created_at?: string;
   updated_at?: string;
-  teams?: { name: string };
+  teams?: { name: string; logo_url?: string | null };
 }
 
 interface GameEvent {
@@ -269,7 +270,7 @@ export default function GameCapturePage() {
 
     const { data: gameData } = await supabase
       .from('games')
-      .select('*, teams(name)')
+      .select('*, teams(name, logo_url)')
       .eq('id', gameId)
       .single();
 
@@ -1098,15 +1099,18 @@ export default function GameCapturePage() {
         
         {/* RIGHT: Score + Connection + Opponent Control */}
         <div className="flex items-center gap-3 whitespace-nowrap">
-          {/* Team Names & Score */}
-          <div className="text-base font-bold">
+          {/* Team Names & Score with Logos */}
+          <div className="flex items-center gap-2 text-base font-bold">
+            <TeamLogo 
+              logoUrl={game.teams?.logo_url} 
+              teamName={game.teams?.name || 'Team'} 
+              size="xs"
+            />
             <span className="hidden sm:inline">{game.teams?.name}</span>
             <span className="sm:hidden">{game.teams?.name?.substring(0, 8)}</span>
-            {' '}
             <span className="text-2xl text-orange-400">{teamScore}</span>
-            {' - '}
+            <span className="text-gray-400">-</span>
             <span className="text-2xl text-blue-400">{opponentScore}</span>
-            {' '}
             <span className="hidden sm:inline">{game.opponent_name}</span>
             <span className="sm:hidden">{game.opponent_name?.substring(0, 8)}</span>
           </div>

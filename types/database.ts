@@ -34,6 +34,7 @@ export interface Team {
   id: string;
   season_id: string;
   name: string;
+  logo_url: string | null;
   created_at: string;
   updated_at: string;
 }

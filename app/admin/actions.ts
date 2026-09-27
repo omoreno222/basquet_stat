@@ -211,6 +211,110 @@ export async function unlinkPlayerAccount(playerId: string) {
   return { success: true };
 }
 
+export async function uploadTeamLogo(teamId: string, file: File) {
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
+  const supabase = getServerSupabase();
+
+  // Validate file type
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+  if (!allowedTypes.includes(file.type)) {
+    return { error: 'Invalid file type. Only JPEG, PNG, WebP, and SVG are allowed.' };
+  }
+
+  // Validate file size (5MB limit)
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    return { error: 'File size exceeds 5MB limit.' };
+  }
+
+  // Get file extension
+  const ext = file.name.split('.').pop() || 'jpg';
+  const filePath = `teams/${teamId}/logo.${ext}`;
+
+  // Delete old logo if exists
+  const { data: existingFiles } = await supabase.storage
+    .from('avatars')
+    .list(`teams/${teamId}`);
+
+  if (existingFiles && existingFiles.length > 0) {
+    const filesToDelete = existingFiles.map(f => `teams/${teamId}/${f.name}`);
+    await supabase.storage.from('avatars').remove(filesToDelete);
+  }
+
+  // Upload new logo
+  const { error: uploadError } = await supabase.storage
+    .from('avatars')
+    .upload(filePath, file, {
+      cacheControl: '3600',
+      upsert: true,
+    });
+
+  if (uploadError) {
+    return { error: uploadError.message };
+  }
+
+  // Get public URL
+  const { data: { publicUrl } } = supabase.storage
+    .from('avatars')
+    .getPublicUrl(filePath);
+
+  // Update team with logo URL
+  const { error: updateError } = await supabase
+    .from('teams')
+    .update({ logo_url: publicUrl })
+    .eq('id', teamId);
+
+  if (updateError) {
+    return { error: updateError.message };
+  }
+
+  return { success: true, url: publicUrl };
+}
+
+export async function removeTeamLogo(teamId: string) {
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
+  const supabase = getServerSupabase();
+
+  // Get current logo URL
+  const { data: team } = await supabase
+    .from('teams')
+    .select('logo_url')
+    .eq('id', teamId)
+    .single();
+
+  if (team?.logo_url) {
+    // Delete from storage
+    const { data: existingFiles } = await supabase.storage
+      .from('avatars')
+      .list(`teams/${teamId}`);
+
+    if (existingFiles && existingFiles.length > 0) {
+      const filesToDelete = existingFiles.map(f => `teams/${teamId}/${f.name}`);
+      await supabase.storage.from('avatars').remove(filesToDelete);
+    }
+  }
+
+  // Update team to remove logo URL
+  const { error } = await supabase
+    .from('teams')
+    .update({ logo_url: null })
+    .eq('id', teamId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  return { success: true };
+}
+
 export async function uploadProfileAvatar(profileId: string, file: File) {
   // SECURITY: Verify caller is admin before using service role
   const authCheck = await assertAdmin();
