@@ -1101,6 +1101,24 @@ export default function GameCapturePage() {
         {/* LEFT: Clock Block (Horizontal Layout) */}
         {userSlot === 'a' ? (
           <div className="flex items-center gap-2 flex-wrap-0 whitespace-nowrap">
+            {/* Menu Button */}
+            <button
+              onClick={() => {
+                if (clockRunning) {
+                  if (confirm('The clock will be paused when you leave. Continue?')) {
+                    router.push(`/team-manager/games/${gameId}`);
+                  }
+                } else {
+                  router.push(`/team-manager/games/${gameId}`);
+                }
+              }}
+              className="px-2 py-2 bg-gray-700 hover:bg-gray-600 rounded text-lg"
+              title="Back to Game"
+              style={{ minWidth: '44px', minHeight: '44px' }}
+            >
+              ☰
+            </button>
+            
             {/* Time & Period */}
             <div className="flex flex-col items-center">
               <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
