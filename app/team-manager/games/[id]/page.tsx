@@ -1,29 +1,51 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
+import { Profile, Player, Game } from '@/lib/types';
+import { Club } from '@/types/database';
+import { ClubLogo } from '@/components/ClubLogo';
+import { canStartGame, formatTimeUntilStart, type GameStartCheck } from '@/lib/game-start-window';
+import { TeamManagerNavPills } from '@/components/NavPills';
+
+interface GameWithTeam extends Game {
+  teams?: { 
+    id: string; 
+    name: string; 
+    category: string; 
+    season: string; 
+    created_at: string; 
+    logo_url?: string | null;
+    clubs?: Club;
+  };
+}
+
+interface PlayerWithTeam extends Player {
+  teams?: { name: string };
+}
+
+interface UserProfile extends Profile {
+  roles?: string[];
+  isAdmin?: boolean;
+}
 
 export default function GameDetailPage() {
   const params = useParams();
   const router = useRouter();
   const gameId = params.id as string;
   
-  const [game, setGame] = useState<any>(null);
-  const [team, setTeam] = useState<any>(null);
-  const [players, setPlayers] = useState<any[]>([]);
-  const [users, setUsers] = useState<any[]>([]);
+  const [game, setGame] = useState<GameWithTeam | null>(null);
+  const [players, setPlayers] = useState<PlayerWithTeam[]>([]);
+  const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [slotAUserId, setSlotAUserId] = useState<string>('');
   const [slotBUserId, setSlotBUserId] = useState<string>('');
+  const [gameStartCheck, setGameStartCheck] = useState<GameStartCheck | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [gameId]);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       router.push('/login');
@@ -49,7 +71,7 @@ export default function GameDetailPage() {
 
     const { data: gameData } = await supabase
       .from('games')
-      .select('*, teams(name)')
+      .select('*, teams(name, logo_url, clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
       .eq('id', gameId)
       .single();
 
@@ -58,21 +80,15 @@ export default function GameDetailPage() {
       setSlotAUserId(gameData.slot_a_user_id || '');
       setSlotBUserId(gameData.slot_b_user_id || '');
 
-      const { data: teamData } = await supabase
-        .from('teams')
-        .select('*')
-        .eq('id', gameData.team_id)
-        .single();
+      if (gameData.team_id) {
+        const { data: playersData } = await supabase
+          .from('players')
+          .select('*')
+          .eq('team_id', gameData.team_id)
+          .order('jersey_number');
 
-      setTeam(teamData);
-
-      const { data: playersData } = await supabase
-        .from('players')
-        .select('*')
-        .eq('team_id', gameData.team_id)
-        .order('jersey_number');
-
-      setPlayers(playersData || []);
+        setPlayers(playersData || []);
+      }
 
       // Fetch users who have admin or team_manager role (multi-role support)
       // We get all profile_roles entries with these roles, then fetch the profiles
@@ -86,7 +102,7 @@ export default function GameDetailPage() {
       if (eligibleUserIds.length > 0) {
         const { data: usersData } = await supabase
           .from('profiles')
-          .select('id, email, full_name')
+          .select('id, email, full_name, role, avatar_url, created_at')
           .in('id', eligibleUserIds)
           .order('email');
 
@@ -95,13 +111,34 @@ export default function GameDetailPage() {
         setUsers([]);
       }
 
-      // Store isAdmin for use in canCapture check
-      (profile as any).isAdmin = isAdmin;
-      setCurrentUser(profile);
+      // Set current user with admin status
+      setCurrentUser({ ...profile, isAdmin } as UserProfile);
+      
+      // Check game start eligibility
+      if (gameData.status === 'scheduled') {
+        const startCheck = await canStartGame(gameId, user.id);
+        setGameStartCheck(startCheck);
+      }
     }
 
     setLoading(false);
-  }
+  }, [gameId, router]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Periodic check for game start eligibility (every minute)
+  useEffect(() => {
+    if (!game || game.status !== 'scheduled' || !currentUser) return;
+
+    const interval = setInterval(async () => {
+      const startCheck = await canStartGame(gameId, currentUser.id);
+      setGameStartCheck(startCheck);
+    }, 60000); // Check every minute
+
+    return () => clearInterval(interval);
+  }, [game, currentUser, gameId]);
 
   async function handleAssignSlots() {
     if (!slotAUserId && !slotBUserId) {
@@ -170,14 +207,14 @@ export default function GameDetailPage() {
   }
 
   const canCapture = currentUser && (
-    (currentUser as any).isAdmin ||
+    currentUser.isAdmin ||
     currentUser.id === game.slot_a_user_id ||
     currentUser.id === game.slot_b_user_id
   );
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
+      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
@@ -189,15 +226,31 @@ export default function GameDetailPage() {
           </div>
         </div>
       </nav>
+      <TeamManagerNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
           
           {/* Game Info */}
           <div className="bg-white shadow rounded-lg p-6 mb-6">
-            <h2 className="text-2xl font-bold mb-4">
-              {game.teams?.name} vs {game.opponent_name}
-            </h2>
+            <div className="flex items-center gap-4 mb-4">
+              {game.teams?.clubs ? (
+                <ClubLogo 
+                  logoUrl={game.teams.clubs.logo_url} 
+                  clubName={game.teams.clubs.name} 
+                  size="md"
+                />
+              ) : game.teams?.logo_url ? (
+                <ClubLogo 
+                  logoUrl={game.teams.logo_url} 
+                  clubName={game.teams.name || 'Team'} 
+                  size="md"
+                />
+              ) : null}
+              <h2 className="text-2xl font-bold">
+                {game.teams?.name} vs {game.opponent_name}
+              </h2>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-sm text-gray-500">Date</p>
@@ -301,13 +354,31 @@ export default function GameDetailPage() {
               <h3 className="text-lg font-bold mb-4">Live Capture</h3>
               
               {game.status === 'scheduled' && (
-                <button
-                  onClick={handleStartGame}
-                  disabled={!game.slot_a_user_id && !game.slot_b_user_id}
-                  className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-300 text-lg font-bold"
-                >
-                  Start Game
-                </button>
+                <div>
+                  <button
+                    onClick={handleStartGame}
+                    disabled={
+                      (!game.slot_a_user_id && !game.slot_b_user_id) || 
+                      (gameStartCheck !== null && !gameStartCheck.canStart)
+                    }
+                    className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-300 text-lg font-bold"
+                  >
+                    {gameStartCheck?.isAdmin ? 'Start Game (Admin Override)' : 'Start Game'}
+                  </button>
+                  
+                  {gameStartCheck && !gameStartCheck.canStart && gameStartCheck.minutesUntilStart && (
+                    <p className="mt-2 text-sm text-orange-600">
+                      Game can be started in {formatTimeUntilStart(gameStartCheck.minutesUntilStart)}
+                      {gameStartCheck.isAdmin && ' (or now as admin)'}
+                    </p>
+                  )}
+                  
+                  {!game.slot_a_user_id && !game.slot_b_user_id && (
+                    <p className="mt-2 text-sm text-red-600">
+                      At least one slot must be assigned
+                    </p>
+                  )}
+                </div>
               )}
 
               {game.status === 'live' && (

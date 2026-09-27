@@ -2,12 +2,29 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Game, GameStatus } from '@/types/database';
+import { Game, GameStatus, Club } from '@/types/database';
+import { AdminNavPills } from '@/components/NavPills';
+import { Team } from '@/lib/types';
 import Link from 'next/link';
+import { ClubLogo } from '@/components/ClubLogo';
+
+interface GameWithTeam extends Game {
+  teams?: { 
+    name: string; 
+    logo_url?: string | null;
+    clubs?: Club;
+  };
+}
+
+interface TeamWithSeason extends Team {
+  seasons?: { name: string };
+  clubs?: Club;
+  club_id?: string | null;
+}
 
 export default function GamesPage() {
-  const [games, setGames] = useState<any[]>([]);
-  const [teams, setTeams] = useState<any[]>([]);
+  const [games, setGames] = useState<GameWithTeam[]>([]);
+  const [teams, setTeams] = useState<TeamWithSeason[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingGame, setEditingGame] = useState<Game | null>(null);
@@ -27,10 +44,54 @@ export default function GamesPage() {
   }, []);
 
   async function loadData() {
-    const [gamesData, teamsData] = await Promise.all([
-      supabase.from('games').select('*, teams(name, seasons(name))').order('game_date', { ascending: false }),
-      supabase.from('teams').select('*, seasons(name)').order('name'),
-    ]);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // Check if user is platform admin or club admin
+    const { data: roles, error: rolesError } = await supabase
+      .from('profile_roles')
+      .select('role, club_id')
+      .eq('profile_id', user.id);
+
+    if (rolesError) {
+      console.error('Error loading roles:', rolesError);
+      setError('Failed to load user roles');
+      setLoading(false);
+      return;
+    }
+
+    const platformAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
+    const clubAdmin = roles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
+
+    // Load games and teams based on access
+    let gamesQuery = supabase
+      .from('games')
+      .select('*, teams(name, logo_url, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
+      .order('game_date', { ascending: false });
+
+    let teamsQuery = supabase
+      .from('teams')
+      .select('*, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color)')
+      .order('name');
+
+    // Filter by club if not platform admin
+    if (!platformAdmin && clubAdmin?.club_id) {
+      // For games, we need to filter by teams that belong to the club
+      // First get team IDs for the club
+      const { data: clubTeams } = await supabase
+        .from('teams')
+        .select('id')
+        .eq('club_id', clubAdmin.club_id);
+
+      if (clubTeams && clubTeams.length > 0) {
+        const teamIds = clubTeams.map(t => t.id);
+        gamesQuery = gamesQuery.in('team_id', teamIds);
+      }
+
+      teamsQuery = teamsQuery.eq('club_id', clubAdmin.club_id);
+    }
+
+    const [gamesData, teamsData] = await Promise.all([gamesQuery, teamsQuery]);
 
     if (gamesData.data) setGames(gamesData.data);
     if (teamsData.data) setTeams(teamsData.data);
@@ -52,7 +113,7 @@ export default function GamesPage() {
     setError('');
   }
 
-  function handleEdit(game: any) {
+  function handleEdit(game: GameWithTeam) {
     setEditingGame(game);
     const gameDate = new Date(game.game_date);
     const localDate = new Date(gameDate.getTime() - gameDate.getTimezoneOffset() * 60000)
@@ -131,7 +192,7 @@ export default function GamesPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
+      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
@@ -151,6 +212,7 @@ export default function GamesPage() {
           </div>
         </div>
       </nav>
+      <AdminNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {showForm && (
@@ -177,7 +239,7 @@ export default function GamesPage() {
                       className="w-full border rounded px-3 py-2"
                     >
                       <option value="">Select a team</option>
-                      {teams.map((team: any) => (
+                      {teams.map((team) => (
                         <option key={team.id} value={team.id}>
                           {team.name} ({team.seasons?.name})
                         </option>
@@ -285,16 +347,31 @@ export default function GamesPage() {
                 games.map((game) => (
                   <li key={game.id} className="px-6 py-4 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-medium text-gray-900">
-                          {game.teams?.name} vs {game.opponent_name}
-                        </h3>
-                        <p className="text-sm text-gray-500">
-                          {new Date(game.game_date).toLocaleString()} - {game.venue || 'TBD'}
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          {game.is_home ? 'Home' : 'Away'} · {game.official ? 'Official' : 'Friendly'}
-                        </p>
+                      <div className="flex items-center gap-3">
+                        {game.teams?.clubs ? (
+                          <ClubLogo 
+                            logoUrl={game.teams.clubs.logo_url} 
+                            clubName={game.teams.clubs.name} 
+                            size="sm"
+                          />
+                        ) : game.teams?.logo_url ? (
+                          <ClubLogo 
+                            logoUrl={game.teams.logo_url} 
+                            clubName={game.teams.name || 'Team'} 
+                            size="sm"
+                          />
+                        ) : null}
+                        <div>
+                          <h3 className="text-lg font-medium text-gray-900">
+                            {game.teams?.name} vs {game.opponent_name}
+                          </h3>
+                          <p className="text-sm text-gray-500">
+                            {new Date(game.game_date).toLocaleString()} - {game.venue || 'TBD'}
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            {game.is_home ? 'Home' : 'Away'} · {game.official ? 'Official' : 'Friendly'}
+                          </p>
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`px-2 py-1 text-xs font-semibold rounded uppercase ${

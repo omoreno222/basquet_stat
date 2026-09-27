@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Season } from '@/types/database';
+import { AdminNavPills } from '@/components/NavPills';
 import Link from 'next/link';
 
 export default function SeasonsPage() {
@@ -127,7 +128,7 @@ export default function SeasonsPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
+      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
@@ -147,6 +148,7 @@ export default function SeasonsPage() {
           </div>
         </div>
       </nav>
+      <AdminNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {showForm && (

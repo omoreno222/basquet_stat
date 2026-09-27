@@ -1,7 +1,20 @@
-export type UserRole = 'admin' | 'team_manager' | 'coach' | 'parent' | 'player';
+export type UserRole = 'admin' | 'club_admin' | 'team_manager' | 'coach' | 'parent' | 'player';
 export type GameStatus = 'scheduled' | 'live' | 'final';
 export type EventType = 'shot' | 'free_throw' | 'foul' | 'rebound' | 'assist' | 'steal' | 'turnover';
 export type Locale = 'en' | 'es' | 'ca';
+export type TeamCategory = 'premini' | 'mini' | 'infantil' | 'cadete' | 'junior' | 'sub22' | 'senior';
+export type TeamGender = 'male' | 'female' | 'mixed';
+
+export interface Club {
+  id: string;
+  name: string;
+  short_name: string | null;
+  logo_url: string | null;
+  primary_color: string;
+  secondary_color: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface Profile {
   id: string;
@@ -9,6 +22,7 @@ export interface Profile {
   full_name: string | null;
   role: UserRole;
   language: Locale;
+  avatar_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -16,6 +30,7 @@ export interface Profile {
 export interface ProfileRole {
   profile_id: string;
   role: UserRole;
+  club_id: string | null;
   created_at: string;
 }
 
@@ -32,7 +47,11 @@ export interface Season {
 export interface Team {
   id: string;
   season_id: string;
+  club_id: string;
   name: string;
+  category: TeamCategory;
+  gender: TeamGender;
+  logo_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -40,11 +59,13 @@ export interface Team {
 export interface Player {
   id: string;
   team_id: string;
+  club_id: string;
   user_id: string | null;
   full_name: string;
   jersey_number: number;
   position: string | null;
   date_of_birth: string | null;
+  avatar_url: string | null;
   created_at: string;
   updated_at: string;
 }

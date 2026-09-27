@@ -1,21 +1,33 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
+import { Profile, Game } from '@/lib/types';
+import { Club } from '@/types/database';
+import { ClubLogo } from '@/components/ClubLogo';
+import { TeamManagerNavPills } from '@/components/NavPills';
+
+interface GameWithTeam extends Game {
+  teams?: { 
+    id: string; 
+    name: string; 
+    category: string; 
+    season: string; 
+    created_at: string;
+    clubs?: Club;
+  };
+}
 
 export default function TeamManagerDashboard() {
-  const [profile, setProfile] = useState<any>(null);
-  const [games, setGames] = useState<any[]>([]);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [games, setGames] = useState<GameWithTeam[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  useEffect(() => {
-    checkUser();
-  }, []);
-
-  async function checkUser() {
+  const checkUser = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       router.push('/login');
@@ -33,16 +45,16 @@ export default function TeamManagerDashboard() {
       return;
     }
 
-    // Check if user has team_manager role (multi-role support)
+    // Check if user has team_manager or admin role (multi-role support)
     const { data: userRoles } = await supabase
       .from('profile_roles')
       .select('role')
       .eq('profile_id', user.id);
 
     const roles = userRoles?.map(r => r.role) || [profileData.role];
-    const hasTeamManagerRole = roles.includes('team_manager');
+    const hasAccess = roles.includes('team_manager') || roles.includes('admin');
 
-    if (!hasTeamManagerRole) {
+    if (!hasAccess) {
       router.push('/login');
       return;
     }
@@ -50,12 +62,16 @@ export default function TeamManagerDashboard() {
     setProfile(profileData);
     await loadGames();
     setLoading(false);
-  }
+  }, [router]);
+
+  useEffect(() => {
+    checkUser();
+  }, [checkUser]);
 
   async function loadGames() {
     const { data } = await supabase
       .from('games')
-      .select('*, teams(name)')
+      .select('*, teams(name, clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
       .order('game_date', { ascending: false });
 
     if (data) {
@@ -66,6 +82,7 @@ export default function TeamManagerDashboard() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    document.cookie = 'sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     router.push('/login');
   };
 
@@ -75,14 +92,21 @@ export default function TeamManagerDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
+      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
-            <div className="flex-shrink-0 flex items-center">
-              <h1 className="text-xl font-bold">BasquetStat - Team Manager</h1>
+            <div className="flex-shrink-0 flex items-center space-x-3">
+              <Image 
+                src="/images/seasonmath-logo.png" 
+                alt="SeasonMath" 
+                width={120} 
+                height={120}
+                className="h-10 w-auto"
+              />
+              <span className="font-display text-lg font-semibold text-white">Team Manager</span>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-gray-700">Welcome, {profile.full_name || profile.email}</span>
+              <span className="text-gray-700">Welcome, {profile?.full_name || profile?.email}</span>
               <button
                 onClick={handleLogout}
                 className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
@@ -93,6 +117,7 @@ export default function TeamManagerDashboard() {
           </div>
         </div>
       </nav>
+      <TeamManagerNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
@@ -106,16 +131,25 @@ export default function TeamManagerDashboard() {
                   <li key={game.id} className="px-6 py-4 hover:bg-gray-50">
                     <Link href={`/team-manager/games/${game.id}`}>
                       <div className="flex items-center justify-between cursor-pointer">
-                        <div>
-                          <h3 className="text-lg font-medium text-gray-900">
-                            {game.teams?.name} vs {game.opponent_name}
-                          </h3>
-                          <p className="text-sm text-gray-500">
-                            {new Date(game.game_date).toLocaleDateString()} - {game.venue || 'TBD'}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            Score: {game.team_score} - {game.opponent_score}
-                          </p>
+                        <div className="flex items-center gap-3">
+                          {game.teams?.clubs && (
+                            <ClubLogo 
+                              logoUrl={game.teams.clubs.logo_url} 
+                              clubName={game.teams.clubs.name} 
+                              size="sm"
+                            />
+                          )}
+                          <div>
+                            <h3 className="text-lg font-medium text-gray-900">
+                              {game.teams?.name} vs {game.opponent_name}
+                            </h3>
+                            <p className="text-sm text-gray-500">
+                              {new Date(game.game_date).toLocaleDateString()} - {game.venue || 'TBD'}
+                            </p>
+                            <p className="text-sm text-gray-500">
+                              Score: {game.team_score} - {game.opponent_score}
+                            </p>
+                          </div>
                         </div>
                         <div className="text-right">
                           <span className={`px-2 py-1 text-xs font-semibold rounded uppercase ${

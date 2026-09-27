@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Locale } from '@/types/database';
 import Link from 'next/link';
+import { Translation } from '@/lib/types';
+import { AdminNavPills } from '@/components/NavPills';
 
 export default function TranslationsPage() {
-  const [translations, setTranslations] = useState<any[]>([]);
+  const [translations, setTranslations] = useState<Translation[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterLocale, setFilterLocale] = useState<string>('all');
-  const [editingTranslation, setEditingTranslation] = useState<any>(null);
+  const [editingTranslation, setEditingTranslation] = useState<Translation | null>(null);
   const [editValue, setEditValue] = useState('');
   const [error, setError] = useState('');
 
@@ -29,7 +30,7 @@ export default function TranslationsPage() {
     setLoading(false);
   }
 
-  function handleEdit(translation: any) {
+  function handleEdit(translation: Translation) {
     setEditingTranslation(translation);
     setEditValue(translation.value);
     setError('');
@@ -43,6 +44,11 @@ export default function TranslationsPage() {
 
   async function handleSave() {
     setError('');
+    
+    if (!editingTranslation) {
+      setError('No translation selected');
+      return;
+    }
     
     if (!editValue.trim()) {
       setError('Value cannot be empty');
@@ -75,7 +81,7 @@ export default function TranslationsPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
+      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
@@ -99,6 +105,7 @@ export default function TranslationsPage() {
           </div>
         </div>
       </nav>
+      <AdminNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {error && (
