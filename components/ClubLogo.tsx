@@ -1,13 +1,13 @@
 import Image from 'next/image';
 
-interface TeamLogoProps {
+interface ClubLogoProps {
   logoUrl?: string | null;
-  teamName: string;
+  clubName: string;
   size?: 'xs' | 'sm' | 'md' | 'lg';
   className?: string;
 }
 
-export function TeamLogo({ logoUrl, teamName, size = 'md', className = '' }: TeamLogoProps) {
+export function ClubLogo({ logoUrl, clubName, size = 'md', className = '' }: ClubLogoProps) {
   const sizeClasses = {
     xs: 'w-6 h-6 text-xs',
     sm: 'w-10 h-10 text-sm',
@@ -37,7 +37,7 @@ export function TeamLogo({ logoUrl, teamName, size = 'md', className = '' }: Tea
       <div className={fullClasses}>
         <Image
           src={logoUrl}
-          alt={`${teamName} logo`}
+          alt={`${clubName} logo`}
           width={sizePixels[size]}
           height={sizePixels[size]}
           className="w-full h-full object-cover"
@@ -47,7 +47,7 @@ export function TeamLogo({ logoUrl, teamName, size = 'md', className = '' }: Tea
   }
 
   // Fallback to initials
-  const initials = getInitials(teamName);
+  const initials = getInitials(clubName);
   return (
     <div className={`${fullClasses} bg-gradient-to-br from-blue-500 to-blue-700 text-white`}>
       {initials}

@@ -7,11 +7,6 @@
 -- Admins should set this in /admin/users when a player has their own login.
 -- A player can have both a parent account linked (via parent_player_links) and their own account (user_id).
 
--- Add team logo support
-ALTER TABLE teams ADD COLUMN IF NOT EXISTS logo_url TEXT;
-
-COMMENT ON COLUMN teams.logo_url IS 'Public URL to team logo image stored in avatars bucket under teams/<team_id>/';
-
 -- Add regular_periods column (default 4 for FIBA: Q1, Q2, Q3, Q4)
 ALTER TABLE games ADD COLUMN IF NOT EXISTS regular_periods SMALLINT NOT NULL DEFAULT 4;
 
@@ -20,88 +15,6 @@ ALTER TABLE games ADD COLUMN IF NOT EXISTS max_overtimes SMALLINT DEFAULT NULL;
 
 COMMENT ON COLUMN games.regular_periods IS 'Number of regular periods/quarters (default 4 for FIBA: Q1-Q4, 10 min each)';
 COMMENT ON COLUMN games.max_overtimes IS 'Maximum overtime periods allowed (default null = unlimited while tied; OT periods are 5 min each)';
-
--- Storage policies for team logos (stored in avatars bucket under teams/<team_id>/)
--- Admins can upload/delete team logos
-DO $$ 
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies 
-    WHERE schemaname = 'storage' 
-    AND tablename = 'objects' 
-    AND policyname = 'Admins can upload team logos'
-  ) THEN
-    CREATE POLICY "Admins can upload team logos"
-      ON storage.objects
-      FOR INSERT
-      TO authenticated
-      WITH CHECK (
-        bucket_id = 'avatars' 
-        AND (storage.foldername(name))[1] = 'teams'
-        AND is_admin()
-      );
-  END IF;
-END $$;
-
-DO $$ 
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies 
-    WHERE schemaname = 'storage' 
-    AND tablename = 'objects' 
-    AND policyname = 'Admins can update team logos'
-  ) THEN
-    CREATE POLICY "Admins can update team logos"
-      ON storage.objects
-      FOR UPDATE
-      TO authenticated
-      USING (
-        bucket_id = 'avatars' 
-        AND (storage.foldername(name))[1] = 'teams'
-        AND is_admin()
-      );
-  END IF;
-END $$;
-
-DO $$ 
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies 
-    WHERE schemaname = 'storage' 
-    AND tablename = 'objects' 
-    AND policyname = 'Admins can delete team logos'
-  ) THEN
-    CREATE POLICY "Admins can delete team logos"
-      ON storage.objects
-      FOR DELETE
-      TO authenticated
-      USING (
-        bucket_id = 'avatars' 
-        AND (storage.foldername(name))[1] = 'teams'
-        AND is_admin()
-      );
-  END IF;
-END $$;
-
--- Public can view team logos
-DO $$ 
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies 
-    WHERE schemaname = 'storage' 
-    AND tablename = 'objects' 
-    AND policyname = 'Anyone can view team logos'
-  ) THEN
-    CREATE POLICY "Anyone can view team logos"
-      ON storage.objects
-      FOR SELECT
-      TO public
-      USING (
-        bucket_id = 'avatars' 
-        AND (storage.foldername(name))[1] = 'teams'
-      );
-  END IF;
-END $$;
 
 -- Create game_guest_players table for adding players from other teams
 CREATE TABLE IF NOT EXISTS game_guest_players (
@@ -516,32 +429,7 @@ VALUES
   
   ('trke_ot', 'en', 'OT{number}'),
   ('trke_ot', 'es', 'PR{number}'),
-  ('trke_ot', 'ca', 'PR{number}'),
-  
-  -- Team logos
-  ('trke_team_logo', 'en', 'Team Logo'),
-  ('trke_team_logo', 'es', 'Logo del Equipo'),
-  ('trke_team_logo', 'ca', 'Logo de l''Equip'),
-  
-  ('trke_upload_logo', 'en', 'Upload Logo'),
-  ('trke_upload_logo', 'es', 'Subir Logo'),
-  ('trke_upload_logo', 'ca', 'Pujar Logo'),
-  
-  ('trke_change_logo', 'en', 'Change Logo'),
-  ('trke_change_logo', 'es', 'Cambiar Logo'),
-  ('trke_change_logo', 'ca', 'Canviar Logo'),
-  
-  ('trke_remove_logo', 'en', 'Remove Logo'),
-  ('trke_remove_logo', 'es', 'Eliminar Logo'),
-  ('trke_remove_logo', 'ca', 'Eliminar Logo'),
-  
-  ('trke_logo_uploaded', 'en', 'Logo uploaded successfully'),
-  ('trke_logo_uploaded', 'es', 'Logo subido con éxito'),
-  ('trke_logo_uploaded', 'ca', 'Logo pujat amb èxit'),
-  
-  ('trke_logo_removed', 'en', 'Logo removed successfully'),
-  ('trke_logo_removed', 'es', 'Logo eliminado con éxito'),
-  ('trke_logo_removed', 'ca', 'Logo eliminat amb èxit')
+  ('trke_ot', 'ca', 'PR{number}')
 
 ON CONFLICT (key, locale) DO UPDATE
 SET value = EXCLUDED.value,

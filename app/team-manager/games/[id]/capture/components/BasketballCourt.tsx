@@ -22,7 +22,8 @@ interface BasketballCourtProps {
  * - Key: 4.9m wide × 5.8m long, free-throw circle radius 1.8m
  * - Restricted area: 1.25m radius from rim
  * 
- * SVG viewBox: 2800 × 1500 (1 unit = 1cm for precision)
+ * SVG viewBox: 2800 × 1560 (1 unit = 1cm for precision)
+ * Court occupies 2800 × 1500, with 60 units bottom margin for scorer's table marker
  * MUST maintain aspect ratio - no stretching!
  */
 
@@ -47,8 +48,12 @@ export function BasketballCourt({
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
     
-    // The SVG maintains 28:15 aspect ratio with "meet", so calculate letterboxing
-    const svgAspect = 2800 / 1500; // 1.8667
+    // The SVG maintains 2800:1560 aspect ratio with "meet", so calculate letterboxing
+    const VIEWBOX_WIDTH = 2800;
+    const VIEWBOX_HEIGHT = 1560; // includes 60 units margin at bottom
+    const COURT_HEIGHT = 1500; // actual court height
+    
+    const svgAspect = VIEWBOX_WIDTH / VIEWBOX_HEIGHT;
     const containerAspect = svgWidth / svgHeight;
     
     let actualWidth, actualHeight, offsetX, offsetY;
@@ -71,9 +76,16 @@ export function BasketballCourt({
     const worldX = (clickX - offsetX) / actualWidth;
     const worldY = (clickY - offsetY) / actualHeight;
     
-    // Only register clicks within the actual court bounds
-    if (worldX >= 0 && worldX <= 1 && worldY >= 0 && worldY <= 1) {
-      onCourtTap(worldX, worldY);
+    // Map to viewBox coordinates
+    const viewBoxX = worldX * VIEWBOX_WIDTH;
+    const viewBoxY = worldY * VIEWBOX_HEIGHT;
+    
+    // Only register clicks within the actual court bounds (not in margin)
+    if (viewBoxX >= 0 && viewBoxX <= VIEWBOX_WIDTH && viewBoxY >= 0 && viewBoxY <= COURT_HEIGHT) {
+      // Convert to 0-1 range for the court only
+      const courtX = viewBoxX / VIEWBOX_WIDTH;
+      const courtY = viewBoxY / COURT_HEIGHT;
+      onCourtTap(courtX, courtY);
     }
   };
 
@@ -82,6 +94,7 @@ export function BasketballCourt({
   // FIBA dimensions in cm (1 unit = 1cm)
   const COURT_LENGTH = 2800; // 28m
   const COURT_WIDTH = 1500; // 15m
+  const VIEWBOX_HEIGHT = 1560; // Court height + 60 units bottom margin for scorer's table
   const RIM_FROM_BASELINE = 157.5; // 1.575m
   const RIM_Y = 750; // 7.5m (center of court width)
   const THREE_PT_RADIUS = 675; // 6.75m
@@ -112,7 +125,7 @@ export function BasketballCourt({
 
   return (
     <svg
-      viewBox={`0 0 ${COURT_LENGTH} ${COURT_WIDTH}`}
+      viewBox={`0 0 ${COURT_LENGTH} ${VIEWBOX_HEIGHT}`}
       className={`w-full h-full ${className}`}
       onClick={handleClick}
       style={{ cursor: onCourtTap ? 'pointer' : 'default' }}
@@ -382,6 +395,34 @@ export function BasketballCourt({
         strokeWidth="6" 
       />
       
+      {/* Scorer's Table Marker - centered on halfway line, outside bottom sideline */}
+      {/* This marker represents the physical scorer's table (mesa) and stays fixed regardless of court orientation */}
+      <g id="scorers-table">
+        {/* Table rectangle - small, outside bottom boundary */}
+        <rect 
+          x={COURT_LENGTH / 2 - 80} 
+          y={COURT_WIDTH + 10} 
+          width="160" 
+          height="30" 
+          fill="#8B4513" 
+          stroke="#654321" 
+          strokeWidth="2"
+          rx="2"
+        />
+        {/* Table label */}
+        <text 
+          x={COURT_LENGTH / 2} 
+          y={COURT_WIDTH + 27} 
+          textAnchor="middle" 
+          fontSize="16" 
+          fontWeight="bold" 
+          fill="#ffffff"
+          style={{ userSelect: 'none' }}
+        >
+          TABLE
+        </text>
+      </g>
+
       {/* Shot markers - enhanced visibility */}
       {shotMarkers.map((marker) => {
         const markerX = marker.x * COURT_LENGTH;

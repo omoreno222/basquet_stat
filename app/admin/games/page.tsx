@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { Game, GameStatus } from '@/types/database';
 import { Team } from '@/lib/types';
 import Link from 'next/link';
-import { TeamLogo } from '@/components/TeamLogo';
+import { ClubLogo } from '@/components/ClubLogo';
 
 interface GameWithTeam extends Game {
   teams?: { name: string; logo_url?: string | null };
@@ -296,9 +296,9 @@ export default function GamesPage() {
                   <li key={game.id} className="px-6 py-4 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <TeamLogo 
+                        <ClubLogo 
                           logoUrl={game.teams?.logo_url} 
-                          teamName={game.teams?.name || 'Team'} 
+                          clubName={game.teams?.name || 'Team'} 
                           size="sm"
                         />
                         <div>

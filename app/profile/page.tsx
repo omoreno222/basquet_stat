@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '@/lib/supabase';
 import { getInitials, validatePhone, validateEmail, validatePassword, getRoleBadgeClasses, getRoleTranslationKey, type UserRole } from '@/lib/profile-utils';
-import { TeamLogo } from '@/components/TeamLogo';
+import { ClubLogo } from '@/components/ClubLogo';
 
 interface Profile {
   id: string;
@@ -629,9 +629,9 @@ export default function ProfilePage() {
               <div className="space-y-3">
                 {linkedPlayers.map((player) => (
                   <div key={player.id} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded">
-                    <TeamLogo 
+                    <ClubLogo 
                       logoUrl={player.team.logo_url} 
-                      teamName={player.team.name} 
+                      clubName={player.team.name} 
                       size="sm"
                     />
                     <div className="w-10 h-10 rounded-full bg-orange-500 text-white flex items-center justify-center font-bold flex-shrink-0">

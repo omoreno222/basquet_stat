@@ -13,9 +13,10 @@ import { StartingLineupModal } from './components/StartingLineupModal';
 import { FreeThrowModal } from './components/FreeThrowModal';
 import { FoulModal } from './components/FoulModal';
 import { SubstitutionModal } from './components/SubstitutionModal';
+import { ChooseSideModal } from './components/ChooseSideModal';
 import { calculateMinutesPlayed, formatMinutes } from '@/lib/stats/minutes';
 import { Profile } from '@/lib/types';
-import { TeamLogo } from '@/components/TeamLogo';
+import { ClubLogo } from '@/components/ClubLogo';
 
 type ConnectionStatus = 'connected' | 'reconnecting' | 'offline';
 
@@ -138,6 +139,8 @@ export default function GameCapturePage() {
   const [showFreeThrow, setShowFreeThrow] = useState(false);
   const [showFoul, setShowFoul] = useState(false);
   const [showSubstitution, setShowSubstitution] = useState(false);
+  const [showChooseSide, setShowChooseSide] = useState(false);
+  const [sideChosen, setSideChosen] = useState(false);
   const [startingLineupIds, setStartingLineupIds] = useState<string[]>([]); // Immutable starting 5
   const [startingLineupSet, setStartingLineupSet] = useState(false);
   const [showBoxScore, setShowBoxScore] = useState(false);
@@ -283,6 +286,10 @@ export default function GameCapturePage() {
       setTeamScore(gameData.team_score || 0);
       setOpponentScore(gameData.opponent_score || 0);
       setAttackRightFirst(gameData.attack_right_first ?? true);
+      
+      // Check if side has been chosen (if game has started or events exist, side was chosen)
+      const hasStarted = gameData.current_period > 0 || (gameData.team_score + gameData.opponent_score) > 0;
+      setSideChosen(hasStarted);
 
       const newSlot = 
         profile.id === gameData.slot_a_user_id ? 'a' :
@@ -849,6 +856,13 @@ export default function GameCapturePage() {
 
   async function toggleClock() {
     if (userSlot !== 'a') return;
+    
+    // If trying to start clock for the first time (Q1) and side hasn't been chosen yet
+    if (!clockRunning && currentPeriod === 1 && startingLineupSet && !sideChosen) {
+      setShowChooseSide(true);
+      return;
+    }
+    
     const newState = !clockRunning;
     setClockRunning(newState);
     await updateGameState({
@@ -902,6 +916,13 @@ export default function GameCapturePage() {
     const newPossession = possession === 'home' ? 'away' : 'home';
     setPossession(newPossession);
     await updateGameState({ possession: newPossession });
+  }
+
+  async function handleChooseSide(attackRight: boolean) {
+    setAttackRightFirst(attackRight);
+    setSideChosen(true);
+    setShowChooseSide(false);
+    await updateGameState({ attack_right_first: attackRight });
   }
 
   async function flipCourt() {
@@ -1101,9 +1122,9 @@ export default function GameCapturePage() {
         <div className="flex items-center gap-3 whitespace-nowrap">
           {/* Team Names & Score with Logos */}
           <div className="flex items-center gap-2 text-base font-bold">
-            <TeamLogo 
+            <ClubLogo 
               logoUrl={game.teams?.logo_url} 
-              teamName={game.teams?.name || 'Team'} 
+              clubName={game.teams?.name || 'Team'} 
               size="xs"
             />
             <span className="hidden sm:inline">{game.teams?.name}</span>
@@ -1333,6 +1354,10 @@ export default function GameCapturePage() {
       )}
 
       {/* Modals */}
+      {showChooseSide && userSlot === 'a' && (
+        <ChooseSideModal onChoose={handleChooseSide} />
+      )}
+
       {showPlayerPicker && (
         <PlayerSelectionModal
           players={availablePlayers}

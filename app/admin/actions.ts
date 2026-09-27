@@ -211,7 +211,7 @@ export async function unlinkPlayerAccount(playerId: string) {
   return { success: true };
 }
 
-export async function uploadTeamLogo(teamId: string, file: File) {
+export async function uploadClubLogo(clubId: string, file: File) {
   const authCheck = await assertAdmin();
   if (authCheck.error) {
     return { error: authCheck.error };
@@ -233,15 +233,15 @@ export async function uploadTeamLogo(teamId: string, file: File) {
 
   // Get file extension
   const ext = file.name.split('.').pop() || 'jpg';
-  const filePath = `teams/${teamId}/logo.${ext}`;
+  const filePath = `clubs/${clubId}/logo.${ext}`;
 
   // Delete old logo if exists
   const { data: existingFiles } = await supabase.storage
     .from('avatars')
-    .list(`teams/${teamId}`);
+    .list(`clubs/${clubId}`);
 
   if (existingFiles && existingFiles.length > 0) {
-    const filesToDelete = existingFiles.map(f => `teams/${teamId}/${f.name}`);
+    const filesToDelete = existingFiles.map(f => `clubs/${clubId}/${f.name}`);
     await supabase.storage.from('avatars').remove(filesToDelete);
   }
 
@@ -262,11 +262,11 @@ export async function uploadTeamLogo(teamId: string, file: File) {
     .from('avatars')
     .getPublicUrl(filePath);
 
-  // Update team with logo URL
+  // Update club with logo URL
   const { error: updateError } = await supabase
-    .from('teams')
+    .from('clubs')
     .update({ logo_url: publicUrl })
-    .eq('id', teamId);
+    .eq('id', clubId);
 
   if (updateError) {
     return { error: updateError.message };
@@ -275,7 +275,7 @@ export async function uploadTeamLogo(teamId: string, file: File) {
   return { success: true, url: publicUrl };
 }
 
-export async function removeTeamLogo(teamId: string) {
+export async function removeClubLogo(clubId: string) {
   const authCheck = await assertAdmin();
   if (authCheck.error) {
     return { error: authCheck.error };
@@ -284,29 +284,29 @@ export async function removeTeamLogo(teamId: string) {
   const supabase = getServerSupabase();
 
   // Get current logo URL
-  const { data: team } = await supabase
-    .from('teams')
+  const { data: club } = await supabase
+    .from('clubs')
     .select('logo_url')
-    .eq('id', teamId)
+    .eq('id', clubId)
     .single();
 
-  if (team?.logo_url) {
+  if (club?.logo_url) {
     // Delete from storage
     const { data: existingFiles } = await supabase.storage
       .from('avatars')
-      .list(`teams/${teamId}`);
+      .list(`clubs/${clubId}`);
 
     if (existingFiles && existingFiles.length > 0) {
-      const filesToDelete = existingFiles.map(f => `teams/${teamId}/${f.name}`);
+      const filesToDelete = existingFiles.map(f => `clubs/${clubId}/${f.name}`);
       await supabase.storage.from('avatars').remove(filesToDelete);
     }
   }
 
-  // Update team to remove logo URL
+  // Update club to remove logo URL
   const { error } = await supabase
-    .from('teams')
+    .from('clubs')
     .update({ logo_url: null })
-    .eq('id', teamId);
+    .eq('id', clubId);
 
   if (error) {
     return { error: error.message };

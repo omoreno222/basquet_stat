@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { Profile, Player, Game } from '@/lib/types';
-import { TeamLogo } from '@/components/TeamLogo';
+import { ClubLogo } from '@/components/ClubLogo';
 
 interface GameWithTeam extends Game {
   teams?: { id: string; name: string; category: string; season: string; created_at: string; logo_url?: string | null };
@@ -203,9 +203,9 @@ export default function GameDetailPage() {
           {/* Game Info */}
           <div className="bg-white shadow rounded-lg p-6 mb-6">
             <div className="flex items-center gap-4 mb-4">
-              <TeamLogo 
+              <ClubLogo 
                 logoUrl={game.teams?.logo_url} 
-                teamName={game.teams?.name || 'Team'} 
+                clubName={game.teams?.name || 'Team'} 
                 size="md"
               />
               <h2 className="text-2xl font-bold">
