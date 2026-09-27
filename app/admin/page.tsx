@@ -124,7 +124,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
+      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex">
@@ -136,7 +136,7 @@ export default function AdminDashboard() {
                   height={120}
                   className="h-10 w-auto"
                 />
-                <span className="text-lg font-semibold text-gray-700">Admin</span>
+                <span className="text-lg font-semibold text-white">Admin</span>
               </div>
             </div>
             <div className="flex items-center gap-3">

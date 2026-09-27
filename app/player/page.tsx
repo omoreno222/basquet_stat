@@ -81,7 +81,7 @@ export default function PlayerDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
+      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex-shrink-0 flex items-center space-x-3">
@@ -92,7 +92,7 @@ export default function PlayerDashboard() {
                 height={120}
                 className="h-10 w-auto"
               />
-              <span className="text-lg font-semibold text-gray-700">Player</span>
+              <span className="text-lg font-semibold text-white">Player</span>
             </div>
             <div className="flex items-center space-x-4">
               <span className="text-gray-700">Welcome, {profile?.full_name || profile?.email}</span>

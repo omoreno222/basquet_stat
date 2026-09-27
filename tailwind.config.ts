@@ -8,7 +8,14 @@ const config: Config = {
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        brand: {
+          DEFAULT: '#1e40af', // Deep blue for light mode (blue-800)
+          dark: '#1e3a8a',    // Slightly darker blue for dark mode (blue-900)
+        },
+      },
+    },
   },
   plugins: [],
 };

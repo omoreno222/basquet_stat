@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
+import { Footer } from '@/components/Footer';
+import packageJson from '../package.json';
 
 export const metadata: Metadata = {
   title: 'SeasonMath',
@@ -58,9 +60,30 @@ export default async function RootLayout({
 }) {
   const theme = await getTheme();
   
+  // Get translations for footer
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+  
+  const { data: translationsData } = await supabase
+    .from('translations')
+    .select('key, value')
+    .eq('locale', 'en');
+  
+  const translations = translationsData?.reduce((acc: Record<string, string>, t) => {
+    acc[t.key] = t.value;
+    return acc;
+  }, {}) || {};
+
   return (
     <html lang="en" className={theme}>
-      <body>{children}</body>
+      <body className="antialiased flex flex-col min-h-screen">
+        <div className="flex-grow">
+          {children}
+        </div>
+        <Footer translations={translations} version={packageJson.version} />
+      </body>
     </html>
   );
 }
