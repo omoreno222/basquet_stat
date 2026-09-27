@@ -31,8 +31,9 @@ export default function LoginPage() {
       if (error) throw error;
 
       if (data.session) {
-        // Store token in cookie for middleware with SameSite=Lax
+        // Store tokens in cookies for middleware with SameSite=Lax
         document.cookie = `sb-access-token=${data.session.access_token}; path=/; max-age=3600; SameSite=Lax`;
+        document.cookie = `sb-refresh-token=${data.session.refresh_token}; path=/; max-age=604800; SameSite=Lax`; // 7 days
         
         // Get user role and redirect
         const { data: profile, error: profileError } = await supabase

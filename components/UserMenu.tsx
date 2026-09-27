@@ -39,6 +39,8 @@ export function UserMenu({ profile, roles, translations, compact = false }: User
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
+    document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    document.cookie = 'sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     window.location.href = '/login';
   };
 

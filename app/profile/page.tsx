@@ -434,6 +434,8 @@ export default function ProfilePage() {
 
     try {
       await supabase.auth.signOut({ scope: 'global' });
+      document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      document.cookie = 'sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
       router.push('/login');
     } catch (err) {
       console.error('Error signing out:', err);

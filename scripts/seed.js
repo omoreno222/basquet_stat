@@ -151,16 +151,14 @@ async function seed() {
     // Update profile_roles to include club_id (except for admin)
     console.log('Updating user roles with club_id...');
     for (const user of users) {
-      if (user.role !== 'admin') {
-        const { error: updateError } = await supabase
-          .from('profile_roles')
-          .update({ club_id: club.id })
-          .eq('profile_id', user.id)
-          .neq('role', 'admin');
+      const { error: updateError } = await supabase
+        .from('profile_roles')
+        .update({ club_id: club.id })
+        .eq('profile_id', user.id)
+        .neq('role', 'admin');
 
-        if (updateError) {
-          console.error(`Error updating roles for ${user.email}:`, updateError);
-        }
+      if (updateError) {
+        console.error(`Error updating roles for ${user.email}:`, updateError);
       }
     }
 
