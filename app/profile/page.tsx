@@ -47,6 +47,7 @@ export default function ProfilePage() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [locale, setLocale] = useState('en');
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [phone, setPhone] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -79,6 +80,7 @@ export default function ProfilePage() {
         setFirstName(profileData.first_name || '');
         setLastName(profileData.last_name || '');
         setLocale(profileData.locale || profileData.language || 'en');
+        setTheme((profileData as any).theme || 'light');
         setPhone(profileData.phone || '');
       }
 
@@ -325,6 +327,32 @@ export default function ProfilePage() {
     }
   }
 
+  async function handleThemeChange(newTheme: 'light' | 'dark') {
+    if (!profile) return;
+
+    setTheme(newTheme);
+
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ theme: newTheme })
+        .eq('id', profile.id);
+
+      if (error) throw error;
+
+      // Update HTML class immediately for instant feedback
+      document.documentElement.className = newTheme;
+      
+      // Set cookie for logged-out fallback
+      document.cookie = `theme=${newTheme}; path=/; max-age=${60 * 60 * 24 * 365}`; // 1 year
+
+      setSuccess(translations.trke_theme_updated || 'Theme updated successfully');
+    } catch (err) {
+      console.error('Error updating theme:', err);
+      setError(err instanceof Error ? err.message : 'Theme update failed');
+    }
+  }
+
   async function handleChangeEmail() {
     if (!validateEmail(newEmail)) {
       setError('Invalid email address');
@@ -539,6 +567,36 @@ export default function ProfilePage() {
             >
               {saving ? 'Saving...' : (translations.trke_save || 'Save')}
             </button>
+          </div>
+
+          {/* Theme */}
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+              {translations.trke_theme || 'Theme'}
+            </h2>
+            
+            <div className="flex gap-4">
+              <button
+                onClick={() => handleThemeChange('light')}
+                className={`px-6 py-3 rounded-lg border-2 transition-all ${
+                  theme === 'light'
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                    : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300'
+                }`}
+              >
+                ☀️ {translations.trke_light_theme || 'Light'}
+              </button>
+              <button
+                onClick={() => handleThemeChange('dark')}
+                className={`px-6 py-3 rounded-lg border-2 transition-all ${
+                  theme === 'dark'
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                    : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300'
+                }`}
+              >
+                🌙 {translations.trke_dark_theme || 'Dark'}
+              </button>
+            </div>
           </div>
 
           {/* Phone */}
