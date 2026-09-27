@@ -6,6 +6,7 @@ CREATE OR REPLACE FUNCTION check_game_not_started(p_game_id UUID)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_event_count INTEGER;
@@ -26,12 +27,22 @@ BEGIN
 END;
 $$;
 
+-- Revoke execute from public/anon, grant only to authenticated
+REVOKE EXECUTE ON FUNCTION check_game_not_started(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION check_game_not_started(uuid) TO authenticated;
+
 -- Trigger function to enforce lineup immutability
 CREATE OR REPLACE FUNCTION prevent_lineup_change_after_start()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
+  -- Skip check if this is a cascaded trigger (depth > 1)
+  -- Allows FK cascades (e.g., player/team delete) to proceed
+  IF pg_trigger_depth() > 1 THEN
+    RETURN NEW;
+  END IF;
+
   -- Allow changes only if game has not started
   IF NOT check_game_not_started(NEW.game_id) THEN
     RAISE EXCEPTION 'Cannot modify starting lineup after game has started'
@@ -55,6 +66,12 @@ RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
+  -- Skip check if this is a cascaded delete (depth > 1)
+  -- Allows FK cascades (e.g., player/team/season delete) to proceed
+  IF pg_trigger_depth() > 1 THEN
+    RETURN OLD;
+  END IF;
+
   -- Allow deletion only if game has not started
   IF NOT check_game_not_started(OLD.game_id) THEN
     RAISE EXCEPTION 'Cannot delete starting lineup after game has started'
@@ -70,3 +87,7 @@ CREATE TRIGGER enforce_lineup_delete_immutability
   BEFORE DELETE ON starting_lineups
   FOR EACH ROW
   EXECUTE FUNCTION prevent_lineup_delete_after_start();
+
+-- Add clock_remaining_ms to game_periods for accurate minutes calculation
+-- This records the exact clock time when the period ended (may not be 0:00)
+ALTER TABLE game_periods ADD COLUMN IF NOT EXISTS clock_remaining_ms INTEGER DEFAULT 0;

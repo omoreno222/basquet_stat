@@ -7,10 +7,7 @@ import Link from 'next/link';
 import { Profile, Player, Game } from '@/lib/types';
 
 interface GameWithTeam extends Game {
-  teams?: { name: string };
-  opponent_name?: string;
-  venue?: string;
-  status?: string;
+  teams?: { id: string; name: string; category: string; season: string; created_at: string };
 }
 
 interface PlayerWithTeam extends Player {

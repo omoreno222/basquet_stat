@@ -8,7 +8,7 @@ import Image from 'next/image';
 import { Profile, Game } from '@/lib/types';
 
 interface GameWithTeam extends Game {
-  teams?: { name: string };
+  teams?: { id: string; name: string; category: string; season: string; created_at: string };
 }
 
 export default function TeamManagerDashboard() {

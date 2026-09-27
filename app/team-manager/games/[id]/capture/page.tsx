@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
@@ -26,25 +26,24 @@ interface Player {
 
 interface Game {
   id: string;
-  home_team_id: string;
-  away_team_id: string;
+  team_id: string;
+  opponent_name: string;
+  opponent_score: number;
+  team_score: number;
+  is_home: boolean;
+  venue?: string;
   game_date: string;
+  status: string;
+  official?: boolean;
   slot_a_user_id: string | null;
   slot_b_user_id: string | null;
-  home_score: number;
-  away_score: number;
-  period: number;
-  clock_remaining_ms: number;
   clock_running: boolean;
+  clock_remaining_ms: number;
   current_period: number;
   possession: 'home' | 'away';
-  team_score: number;
-  opponent_score: number;
-  attacking_right_first_period: boolean;
   attack_right_first: boolean;
-  opponent_name?: string;
-  home_team?: { name: string };
-  away_team?: { name: string };
+  created_at?: string;
+  updated_at?: string;
   teams?: { name: string };
 }
 
@@ -142,15 +141,28 @@ export default function GameCapturePage() {
   const [showFreeThrow, setShowFreeThrow] = useState(false);
   const [showFoul, setShowFoul] = useState(false);
   const [showSubstitution, setShowSubstitution] = useState(false);
-  const [onCourtPlayerIds, setOnCourtPlayerIds] = useState<string[]>([]);
   const [startingLineupIds, setStartingLineupIds] = useState<string[]>([]); // Immutable starting 5
   const [startingLineupSet, setStartingLineupSet] = useState(false);
   const [showBoxScore, setShowBoxScore] = useState(false);
   const [draftLineupIds, setDraftLineupIds] = useState<string[]>([]); // Draft state for lineup modal
+  const [periodEndTimes, setPeriodEndTimes] = useState<Record<number, number>>({}); // Period -> clock_remaining_ms at end
 
   // Refs
   const channelRef = useRef<RealtimeChannel | null>(null);
   const clockIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Derive on-court players from starting lineup + substitution events using useMemo
+  // This ensures it's always up-to-date and avoids stale closure issues
+  const onCourtPlayerIds = useMemo(() => {
+    return deriveOnCourtPlayers(startingLineupIds, events);
+  }, [startingLineupIds, events]);
+
+  // Helper to get period length in milliseconds (FIBA rules)
+  // Q1-Q4: 10 minutes (600,000 ms)
+  // Q5+: 5 minutes (300,000 ms) overtime
+  const getPeriodLengthMs = (period: number): number => {
+    return period <= 4 ? 600000 : 300000;
+  };
 
   // Determine which basket we're attacking based on period and initial direction
   // FIBA: Switch at halftime. Q1-Q2 one direction, Q3-Q4+ the other.
@@ -206,57 +218,7 @@ export default function GameCapturePage() {
     return currentLineup;
   }
 
-  useEffect(() => {
-    loadData();
-    const cleanup = setupRealtimeSubscription();
-    return () => cleanup();
-  }, [gameId]);
-
-  // Clock ticker - ONLY for Slot A
-  useEffect(() => {
-    if (clockIntervalRef.current) {
-      clearInterval(clockIntervalRef.current);
-      clockIntervalRef.current = null;
-    }
-
-    if (userSlot !== 'a' || !clockRunning) return;
-
-    clockIntervalRef.current = setInterval(() => {
-      setClockRemaining(prev => {
-        const newTime = Math.max(0, prev - 100);
-        if (newTime === 0) {
-          setClockRunning(false);
-          handlePeriodEnd();
-          updateGameState({ clock_running: false, clock_remaining_ms: 0 });
-        }
-        return newTime;
-      });
-    }, 100);
-
-    return () => {
-      if (clockIntervalRef.current) {
-        clearInterval(clockIntervalRef.current);
-        clockIntervalRef.current = null;
-      }
-    };
-  }, [clockRunning, userSlot]);
-
-  // Periodic clock sync - Slot A safety net
-  useEffect(() => {
-    if (userSlot !== 'a' || !clockRunning || !game) return;
-
-    const interval = setInterval(() => {
-      supabase
-        .from('games')
-        .update({ clock_remaining_ms: clockRemaining })
-        .eq('id', gameId)
-        .then();
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [userSlot, clockRunning, clockRemaining, game, gameId]);
-
-  async function updateGameState(updates: Partial<Game>) {
+  const updateGameState = useCallback(async (updates: Partial<Game>) => {
     const { error } = await supabase
       .from('games')
       .update(updates)
@@ -264,9 +226,13 @@ export default function GameCapturePage() {
 
     if (error) console.error('Failed to update game state:', error);
     return !error;
-  }
+  }, [gameId]);
 
-  async function loadData() {
+  const handlePeriodEnd = useCallback(() => {
+    alert(`Period ${currentPeriod} ended`);
+  }, [currentPeriod]);
+
+  const loadData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       router.push('/login');
@@ -344,16 +310,30 @@ export default function GameCapturePage() {
         setStartingLineupIds(startingIds);
         setStartingLineupSet(true);
         
-        // Derive current on-court players from starting lineup + subs
-        const currentOnCourt = deriveOnCourtPlayers(startingIds, eventsData || []);
-        setOnCourtPlayerIds(currentOnCourt);
+        // On-court players are now derived via useMemo, no need to set state
+      }
+
+      // Load period end times for accurate minutes calculation
+      const { data: periodData } = await supabase
+        .from('game_periods')
+        .select('period_number, clock_remaining_ms')
+        .eq('game_id', gameId);
+
+      if (periodData) {
+        const endTimes: Record<number, number> = {};
+        periodData.forEach(p => {
+          if (p.clock_remaining_ms !== null) {
+            endTimes[p.period_number] = p.clock_remaining_ms;
+          }
+        });
+        setPeriodEndTimes(endTimes);
       }
     }
 
     setLoading(false);
-  }
+  }, [gameId, router]);
 
-  function setupRealtimeSubscription() {
+  const setupRealtimeSubscription = useCallback(() => {
     const channel = supabase
       .channel(`game:${gameId}`, {
         config: {
@@ -393,11 +373,7 @@ export default function GameCapturePage() {
           if (data) {
             setEvents(prev => {
               const newEvents = [data, ...prev];
-              // Re-derive on-court lineup if this is a substitution
-              if (data.event_type === 'substitution') {
-                const currentOnCourt = deriveOnCourtPlayers(startingLineupIds, newEvents);
-                setOnCourtPlayerIds(currentOnCourt);
-              }
+              // On-court lineup automatically re-derived via useMemo when events change
               return newEvents;
             });
           }
@@ -414,9 +390,7 @@ export default function GameCapturePage() {
         (payload) => {
           setEvents(prev => {
             const filtered = prev.filter(e => e.id !== payload.old.id);
-            // Re-derive on-court lineup after deletion
-            const currentOnCourt = deriveOnCourtPlayers(startingLineupIds, filtered);
-            setOnCourtPlayerIds(currentOnCourt);
+            // On-court lineup automatically re-derived via useMemo when events change
             return filtered;
           });
         }
@@ -494,12 +468,33 @@ export default function GameCapturePage() {
             setStartingLineupIds(startingIds);
             setStartingLineupSet(true);
             
-            // Re-derive on-court players from new starting lineup + all events
-            setEvents(prevEvents => {
-              const currentOnCourt = deriveOnCourtPlayers(startingIds, prevEvents);
-              setOnCourtPlayerIds(currentOnCourt);
-              return prevEvents;
+            // On-court lineup automatically re-derived via useMemo when startingLineupIds change
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'game_periods',
+          filter: `game_id=eq.${gameId}`,
+        },
+        async () => {
+          // Reload period end times when they change
+          const { data: periodData } = await supabase
+            .from('game_periods')
+            .select('period_number, clock_remaining_ms')
+            .eq('game_id', gameId);
+
+          if (periodData) {
+            const endTimes: Record<number, number> = {};
+            periodData.forEach(p => {
+              if (p.clock_remaining_ms !== null) {
+                endTimes[p.period_number] = p.clock_remaining_ms;
+              }
             });
+            setPeriodEndTimes(endTimes);
           }
         }
       )
@@ -530,11 +525,58 @@ export default function GameCapturePage() {
         clockIntervalRef.current = null;
       }
     };
-  }
+  }, [gameId, currentUser, userSlot, game]);
 
-  function handlePeriodEnd() {
-    alert(`Period ${currentPeriod} ended`);
-  }
+  // Effects: run on mount and handle clock ticker
+  useEffect(() => {
+    loadData();
+    const cleanup = setupRealtimeSubscription();
+    return () => cleanup();
+  }, [loadData, setupRealtimeSubscription]);
+
+  // Clock ticker - ONLY for Slot A
+  useEffect(() => {
+    if (clockIntervalRef.current) {
+      clearInterval(clockIntervalRef.current);
+      clockIntervalRef.current = null;
+    }
+
+    if (userSlot !== 'a' || !clockRunning) return;
+
+    clockIntervalRef.current = setInterval(() => {
+      setClockRemaining(prev => {
+        const newTime = Math.max(0, prev - 100);
+        if (newTime === 0) {
+          setClockRunning(false);
+          handlePeriodEnd();
+          updateGameState({ clock_running: false, clock_remaining_ms: 0 });
+        }
+        return newTime;
+      });
+    }, 100);
+
+    return () => {
+      if (clockIntervalRef.current) {
+        clearInterval(clockIntervalRef.current);
+        clockIntervalRef.current = null;
+      }
+    };
+  }, [clockRunning, userSlot, handlePeriodEnd, updateGameState]);
+
+  // Periodic clock sync - Slot A safety net
+  useEffect(() => {
+    if (userSlot !== 'a' || !clockRunning || !game) return;
+
+    const interval = setInterval(() => {
+      supabase
+        .from('games')
+        .update({ clock_remaining_ms: clockRemaining })
+        .eq('id', gameId)
+        .then();
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [userSlot, clockRunning, clockRemaining, game, gameId]);
 
   function handleCourtTap(worldX: number, worldY: number) {
     setTapCoordinates({ x: worldX, y: worldY });
@@ -562,7 +604,7 @@ export default function GameCapturePage() {
     // Calculate zone using shared FIBA geometry helper
     const zone = calculateShotZone(normalized.x, normalized.y, true); // Always normalized to attacking right
 
-    const elapsed = 600000 - clockRemaining;
+    const elapsed = getPeriodLengthMs(currentPeriod) - clockRemaining;
 
     const { error } = await supabase
       .from('game_events')
@@ -607,7 +649,7 @@ export default function GameCapturePage() {
   async function handleSlotBAction(actionType: string) {
     if (!selectedPlayer || !tapCoordinates) return;
 
-    const elapsed = 600000 - clockRemaining;
+    const elapsed = getPeriodLengthMs(currentPeriod) - clockRemaining;
     
     let eventType = actionType;
     if (actionType === 'rebound_off' || actionType === 'rebound_def') {
@@ -642,7 +684,7 @@ export default function GameCapturePage() {
   }
 
   async function handleFreeThrowSubmit(player: Player, shots: boolean[]) {
-    const elapsed = 600000 - clockRemaining;
+    const elapsed = getPeriodLengthMs(currentPeriod) - clockRemaining;
     const attacking = isAttackingRight();
     
     // Calculate FT position: center of FT line at attacking basket (5.8m from baseline, y=7.5m)
@@ -690,7 +732,7 @@ export default function GameCapturePage() {
   }
 
   async function handleFoulSubmit(player: Player, foulType: string, freeThrowsAwarded: number) {
-    const elapsed = 600000 - clockRemaining;
+    const elapsed = getPeriodLengthMs(currentPeriod) - clockRemaining;
 
     const { error } = await supabase
       .from('game_events')
@@ -715,7 +757,7 @@ export default function GameCapturePage() {
   }
 
   async function handleSubstitutionSubmit(playersOut: Player[], playersIn: Player[]) {
-    const elapsed = 600000 - clockRemaining;
+    const elapsed = getPeriodLengthMs(currentPeriod) - clockRemaining;
 
     // Create array of substitution events for atomic insert
     const substitutionEvents = playersOut.map((playerOut, i) => ({
@@ -739,25 +781,17 @@ export default function GameCapturePage() {
       return;
     }
 
-    // Update on-court lineup by replacing players
-    const newOnCourt = onCourtPlayerIds.map(id => {
-      const outIndex = playersOut.findIndex(p => p.id === id);
-      if (outIndex !== -1) {
-        return playersIn[outIndex].id;
-      }
-      return id;
-    });
-    
-    setOnCourtPlayerIds(newOnCourt);
+    // On-court lineup automatically re-derived via useMemo when events change
     setShowSubstitution(false);
   }
 
   async function handleStartingLineupSubmit(selectedPlayers: Player[]) {
     // Block lineup changes if game has started:
     // - Any events have been recorded (not just subs)
-    // - Clock has run (not at initial 10:00)
+    // - Clock has run from initial period length
     const hasEvents = events.length > 0;
-    const clockHasRun = clockRemaining < 600000;
+    const initialPeriodLength = getPeriodLengthMs(currentPeriod);
+    const clockHasRun = clockRemaining < initialPeriodLength;
     
     if (hasEvents || clockHasRun) {
       alert('Cannot change starting lineup after the game has started. Use Sub button instead.');
@@ -793,7 +827,7 @@ export default function GameCapturePage() {
 
     const startingIds = selectedPlayers.map(p => p.id);
     setStartingLineupIds(startingIds);
-    setOnCourtPlayerIds(startingIds);
+    // On-court lineup automatically derived via useMemo
     setStartingLineupSet(true);
     setShowStartingLineup(false);
   }
@@ -810,13 +844,34 @@ export default function GameCapturePage() {
 
   async function nextPeriod() {
     if (userSlot !== 'a') return;
+    
+    // Record period end time in game_periods table
+    await supabase
+      .from('game_periods')
+      .upsert({
+        game_id: gameId,
+        period_number: currentPeriod,
+        clock_remaining_ms: clockRemaining,
+        duration_ms: getPeriodLengthMs(currentPeriod),
+        is_overtime: currentPeriod > 4,
+      }, {
+        onConflict: 'game_id,period_number'
+      });
+
+    // Update local period end times
+    setPeriodEndTimes(prev => ({
+      ...prev,
+      [currentPeriod]: clockRemaining
+    }));
+
     const newPeriod = currentPeriod + 1;
+    const newPeriodLength = getPeriodLengthMs(newPeriod);
     setCurrentPeriod(newPeriod);
-    setClockRemaining(600000);
+    setClockRemaining(newPeriodLength);
     setClockRunning(false);
     await updateGameState({
       current_period: newPeriod,
-      clock_remaining_ms: 600000,
+      clock_remaining_ms: newPeriodLength,
       clock_running: false,
     });
   }
@@ -868,12 +923,7 @@ export default function GameCapturePage() {
     if (error) {
       alert(`Error: ${error.message}`);
     } else {
-      // If undoing a substitution, re-derive on-court lineup
-      if (lastEvent.event_type === 'substitution') {
-        const remainingEvents = events.slice(1);
-        const newOnCourt = deriveOnCourtPlayers(startingLineupIds, remainingEvents);
-        setOnCourtPlayerIds(newOnCourt);
-      }
+      // On-court lineup automatically re-derived via useMemo when events change (after delete)
     }
   }
 
@@ -944,7 +994,8 @@ export default function GameCapturePage() {
     startingLineupIds,
     events,
     currentPeriod,
-    clockRemaining
+    clockRemaining,
+    periodEndTimes
   );
 
   const attacking = isAttackingRight();

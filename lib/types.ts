@@ -30,29 +30,25 @@ export interface Player {
 
 export interface Game {
   id: string;
-  home_team_id: string;
-  away_team_id: string;
-  game_date: string;
-  location: string | null;
+  team_id: string;
+  opponent_name: string;
+  opponent_score: number;
+  team_score: number;
+  is_home: boolean;
   venue?: string;
-  opponent_name?: string;
-  status?: string;
+  game_date: string;
+  status: string;
+  official?: boolean;
   slot_a_user_id: string | null;
   slot_b_user_id: string | null;
-  home_score: number;
-  away_score: number;
-  period: number;
-  clock_remaining_ms: number;
   clock_running: boolean;
+  clock_remaining_ms: number;
   current_period: number;
   possession: 'home' | 'away';
-  team_score: number;
-  opponent_score: number;
-  attacking_right_first_period: boolean;
   attack_right_first: boolean;
   created_at: string;
-  home_team?: Team;
-  away_team?: Team;
+  updated_at?: string;
+  teams?: Team;
 }
 
 export interface Translation {
