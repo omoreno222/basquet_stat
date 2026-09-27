@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { UserRole } from '@/types/database';
 import Link from 'next/link';
 import Image from 'next/image';
-import { createUser, updateUserRoles, linkParentToPlayer, unlinkParentFromPlayer, uploadProfileAvatar, removeProfileAvatar } from '../actions';
+import { createUser, updateUserRoles, linkParentToPlayer, unlinkParentFromPlayer, uploadProfileAvatar, removeProfileAvatar, linkPlayerAccount, unlinkPlayerAccount } from '../actions';
 import { Player } from '@/lib/types';
 
 interface UserWithRoles {
@@ -18,7 +18,9 @@ interface UserWithRoles {
 }
 
 interface PlayerWithTeam extends Player {
+  user_id?: string | null;
   teams?: { name: string };
+  profiles?: { email: string; full_name: string | null };
 }
 
 interface ParentLink {
@@ -39,6 +41,7 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [showLinkForm, setShowLinkForm] = useState(false);
+  const [showPlayerLinkForm, setShowPlayerLinkForm] = useState(false);
   const [editingUser, setEditingUser] = useState<UserWithRoles | null>(null);
   const [formData, setFormData] = useState({
     email: '',
@@ -49,6 +52,10 @@ export default function UsersPage() {
   const [linkFormData, setLinkFormData] = useState({
     parent_id: '',
     player_id: '',
+  });
+  const [playerLinkFormData, setPlayerLinkFormData] = useState({
+    player_id: '',
+    user_id: '',
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -83,7 +90,7 @@ export default function UsersPage() {
 
     // Load other data
     const [playersData, linksData] = await Promise.all([
-      supabase.from('players').select('*').order('full_name'),
+      supabase.from('players').select('*, teams(name), profiles(email, full_name)').order('full_name'),
       supabase.from('parent_player_links').select('*, profiles(full_name, email), players(full_name, jersey_number)'),
     ]);
 
@@ -187,6 +194,37 @@ export default function UsersPage() {
     loadData();
   }
 
+  async function handlePlayerLinkSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+
+    const result = await linkPlayerAccount(playerLinkFormData.player_id, playerLinkFormData.user_id);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+
+    setSuccess('Player account linked successfully');
+    setPlayerLinkFormData({ player_id: '', user_id: '' });
+    setShowPlayerLinkForm(false);
+    loadData();
+  }
+
+  async function handlePlayerUnlink(playerId: string) {
+    if (!confirm('Are you sure you want to unlink this player account?')) {
+      return;
+    }
+
+    const result = await unlinkPlayerAccount(playerId);
+    if (result.error) {
+      alert(`Error: ${result.error}`);
+      return;
+    }
+
+    loadData();
+  }
+
   async function handleAvatarUpload(userId: string, file: File) {
     setUploadingAvatar(userId);
     setError('');
@@ -250,6 +288,12 @@ export default function UsersPage() {
                 className="bg-purple-500 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded"
               >
                 Link Parent
+              </button>
+              <button
+                onClick={() => setShowPlayerLinkForm(true)}
+                className="bg-orange-500 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded"
+              >
+                Link Player Account
               </button>
               <button
                 onClick={() => setShowForm(true)}
@@ -433,6 +477,78 @@ export default function UsersPage() {
           </div>
         )}
 
+        {showPlayerLinkForm && (
+          <div className="mb-6 px-4">
+            <div className="bg-white shadow rounded-lg p-6">
+              <h2 className="text-lg font-bold mb-4">Link Player to User Account</h2>
+              <p className="text-sm text-gray-600 mb-4">
+                Link a player record to a user account. This allows the player to log in and see their own stats and their team&apos;s data.
+              </p>
+              <form onSubmit={handlePlayerLinkSubmit}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Player *
+                    </label>
+                    <select
+                      required
+                      value={playerLinkFormData.player_id}
+                      onChange={(e) => setPlayerLinkFormData({ ...playerLinkFormData, player_id: e.target.value })}
+                      className="w-full border rounded px-3 py-2"
+                    >
+                      <option value="">Select a player</option>
+                      {players.map((player) => {
+                        const team = (player as PlayerWithTeam).teams;
+                        return (
+                          <option key={player.id} value={player.id}>
+                            #{player.jersey_number} {player.full_name} ({team?.name || 'No team'})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      User Account *
+                    </label>
+                    <select
+                      required
+                      value={playerLinkFormData.user_id}
+                      onChange={(e) => setPlayerLinkFormData({ ...playerLinkFormData, user_id: e.target.value })}
+                      className="w-full border rounded px-3 py-2"
+                    >
+                      <option value="">Select a user</option>
+                      {users.map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.full_name || user.email}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="submit"
+                    className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
+                  >
+                    Link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPlayerLinkForm(false);
+                      setPlayerLinkFormData({ player_id: '', user_id: '' });
+                    }}
+                    className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         <div className="px-4 py-6 sm:px-0 space-y-6">
           <div className="bg-white shadow overflow-hidden sm:rounded-md">
             <div className="px-6 py-4 bg-gray-50 border-b">
@@ -546,6 +662,41 @@ export default function UsersPage() {
                     </div>
                   </li>
                 ))}
+              </ul>
+            </div>
+          )}
+
+          {players.filter(p => p.user_id).length > 0 && (
+            <div className="bg-white shadow overflow-hidden sm:rounded-md">
+              <div className="px-6 py-4 bg-gray-50 border-b">
+                <h3 className="text-lg font-medium">Player Account Links</h3>
+              </div>
+              <ul className="divide-y divide-gray-200">
+                {players.filter(p => p.user_id).map((player) => {
+                  const linkedProfile = (player as PlayerWithTeam).profiles;
+                  const team = (player as PlayerWithTeam).teams;
+                  return (
+                    <li key={player.id} className="px-6 py-4 hover:bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">
+                            Player: #{player.jersey_number} {player.full_name}
+                            {team && ` (${team.name})`}
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            Account: {linkedProfile?.full_name || linkedProfile?.email || player.user_id}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handlePlayerUnlink(player.id)}
+                          className="bg-red-500 hover:bg-red-700 text-white px-3 py-1 rounded text-sm"
+                        >
+                          Unlink
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}
