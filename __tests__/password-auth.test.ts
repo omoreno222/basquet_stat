@@ -199,12 +199,10 @@ describe('Password Auth - Rate Limiting', () => {
     );
 
     // Should have sent email
-    expect(mockResendSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 'test@example.com',
-        subject: expect.stringContaining('password'),
-      })
-    );
+    expect(mockResendSend).toHaveBeenCalled();
+    const emailCall = mockResendSend.mock.calls[0][0];
+    expect(emailCall.to).toBe('test@example.com');
+    expect(emailCall.subject).toContain('password');
   });
 });
 

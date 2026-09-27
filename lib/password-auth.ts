@@ -8,9 +8,9 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 /**
  * Generate a secure random password
- * Exported for testing
+ * For internal use only
  */
-export function generatePassword(length: number = 12): string {
+function generatePassword(length: number = 12): string {
   const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
@@ -18,6 +18,9 @@ export function generatePassword(length: number = 12): string {
     .map(x => charset[x % charset.length])
     .join('');
 }
+
+// Export for testing only (not part of public API)
+export { generatePassword };
 
 /**
  * Send welcome email with temporary password
