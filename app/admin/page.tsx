@@ -6,9 +6,13 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Profile } from '@/lib/types';
+import { UserMenu } from '@/components/UserMenu';
+import { type UserRole } from '@/lib/profile-utils';
 
 export default function AdminDashboard() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [roles, setRoles] = useState<UserRole[]>([]);
+  const [translations, setTranslations] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
@@ -45,18 +49,29 @@ export default function AdminDashboard() {
     }
 
     setProfile(profileData);
+    setRoles(roles as UserRole[]);
+
+    // Load translations
+    const locale = profileData.locale || profileData.language || 'en';
+    const { data: translationsData } = await supabase
+      .from('translations')
+      .select('key, value')
+      .eq('locale', locale);
+
+    if (translationsData) {
+      const t: Record<string, string> = {};
+      translationsData.forEach(tr => {
+        t[tr.key] = tr.value;
+      });
+      setTranslations(t);
+    }
+
     setLoading(false);
   }, [router]);
 
   useEffect(() => {
     checkUser();
   }, [checkUser]);
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-    router.push('/login');
-  };
 
   if (loading) {
     return <div className="p-8">Loading...</div>;
@@ -79,14 +94,8 @@ export default function AdminDashboard() {
                 <span className="text-lg font-semibold text-gray-700">Admin</span>
               </div>
             </div>
-            <div className="flex items-center space-x-4">
-              <span className="text-gray-700">Welcome, {profile?.full_name || profile?.email}</span>
-              <button
-                onClick={handleLogout}
-                className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
-              >
-                Logout
-              </button>
+            <div className="flex items-center">
+              {profile && <UserMenu profile={profile} roles={roles} translations={translations} />}
             </div>
           </div>
         </div>
