@@ -9,6 +9,7 @@ export async function createUser(formData: {
   full_name: string;
   role: string;
   roles?: string[];
+  club_id?: string | null;
 }) {
   // SECURITY: Verify caller is admin before using service role
   const authCheck = await assertAdmin();
@@ -51,10 +52,11 @@ export async function createUser(formData: {
       return { error: profileError.message };
     }
 
-    // Insert all roles into profile_roles table
+    // Insert all roles into profile_roles table with club_id
     const roleInserts = rolesToAssign.map(role => ({
-      profile_id: authData.user.id,
+      user_id: authData.user.id,
       role: role,
+      club_id: formData.club_id || null,
     }));
 
     const { error: rolesError } = await supabase
@@ -65,13 +67,24 @@ export async function createUser(formData: {
       return { error: rolesError.message };
     }
 
+    // Send welcome email with club name if provided
+    if (formData.club_id) {
+      const { data: club } = await supabase
+        .from('clubs')
+        .select('name')
+        .eq('id', formData.club_id)
+        .single();
+
+      // TODO: Send welcome email with club name
+    }
+
     return { success: true, userId: authData.user.id };
   }
 
   return { error: 'Failed to create user' };
 }
 
-export async function updateUserRoles(userId: string, roles: string[]) {
+export async function updateUserRoles(userId: string, roles: string[], clubId?: string | null) {
   // SECURITY: Verify caller is admin before using service role
   const authCheck = await assertAdmin();
   if (authCheck.error) {
@@ -101,16 +114,17 @@ export async function updateUserRoles(userId: string, roles: string[]) {
   const { error: deleteError } = await supabase
     .from('profile_roles')
     .delete()
-    .eq('profile_id', userId);
+    .eq('user_id', userId);
 
   if (deleteError) {
     return { error: deleteError.message };
   }
 
-  // Insert new roles
+  // Insert new roles with club_id
   const roleInserts = roles.map(role => ({
-    profile_id: userId,
+    user_id: userId,
     role: role,
+    club_id: clubId || null,
   }));
 
   const { error: insertError } = await supabase

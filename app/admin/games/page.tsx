@@ -2,17 +2,23 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Game, GameStatus } from '@/types/database';
+import { Game, GameStatus, Club } from '@/types/database';
 import { Team } from '@/lib/types';
 import Link from 'next/link';
 import { ClubLogo } from '@/components/ClubLogo';
 
 interface GameWithTeam extends Game {
-  teams?: { name: string; logo_url?: string | null };
+  teams?: { 
+    name: string; 
+    logo_url?: string | null;
+    clubs?: Club;
+  };
 }
 
 interface TeamWithSeason extends Team {
   seasons?: { name: string };
+  clubs?: Club;
+  club_id?: string | null;
 }
 
 export default function GamesPage() {
@@ -31,16 +37,58 @@ export default function GamesPage() {
     official: true,
   });
   const [error, setError] = useState('');
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [userClubId, setUserClubId] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
   }, []);
 
   async function loadData() {
-    const [gamesData, teamsData] = await Promise.all([
-      supabase.from('games').select('*, teams(name, logo_url, seasons(name))').order('game_date', { ascending: false }),
-      supabase.from('teams').select('*, seasons(name)').order('name'),
-    ]);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // Check if user is platform admin or club admin
+    const { data: roles } = await supabase
+      .from('profile_roles')
+      .select('role, club_id')
+      .eq('user_id', user.id);
+
+    const platformAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
+    const clubAdmin = roles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
+
+    setIsPlatformAdmin(platformAdmin);
+    setUserClubId(clubAdmin?.club_id || null);
+
+    // Load games and teams based on access
+    let gamesQuery = supabase
+      .from('games')
+      .select('*, teams(name, logo_url, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
+      .order('game_date', { ascending: false });
+
+    let teamsQuery = supabase
+      .from('teams')
+      .select('*, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color)')
+      .order('name');
+
+    // Filter by club if not platform admin
+    if (!platformAdmin && clubAdmin?.club_id) {
+      // For games, we need to filter by teams that belong to the club
+      // First get team IDs for the club
+      const { data: clubTeams } = await supabase
+        .from('teams')
+        .select('id')
+        .eq('club_id', clubAdmin.club_id);
+
+      if (clubTeams && clubTeams.length > 0) {
+        const teamIds = clubTeams.map(t => t.id);
+        gamesQuery = gamesQuery.in('team_id', teamIds);
+      }
+
+      teamsQuery = teamsQuery.eq('club_id', clubAdmin.club_id);
+    }
+
+    const [gamesData, teamsData] = await Promise.all([gamesQuery, teamsQuery]);
 
     if (gamesData.data) setGames(gamesData.data);
     if (teamsData.data) setTeams(teamsData.data);
@@ -296,11 +344,19 @@ export default function GamesPage() {
                   <li key={game.id} className="px-6 py-4 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <ClubLogo 
-                          logoUrl={game.teams?.logo_url} 
-                          clubName={game.teams?.name || 'Team'} 
-                          size="sm"
-                        />
+                        {game.teams?.clubs ? (
+                          <ClubLogo 
+                            logoUrl={game.teams.clubs.logo_url} 
+                            clubName={game.teams.clubs.name} 
+                            size="sm"
+                          />
+                        ) : game.teams?.logo_url ? (
+                          <ClubLogo 
+                            logoUrl={game.teams.logo_url} 
+                            clubName={game.teams.name || 'Team'} 
+                            size="sm"
+                          />
+                        ) : null}
                         <div>
                           <h3 className="text-lg font-medium text-gray-900">
                             {game.teams?.name} vs {game.opponent_name}

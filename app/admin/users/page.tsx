@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { UserRole } from '@/types/database';
+import { UserRole, Club } from '@/types/database';
 import Link from 'next/link';
 import Image from 'next/image';
 import { createUser, updateUserRoles, linkParentToPlayer, unlinkParentFromPlayer, uploadProfileAvatar, removeProfileAvatar, linkPlayerAccount, unlinkPlayerAccount } from '../actions';
@@ -14,7 +14,9 @@ interface UserWithRoles {
   full_name: string | null;
   role: UserRole;
   roles?: UserRole[];
+  club_id?: string | null;
   avatar_url: string | null;
+  clubs?: Club;
 }
 
 interface PlayerWithTeam extends Player {
@@ -38,6 +40,7 @@ export default function UsersPage() {
   const [users, setUsers] = useState<UserWithRoles[]>([]);
   const [players, setPlayers] = useState<PlayerWithTeam[]>([]);
   const [parentLinks, setParentLinks] = useState<ParentLink[]>([]);
+  const [clubs, setClubs] = useState<Club[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [showLinkForm, setShowLinkForm] = useState(false);
@@ -48,6 +51,7 @@ export default function UsersPage() {
     password: '',
     full_name: '',
     roles: ['player'] as UserRole[],
+    club_id: '',
   });
   const [linkFormData, setLinkFormData] = useState({
     parent_id: '',
@@ -61,36 +65,85 @@ export default function UsersPage() {
   const [success, setSuccess] = useState('');
   const [uploadingAvatar, setUploadingAvatar] = useState<string | null>(null);
   const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [userClubId, setUserClubId] = useState<string | null>(null);
 
-  const availableRoles: UserRole[] = ['admin', 'team_manager', 'coach', 'parent', 'player'];
+  const availableRoles: UserRole[] = ['admin', 'club_admin', 'team_manager', 'coach', 'parent', 'player'];
 
   useEffect(() => {
     loadData();
   }, []);
 
   async function loadData() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // Check if user is platform admin or club admin
+    const { data: currentUserRoles } = await supabase
+      .from('profile_roles')
+      .select('role, club_id')
+      .eq('user_id', user.id);
+
+    const platformAdmin = currentUserRoles?.some(r => r.role === 'admin' && r.club_id === null) || false;
+    const clubAdminRole = currentUserRoles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
+
+    setIsPlatformAdmin(platformAdmin);
+    setUserClubId(clubAdminRole?.club_id || null);
+
     // Load users with their profile_roles
     const { data: usersData } = await supabase
       .from('profiles')
       .select('*')
       .order('email');
 
-    // Load profile_roles for each user
+    // Load profile_roles for each user (with club info)
     const { data: rolesData } = await supabase
       .from('profile_roles')
-      .select('profile_id, role');
+      .select('user_id, role, club_id, clubs(id, name, short_name, logo_url, primary_color, secondary_color)');
 
-    // Merge roles into users
-    const usersWithRoles = usersData?.map(user => ({
-      ...user,
-      roles: rolesData?.filter(r => r.profile_id === user.id).map(r => r.role) || [user.role],
-    })) || [];
+    // Merge roles into users and filter by club if needed
+    const usersWithRoles = usersData?.map(u => {
+      const userRoles = rolesData?.filter(r => r.user_id === u.id) || [];
+      const primaryRole = userRoles[0];
+      return {
+        ...u,
+        roles: userRoles.map(r => r.role) || [u.role],
+        club_id: primaryRole?.club_id || null,
+        clubs: primaryRole?.clubs || null,
+      } as UserWithRoles;
+    }).filter(u => {
+      // Filter by club if not platform admin
+      if (platformAdmin) return true;
+      if (!clubAdminRole?.club_id) return false;
+      return u.club_id === clubAdminRole.club_id;
+    }) || [];
 
     setUsers(usersWithRoles);
 
-    // Load other data
+    // Load clubs
+    const clubsQuery = platformAdmin
+      ? supabase.from('clubs').select('*').order('name')
+      : clubAdminRole?.club_id
+        ? supabase.from('clubs').select('*').eq('id', clubAdminRole.club_id)
+        : null;
+
+    if (clubsQuery) {
+      const { data: clubsData } = await clubsQuery;
+      if (clubsData) setClubs(clubsData);
+    }
+
+    // Load other data (filter players by club if needed)
+    let playersQuery = supabase
+      .from('players')
+      .select('*, teams(name), profiles(email, full_name)')
+      .order('full_name');
+
+    if (!platformAdmin && clubAdminRole?.club_id) {
+      playersQuery = playersQuery.eq('club_id', clubAdminRole.club_id);
+    }
+
     const [playersData, linksData] = await Promise.all([
-      supabase.from('players').select('*, teams(name), profiles(email, full_name)').order('full_name'),
+      playersQuery,
       supabase.from('parent_player_links').select('*, profiles(full_name, email), players(full_name, jersey_number)'),
     ]);
 
@@ -100,7 +153,13 @@ export default function UsersPage() {
   }
 
   function resetForm() {
-    setFormData({ email: '', password: '', full_name: '', roles: ['player'] });
+    setFormData({ 
+      email: '', 
+      password: '', 
+      full_name: '', 
+      roles: ['player'],
+      club_id: userClubId || '',
+    });
     setEditingUser(null);
     setShowForm(false);
     setError('');
@@ -114,6 +173,7 @@ export default function UsersPage() {
       password: '',
       full_name: user.full_name || '',
       roles: user.roles || [user.role],
+      club_id: user.club_id || '',
     });
     setShowForm(true);
     setError('');
@@ -140,7 +200,7 @@ export default function UsersPage() {
     }
 
     if (editingUser) {
-      const result = await updateUserRoles(editingUser.id, formData.roles);
+      const result = await updateUserRoles(editingUser.id, formData.roles, formData.club_id || null);
       if (result.error) {
         setError(result.error);
         return;
@@ -151,7 +211,11 @@ export default function UsersPage() {
         setError('Password must be at least 6 characters');
         return;
       }
-      const result = await createUser({ ...formData, role: formData.roles[0] });
+      const result = await createUser({ 
+        ...formData, 
+        role: formData.roles[0],
+        club_id: formData.club_id || null,
+      });
       if (result.error) {
         setError(result.error);
         return;
@@ -368,6 +432,38 @@ export default function UsersPage() {
                           className="w-full border rounded px-3 py-2"
                         />
                       </div>
+                      {isPlatformAdmin && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Club
+                          </label>
+                          <select
+                            value={formData.club_id}
+                            onChange={(e) => setFormData({ ...formData, club_id: e.target.value })}
+                            className="w-full border rounded px-3 py-2"
+                          >
+                            <option value="">No club (platform admin only)</option>
+                            {clubs.map((club) => (
+                              <option key={club.id} value={club.id}>
+                                {club.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      {!isPlatformAdmin && userClubId && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Club
+                          </label>
+                          <input
+                            type="text"
+                            disabled
+                            value={clubs.find(c => c.id === userClubId)?.name || ''}
+                            className="w-full border rounded px-3 py-2 bg-gray-100"
+                          />
+                        </div>
+                      )}
                     </>
                   )}
                   <div>
