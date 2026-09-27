@@ -717,14 +717,32 @@ export default function GameCapturePage() {
     const elapsed = getPeriodLengthMs(currentPeriod) - clockRemaining;
     const attacking = isAttackingRight();
     
-    // Calculate FT position: center of FT line at attacking basket (5.8m from baseline, y=7.5m)
-    const ftWorldX = attacking ? (28 - 5.8) / 28 : 5.8 / 28;
-    const ftWorldY = 0.5;
-    const ftNormalized = worldToNormalized(ftWorldX, ftWorldY);
+    // FIBA FT line constants (same as BasketballCourt.tsx)
+    // FT line at 5.8m from baseline, centered at y=7.5m (750cm)
+    // For multiple shots, spread along y: 690, 750, 810 (in court cm)
+    const COURT_LENGTH_M = 28;
+    const COURT_WIDTH_CM = 1500;
+    const FT_LINE_FROM_BASELINE_M = 5.8;
+    const FT_Y_POSITIONS_CM = [690, 750, 810]; // spread for 1-3 shots
+    
+    // Calculate FT x position (normalized 0-1)
+    const ftWorldX = attacking 
+      ? (COURT_LENGTH_M - FT_LINE_FROM_BASELINE_M) / COURT_LENGTH_M  // 0.793 (right basket)
+      : FT_LINE_FROM_BASELINE_M / COURT_LENGTH_M;  // 0.207 (left basket)
+    
+    // Spread Y positions based on shot count
+    const yPositions = shots.length === 1 
+      ? [FT_Y_POSITIONS_CM[1]]  // Single shot: center (750)
+      : shots.length === 2
+      ? [FT_Y_POSITIONS_CM[0], FT_Y_POSITIONS_CM[2]]  // Two shots: top and bottom (690, 810)
+      : FT_Y_POSITIONS_CM;  // Three shots: all three (690, 750, 810)
 
-    // Insert one event per shot
+    // Insert one event per shot with individual Y positions
     for (let i = 0; i < shots.length; i++) {
       const made = shots[i];
+      const ftWorldY = yPositions[i] / COURT_WIDTH_CM;  // Normalize y position
+      const ftNormalized = worldToNormalized(ftWorldX, ftWorldY);
+      
       const { error } = await supabase
         .from('game_events')
         .insert({
