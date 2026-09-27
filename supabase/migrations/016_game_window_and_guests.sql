@@ -1,14 +1,14 @@
 -- Migration 016: Game Window, Auto-Close, and Guest Players
 -- Adds game opening window (30 min before), configurable periods, auto-close, and guest player support
 
--- Add regular_periods column (default 4 for FIBA)
+-- Add regular_periods column (default 4 for FIBA: Q1, Q2, Q3, Q4)
 ALTER TABLE games ADD COLUMN IF NOT EXISTS regular_periods SMALLINT NOT NULL DEFAULT 4;
 
--- Add max_overtimes column (null = unlimited overtimes while tied)
+-- Add max_overtimes column (default null = unlimited overtimes while tied)
 ALTER TABLE games ADD COLUMN IF NOT EXISTS max_overtimes SMALLINT DEFAULT NULL;
 
-COMMENT ON COLUMN games.regular_periods IS 'Number of regular periods (quarters) in this game (default 4 for FIBA)';
-COMMENT ON COLUMN games.max_overtimes IS 'Maximum number of overtime periods allowed (null = unlimited while game is tied)';
+COMMENT ON COLUMN games.regular_periods IS 'Number of regular periods/quarters (default 4 for FIBA: Q1-Q4, 10 min each)';
+COMMENT ON COLUMN games.max_overtimes IS 'Maximum overtime periods allowed (default null = unlimited while tied; OT periods are 5 min each)';
 
 -- Create game_guest_players table for adding players from other teams
 CREATE TABLE IF NOT EXISTS game_guest_players (
@@ -148,7 +148,7 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION should_auto_close_game IS 'Determine if a game should automatically close based on period and score';
+COMMENT ON FUNCTION should_auto_close_game IS 'Determine if a game should automatically close based on period and score (FIBA: auto-close only when Q4/OT ends with score not tied; if tied, continue to next OT)';
 
 -- Trigger to prevent game events when game is finished
 CREATE OR REPLACE FUNCTION prevent_events_on_finished_game()
@@ -283,7 +283,28 @@ VALUES
   
   ('trke_period_count', 'en', 'Period {period}'),
   ('trke_period_count', 'es', 'Periodo {period}'),
-  ('trke_period_count', 'ca', 'Període {period}')
+  ('trke_period_count', 'ca', 'Període {period}'),
+  
+  -- Period labels (Q1-Q4, OT1, OT2...)
+  ('trke_q1', 'en', 'Q1'),
+  ('trke_q1', 'es', 'Q1'),
+  ('trke_q1', 'ca', 'Q1'),
+  
+  ('trke_q2', 'en', 'Q2'),
+  ('trke_q2', 'es', 'Q2'),
+  ('trke_q2', 'ca', 'Q2'),
+  
+  ('trke_q3', 'en', 'Q3'),
+  ('trke_q3', 'es', 'Q3'),
+  ('trke_q3', 'ca', 'Q3'),
+  
+  ('trke_q4', 'en', 'Q4'),
+  ('trke_q4', 'es', 'Q4'),
+  ('trke_q4', 'ca', 'Q4'),
+  
+  ('trke_ot', 'en', 'OT{number}'),
+  ('trke_ot', 'es', 'PR{number}'),
+  ('trke_ot', 'ca', 'PR{number}')
 
 ON CONFLICT (key, locale) DO UPDATE
 SET value = EXCLUDED.value,
