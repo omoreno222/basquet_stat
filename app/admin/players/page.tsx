@@ -138,7 +138,7 @@ export default function PlayersPage() {
       jersey_number: parseInt(formData.jersey_number),
       position: formData.position || null,
       date_of_birth: formData.date_of_birth || null,
-      club_id: formData.club_id || null,
+      club_id: formData.club_id || userClubId || null,
     };
 
     if (editingPlayer) {

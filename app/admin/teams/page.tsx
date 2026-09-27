@@ -123,7 +123,7 @@ export default function TeamsPage() {
 
     const submitData = {
       ...formData,
-      club_id: formData.club_id || null,
+      club_id: formData.club_id || userClubId || null,
     };
 
     if (editingTeam) {

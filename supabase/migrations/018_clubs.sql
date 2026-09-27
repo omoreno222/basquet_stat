@@ -123,21 +123,30 @@ ALTER TABLE teams
   ALTER COLUMN category SET NOT NULL,
   ALTER COLUMN gender SET NOT NULL;
 
-ALTER TABLE teams 
-  ADD CONSTRAINT fk_teams_club FOREIGN KEY (club_id) 
-  REFERENCES clubs(id) ON DELETE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_teams_club' AND conrelid = 'teams'::regclass) THEN
+    ALTER TABLE teams ADD CONSTRAINT fk_teams_club FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 ALTER TABLE players 
   ALTER COLUMN club_id SET NOT NULL;
 
-ALTER TABLE players 
-  ADD CONSTRAINT fk_players_club FOREIGN KEY (club_id) 
-  REFERENCES clubs(id) ON DELETE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_players_club' AND conrelid = 'players'::regclass) THEN
+    ALTER TABLE players ADD CONSTRAINT fk_players_club FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 -- profile_roles.club_id stays nullable (null for platform admin only)
-ALTER TABLE profile_roles 
-  ADD CONSTRAINT fk_profile_roles_club FOREIGN KEY (club_id) 
-  REFERENCES clubs(id) ON DELETE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_profile_roles_club' AND conrelid = 'profile_roles'::regclass) THEN
+    ALTER TABLE profile_roles ADD CONSTRAINT fk_profile_roles_club FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 COMMENT ON COLUMN teams.club_id IS 'Club this team belongs to';
 COMMENT ON COLUMN teams.category IS 'Team category (premini, mini, infantil, cadete, junior, sub22, senior)';
@@ -242,6 +251,43 @@ GRANT EXECUTE ON FUNCTION get_user_clubs() TO authenticated;
 
 COMMENT ON FUNCTION get_user_clubs() IS 'Get all clubs the current user has access to';
 
+-- Get clubs where current user is club_admin or team_manager (SECURITY DEFINER: avoids RLS recursion on profile_roles)
+CREATE OR REPLACE FUNCTION get_user_managed_clubs()
+RETURNS TABLE(club_id UUID)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT pr.club_id FROM profile_roles pr
+  WHERE pr.profile_id = auth.uid()
+    AND pr.role IN ('club_admin', 'team_manager')
+    AND pr.club_id IS NOT NULL;
+$$;
+
+REVOKE EXECUTE ON FUNCTION get_user_managed_clubs() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION get_user_managed_clubs() TO authenticated;
+
+COMMENT ON FUNCTION get_user_managed_clubs() IS 'Get clubs where current user is club_admin or team_manager (RLS-safe)';
+
+-- Get profile IDs that have roles in clubs the current user manages (SECURITY DEFINER: avoids RLS recursion)
+CREATE OR REPLACE FUNCTION get_managed_club_members()
+RETURNS TABLE(profile_id UUID)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT DISTINCT pr.profile_id FROM profile_roles pr
+  WHERE pr.club_id IN (SELECT get_user_managed_clubs())
+    AND pr.club_id IS NOT NULL;
+$$;
+
+REVOKE EXECUTE ON FUNCTION get_managed_club_members() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION get_managed_club_members() TO authenticated;
+
+COMMENT ON FUNCTION get_managed_club_members() IS 'Get profile IDs of users in clubs the current user manages (RLS-safe)';
+
 -- ============================================================================
 -- PART 6: UPDATE RLS POLICIES
 -- ============================================================================
@@ -276,12 +322,14 @@ CREATE POLICY "Club admins can update their club"
 DROP POLICY IF EXISTS "Anyone can view teams" ON teams;
 DROP POLICY IF EXISTS "Admins can manage teams" ON teams;
 
+DROP POLICY IF EXISTS "Users can view teams from their clubs" ON teams;
 CREATE POLICY "Users can view teams from their clubs"
   ON teams
   FOR SELECT
   TO authenticated
   USING (club_id IN (SELECT get_user_clubs()));
 
+DROP POLICY IF EXISTS "Admins can manage teams in their clubs" ON teams;
 CREATE POLICY "Admins can manage teams in their clubs"
   ON teams
   FOR ALL
@@ -293,6 +341,7 @@ DROP POLICY IF EXISTS "Anyone can view players" ON players;
 DROP POLICY IF EXISTS "Admins can manage players" ON players;
 DROP POLICY IF EXISTS "Players can view their own team" ON players;
 
+DROP POLICY IF EXISTS "Users can view players from their clubs" ON players;
 CREATE POLICY "Users can view players from their clubs"
   ON players
   FOR SELECT
@@ -302,6 +351,7 @@ CREATE POLICY "Users can view players from their clubs"
     OR team_id IN (SELECT get_user_player_teams()) -- keep player self-access
   );
 
+DROP POLICY IF EXISTS "Admins can manage players in their clubs" ON players;
 CREATE POLICY "Admins can manage players in their clubs"
   ON players
   FOR ALL
@@ -313,6 +363,7 @@ DROP POLICY IF EXISTS "Anyone can view games" ON games;
 DROP POLICY IF EXISTS "Admins and team managers can manage games" ON games;
 DROP POLICY IF EXISTS "Players can view their team games" ON games;
 
+DROP POLICY IF EXISTS "Users can view games from their clubs" ON games;
 CREATE POLICY "Users can view games from their clubs"
   ON games
   FOR SELECT
@@ -326,6 +377,7 @@ CREATE POLICY "Users can view games from their clubs"
     ) -- keep player access to own team games
   );
 
+DROP POLICY IF EXISTS "Admins and team managers can manage games in their clubs" ON games;
 CREATE POLICY "Admins and team managers can manage games in their clubs"
   ON games
   FOR ALL
@@ -335,9 +387,7 @@ CREATE POLICY "Admins and team managers can manage games in their clubs"
     OR team_id IN (
       SELECT id FROM teams 
       WHERE club_id IN (
-        SELECT pr.club_id FROM profile_roles pr
-        WHERE pr.profile_id = auth.uid()
-        AND pr.role IN ('club_admin', 'team_manager')
+        SELECT get_user_managed_clubs()
       )
     )
   );
@@ -347,6 +397,7 @@ DROP POLICY IF EXISTS "Anyone can view game events" ON game_events;
 DROP POLICY IF EXISTS "Team managers can manage events" ON game_events;
 DROP POLICY IF EXISTS "Players can view their team events" ON game_events;
 
+DROP POLICY IF EXISTS "Users can view game events from their clubs" ON game_events;
 CREATE POLICY "Users can view game events from their clubs"
   ON game_events
   FOR SELECT
@@ -363,6 +414,7 @@ CREATE POLICY "Users can view game events from their clubs"
     )
   );
 
+DROP POLICY IF EXISTS "Team managers can manage events in their clubs" ON game_events;
 CREATE POLICY "Team managers can manage events in their clubs"
   ON game_events
   FOR ALL
@@ -373,9 +425,7 @@ CREATE POLICY "Team managers can manage events in their clubs"
       SELECT g.id FROM games g
       JOIN teams t ON g.team_id = t.id
       WHERE t.club_id IN (
-        SELECT pr.club_id FROM profile_roles pr
-        WHERE pr.profile_id = auth.uid()
-        AND pr.role IN ('club_admin', 'team_manager')
+        SELECT get_user_managed_clubs()
       )
     )
   );
@@ -385,6 +435,7 @@ DROP POLICY IF EXISTS "Anyone can view starting lineups" ON starting_lineups;
 DROP POLICY IF EXISTS "Team managers can manage starting lineups" ON starting_lineups;
 DROP POLICY IF EXISTS "Players can view their team lineups" ON starting_lineups;
 
+DROP POLICY IF EXISTS "Users can view starting lineups from their clubs" ON starting_lineups;
 CREATE POLICY "Users can view starting lineups from their clubs"
   ON starting_lineups
   FOR SELECT
@@ -401,6 +452,7 @@ CREATE POLICY "Users can view starting lineups from their clubs"
     )
   );
 
+DROP POLICY IF EXISTS "Team managers can manage lineups in their clubs" ON starting_lineups;
 CREATE POLICY "Team managers can manage lineups in their clubs"
   ON starting_lineups
   FOR ALL
@@ -411,9 +463,7 @@ CREATE POLICY "Team managers can manage lineups in their clubs"
       SELECT g.id FROM games g
       JOIN teams t ON g.team_id = t.id
       WHERE t.club_id IN (
-        SELECT pr.club_id FROM profile_roles pr
-        WHERE pr.profile_id = auth.uid()
-        AND pr.role IN ('club_admin', 'team_manager')
+        SELECT get_user_managed_clubs()
       )
     )
   );
@@ -423,6 +473,7 @@ DROP POLICY IF EXISTS "Anyone can view game periods" ON game_periods;
 DROP POLICY IF EXISTS "Admins and team managers can manage periods" ON game_periods;
 DROP POLICY IF EXISTS "Players can view their team game periods" ON game_periods;
 
+DROP POLICY IF EXISTS "Users can view game periods from their clubs" ON game_periods;
 CREATE POLICY "Users can view game periods from their clubs"
   ON game_periods
   FOR SELECT
@@ -439,6 +490,7 @@ CREATE POLICY "Users can view game periods from their clubs"
     )
   );
 
+DROP POLICY IF EXISTS "Team managers can manage periods in their clubs" ON game_periods;
 CREATE POLICY "Team managers can manage periods in their clubs"
   ON game_periods
   FOR ALL
@@ -449,9 +501,7 @@ CREATE POLICY "Team managers can manage periods in their clubs"
       SELECT g.id FROM games g
       JOIN teams t ON g.team_id = t.id
       WHERE t.club_id IN (
-        SELECT pr.club_id FROM profile_roles pr
-        WHERE pr.profile_id = auth.uid()
-        AND pr.role IN ('club_admin', 'team_manager')
+        SELECT get_user_managed_clubs()
       )
     )
   );
@@ -462,6 +512,7 @@ DROP POLICY IF EXISTS "Admins and team managers can add guest players" ON game_g
 DROP POLICY IF EXISTS "Admins and team managers can delete guest players" ON game_guest_players;
 DROP POLICY IF EXISTS "Players can view their team guest players" ON game_guest_players;
 
+DROP POLICY IF EXISTS "Users can view game guest players from their clubs" ON game_guest_players;
 CREATE POLICY "Users can view game guest players from their clubs"
   ON game_guest_players
   FOR SELECT
@@ -478,6 +529,7 @@ CREATE POLICY "Users can view game guest players from their clubs"
     )
   );
 
+DROP POLICY IF EXISTS "Team managers can manage guest players in their clubs" ON game_guest_players;
 CREATE POLICY "Team managers can manage guest players in their clubs"
   ON game_guest_players
   FOR ALL
@@ -488,9 +540,7 @@ CREATE POLICY "Team managers can manage guest players in their clubs"
       SELECT g.id FROM games g
       JOIN teams t ON g.team_id = t.id
       WHERE t.club_id IN (
-        SELECT pr.club_id FROM profile_roles pr
-        WHERE pr.profile_id = auth.uid()
-        AND pr.role IN ('club_admin', 'team_manager')
+        SELECT get_user_managed_clubs()
       )
     )
   );
@@ -500,6 +550,7 @@ DROP POLICY IF EXISTS "Users can view their own roles" ON profile_roles;
 DROP POLICY IF EXISTS "Admins can view all roles" ON profile_roles;
 DROP POLICY IF EXISTS "Admins can manage roles" ON profile_roles;
 
+DROP POLICY IF EXISTS "Users can view roles in their clubs" ON profile_roles;
 CREATE POLICY "Users can view roles in their clubs"
   ON profile_roles
   FOR SELECT
@@ -510,13 +561,14 @@ CREATE POLICY "Users can view roles in their clubs"
     OR is_platform_admin()
   );
 
+DROP POLICY IF EXISTS "Admins can manage roles in their clubs" ON profile_roles;
 CREATE POLICY "Admins can manage roles in their clubs"
   ON profile_roles
   FOR ALL
   TO authenticated
   USING (
     is_platform_admin()
-    OR (club_id IN (SELECT pr.club_id FROM profile_roles pr WHERE pr.profile_id = auth.uid() AND pr.role = 'club_admin'))
+    OR (club_id IS NOT NULL AND has_club_role(club_id, 'club_admin'))
   );
 
 -- Parent player links RLS (scoped by player's club)
@@ -524,6 +576,7 @@ DROP POLICY IF EXISTS "Parents can view their own links" ON parent_player_links;
 DROP POLICY IF EXISTS "Admins can view all links" ON parent_player_links;
 DROP POLICY IF EXISTS "Admins can manage links" ON parent_player_links;
 
+DROP POLICY IF EXISTS "Users can view parent links in their clubs" ON parent_player_links;
 CREATE POLICY "Users can view parent links in their clubs"
   ON parent_player_links
   FOR SELECT
@@ -535,6 +588,7 @@ CREATE POLICY "Users can view parent links in their clubs"
     )
   );
 
+DROP POLICY IF EXISTS "Admins can manage parent links in their clubs" ON parent_player_links;
 CREATE POLICY "Admins can manage parent links in their clubs"
   ON parent_player_links
   FOR ALL
@@ -544,9 +598,52 @@ CREATE POLICY "Admins can manage parent links in their clubs"
     OR player_id IN (
       SELECT id FROM players 
       WHERE club_id IN (
-        SELECT pr.club_id FROM profile_roles pr
-        WHERE pr.profile_id = auth.uid()
-        AND pr.role IN ('club_admin', 'team_manager')
+        SELECT get_user_managed_clubs()
+      )
+    )
+  );
+
+-- Profiles RLS: Add club admin access to their club members
+DROP POLICY IF EXISTS "Club admins can view their club members" ON profiles;
+CREATE POLICY "Club admins can view their club members"
+  ON profiles
+  FOR SELECT
+  TO authenticated
+  USING (
+    id IN (SELECT get_managed_club_members())
+  );
+
+-- Stints RLS (scoped by game's team's club)
+DROP POLICY IF EXISTS "Anyone can view stints" ON stints;
+DROP POLICY IF EXISTS "Team managers can manage stints" ON stints;
+
+CREATE POLICY "Users can view stints from their clubs"
+  ON stints
+  FOR SELECT
+  TO authenticated
+  USING (
+    game_id IN (
+      SELECT g.id FROM games g
+      JOIN teams t ON g.team_id = t.id
+      WHERE t.club_id IN (SELECT get_user_clubs())
+    )
+    OR game_id IN (
+      SELECT g.id FROM games g
+      WHERE g.team_id IN (SELECT get_user_player_teams())
+    )
+  );
+
+CREATE POLICY "Team managers can manage stints in their clubs"
+  ON stints
+  FOR ALL
+  TO authenticated
+  USING (
+    is_platform_admin()
+    OR game_id IN (
+      SELECT g.id FROM games g
+      JOIN teams t ON g.team_id = t.id
+      WHERE t.club_id IN (
+        SELECT get_user_managed_clubs()
       )
     )
   );
@@ -866,6 +963,7 @@ SET value = EXCLUDED.value,
 -- PART 10: UPDATE TRIGGERS FOR UPDATED_AT
 -- ============================================================================
 
+DROP TRIGGER IF EXISTS update_clubs_updated_at ON clubs;
 CREATE TRIGGER update_clubs_updated_at 
   BEFORE UPDATE ON clubs
   FOR EACH ROW 
