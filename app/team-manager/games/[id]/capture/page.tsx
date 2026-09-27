@@ -103,6 +103,14 @@ interface PresenceState {
  * - Reverse the above: if we're attacking left, flip stored coords back to world
  */
 
+/**
+ * Get FIBA period label (Q1-Q4, OT1, OT2, ...)
+ */
+function getPeriodLabel(period: number): string {
+  if (period <= 4) return `Q${period}`;
+  return `OT${period - 4}`;
+}
+
 export default function GameCapturePage() {
   const params = useParams();
   const router = useRouter();
@@ -1061,7 +1069,7 @@ export default function GameCapturePage() {
             {/* Time & Period */}
             <div className="flex flex-col items-center">
               <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
-              <div className="text-xs text-gray-400">P{currentPeriod}</div>
+              <div className="text-xs text-gray-400">{getPeriodLabel(currentPeriod)}</div>
             </div>
             
             {/* START/STOP */}
@@ -1108,7 +1116,7 @@ export default function GameCapturePage() {
             {/* Time & Period */}
             <div className="flex flex-col items-center">
               <div className="text-2xl font-bold leading-none">{formatTime(clockRemaining)}</div>
-              <div className="text-xs text-gray-400">P{currentPeriod}</div>
+              <div className="text-xs text-gray-400">{getPeriodLabel(currentPeriod)}</div>
             </div>
             
             {/* Possession (View Only) - Compact */}
