@@ -24,9 +24,9 @@ function generatePassword(length: number = 12): string {
  */
 async function sendWelcomeEmail(email: string, fullName: string, tempPassword: string, clubName?: string) {
   const { data, error } = await resend.emails.send({
-    from: process.env.EMAIL_FROM || 'SeasonMath <onboarding@seasonmath.com>',
+    from: process.env.EMAIL_FROM || 'SeasonMath <no-reply@seasonmath.com>',
     to: email,
-    replyTo: process.env.EMAIL_REPLY_TO,
+    replyTo: process.env.EMAIL_REPLY_TO || 'support@seasonmath.com',
     subject: `Welcome to SeasonMath${clubName ? ` - ${clubName}` : ''}`,
     html: `
       <h2>Welcome to SeasonMath</h2>
@@ -49,9 +49,9 @@ async function sendWelcomeEmail(email: string, fullName: string, tempPassword: s
  */
 async function sendPasswordResetEmail(email: string, fullName: string, tempPassword: string) {
   const { data, error } = await resend.emails.send({
-    from: process.env.EMAIL_FROM || 'SeasonMath <onboarding@seasonmath.com>',
+    from: process.env.EMAIL_FROM || 'SeasonMath <no-reply@seasonmath.com>',
     to: email,
-    replyTo: process.env.EMAIL_REPLY_TO,
+    replyTo: process.env.EMAIL_REPLY_TO || 'support@seasonmath.com',
     subject: 'Your Password Has Been Reset - SeasonMath',
     html: `
       <h2>Password Reset</h2>
@@ -125,7 +125,7 @@ export async function createUserWithPassword(formData: {
 
     // Insert roles
     const roleInserts = rolesToAssign.map(role => ({
-      user_id: authData.user.id,
+      profile_id: authData.user.id,
       role: role,
       club_id: formData.club_id || null,
     }));
@@ -372,9 +372,9 @@ export async function changeEmailWithPassword(
 
   // Send notice to old email
   await resend.emails.send({
-    from: process.env.EMAIL_FROM || 'SeasonMath <onboarding@seasonmath.com>',
+    from: process.env.EMAIL_FROM || 'SeasonMath <no-reply@seasonmath.com>',
     to: oldEmail,
-    replyTo: process.env.EMAIL_REPLY_TO,
+    replyTo: process.env.EMAIL_REPLY_TO || 'support@seasonmath.com',
     subject: 'Email Address Changed - SeasonMath',
     html: `
       <h2>Email Address Changed</h2>
@@ -386,9 +386,9 @@ export async function changeEmailWithPassword(
 
   // Send notice to new email
   await resend.emails.send({
-    from: process.env.EMAIL_FROM || 'SeasonMath <onboarding@seasonmath.com>',
+    from: process.env.EMAIL_FROM || 'SeasonMath <no-reply@seasonmath.com>',
     to: newEmail,
-    replyTo: process.env.EMAIL_REPLY_TO,
+    replyTo: process.env.EMAIL_REPLY_TO || 'support@seasonmath.com',
     subject: 'Email Address Changed - SeasonMath',
     html: `
       <h2>Email Address Changed</h2>

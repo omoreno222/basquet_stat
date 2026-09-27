@@ -49,6 +49,7 @@ export default function ProfilePage() {
   const [locale, setLocale] = useState('en');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [phone, setPhone] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -354,6 +355,11 @@ export default function ProfilePage() {
   }
 
   async function handleChangeEmail() {
+    if (!currentPassword) {
+      setError('Current password is required');
+      return;
+    }
+
     if (!validateEmail(newEmail)) {
       setError('Invalid email address');
       return;
@@ -364,11 +370,16 @@ export default function ProfilePage() {
     setSuccess('');
 
     try {
-      const { error } = await supabase.auth.updateUser({ email: newEmail });
-      if (error) throw error;
-
-      setSuccess(translations.trke_email_updated || 'Email update sent. Check your inbox to confirm.');
-      setNewEmail('');
+      const { changeEmailWithPassword } = await import('@/lib/password-auth');
+      const result = await changeEmailWithPassword(currentPassword, newEmail);
+      
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setSuccess(translations.trke_email_changed_success || 'Email changed successfully. Confirmation emails sent to both addresses.');
+        setNewEmail('');
+        setCurrentPassword('');
+      }
     } catch (err) {
       console.error('Error changing email:', err);
       setError(err instanceof Error ? err.message : 'Email change failed');
@@ -378,6 +389,11 @@ export default function ProfilePage() {
   }
 
   async function handleChangePassword() {
+    if (!currentPassword) {
+      setError('Current password is required');
+      return;
+    }
+
     const validation = validatePassword(newPassword);
     if (!validation.valid) {
       setError(validation.message || 'Invalid password');
@@ -394,12 +410,17 @@ export default function ProfilePage() {
     setSuccess('');
 
     try {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) throw error;
-
-      setSuccess(translations.trke_password_updated || 'Password updated successfully');
-      setNewPassword('');
-      setConfirmPassword('');
+      const { changePasswordWithCurrent } = await import('@/lib/password-auth');
+      const result = await changePasswordWithCurrent(currentPassword, newPassword);
+      
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setSuccess(translations.trke_password_changed_success || 'Password changed successfully');
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+      }
     } catch (err) {
       console.error('Error changing password:', err);
       setError(err instanceof Error ? err.message : 'Password change failed');
@@ -634,20 +655,34 @@ export default function ProfilePage() {
               </p>
             </div>
 
-            <div className="space-y-2">
-              <input
-                type="email"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder={translations.trke_new_email || 'New Email'}
-                className="w-full md:w-96 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                {translations.trke_email_change_info || 'You will receive a confirmation email. The change will apply after you confirm.'}
-              </p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  {translations.trke_current_password || 'Current Password'}
+                </label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full md:w-96 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  {translations.trke_new_email || 'New Email'}
+                </label>
+                <input
+                  type="email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder={translations.trke_new_email || 'New Email'}
+                  className="w-full md:w-96 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                />
+              </div>
               <button
                 onClick={handleChangeEmail}
-                disabled={saving || !newEmail}
+                disabled={saving || !newEmail || !currentPassword}
                 className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
               >
                 {translations.trke_change_email || 'Change Email'}
@@ -664,6 +699,18 @@ export default function ProfilePage() {
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  {translations.trke_current_password || 'Current Password'}
+                </label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full md:w-96 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   {translations.trke_new_password || 'New Password'}
                 </label>
                 <input
@@ -673,7 +720,7 @@ export default function ProfilePage() {
                   className="w-full md:w-96 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  {translations.trke_password_min_length || 'Password must be at least 8 characters'}
+                  {translations.trke_password_requirements || 'Password must be at least 6 characters'}
                 </p>
               </div>
 
@@ -691,7 +738,7 @@ export default function ProfilePage() {
 
               <button
                 onClick={handleChangePassword}
-                disabled={saving || !newPassword || !confirmPassword}
+                disabled={saving || !currentPassword || !newPassword || !confirmPassword}
                 className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
               >
                 {translations.trke_change_password || 'Change Password'}
