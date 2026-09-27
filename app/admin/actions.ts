@@ -540,3 +540,8 @@ export async function removePlayerAvatar(playerId: string) {
 
   return { success: true };
 }
+
+/**
+ * Reset user password (re-export from password-auth)
+ */
+export { resetUserPassword } from '@/lib/password-auth';

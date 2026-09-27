@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-const PUBLIC_ROUTES = ['/login'];
+const PUBLIC_ROUTES = ['/login', '/change-password'];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -39,10 +39,10 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    // Get user profile and all roles
+    // Get user profile with must_change_password flag
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, must_change_password')
       .eq('id', user.id)
       .single();
 
@@ -51,11 +51,16 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
 
+    // Check if user must change password
+    if (profile.must_change_password && pathname !== '/change-password') {
+      return NextResponse.redirect(new URL('/change-password', request.url));
+    }
+
     // Fetch all roles for multi-role support
     const { data: userRoles, error: rolesError } = await supabase
       .from('profile_roles')
       .select('role')
-      .eq('profile_id', user.id);
+      .eq('user_id', user.id);
 
     if (rolesError) {
       console.error('Roles fetch error:', rolesError);
@@ -70,6 +75,7 @@ export async function middleware(request: NextRequest) {
     // Role-based route protection
     const roleRoutes: Record<string, string[]> = {
       admin: ['/admin', '/team-manager', '/coach', '/parent', '/player'], // Admin can access all areas
+      club_admin: ['/admin', '/team-manager', '/coach', '/parent', '/player'], // Club admin similar to admin
       team_manager: ['/team-manager'],
       coach: ['/coach'],
       parent: ['/parent'],
