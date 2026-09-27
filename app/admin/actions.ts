@@ -1,14 +1,39 @@
 'use server';
 
+import { cookies } from 'next/headers';
+import { createClient } from '@supabase/supabase-js';
 import { getServerSupabase } from '@/lib/supabase';
 import { assertAdmin, assertClubAdmin } from '@/lib/auth-server';
 
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
 export async function updateUserRoles(userId: string, roles: string[], clubId?: string | null) {
-  const supabase = getServerSupabase();
-  
+  // SECURITY: Verify caller is admin before proceeding
+  const authCheck = await assertAdmin();
+  if (authCheck.error) {
+    return { error: authCheck.error };
+  }
+
   if (!roles || roles.length === 0) {
     return { error: 'At least one role must be selected' };
   }
+
+  // Get user-scoped client (anon key + user's access token) so auth.uid() works in the RPC
+  const cookieStore = await cookies();
+  const token = cookieStore.get('sb-access-token')?.value;
+
+  if (!token) {
+    return { error: 'Unauthorized: Not authenticated' };
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
 
   // Call the secure SQL function that handles all the logic
   const { data, error } = await supabase.rpc('update_user_roles_safe', {

@@ -156,7 +156,7 @@ async function seed() {
           .from('profile_roles')
           .update({ club_id: club.id })
           .eq('profile_id', user.id)
-          .eq('role', user.role);
+          .neq('role', 'admin');
 
         if (updateError) {
           console.error(`Error updating roles for ${user.email}:`, updateError);

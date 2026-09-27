@@ -20,6 +20,7 @@ DECLARE
   v_is_last_admin BOOLEAN;
   v_role TEXT;
   v_valid_roles TEXT[];
+  v_existing_club_id UUID;
 BEGIN
   -- Check if caller is platform admin
   SELECT EXISTS (
@@ -33,9 +34,14 @@ BEGIN
     RETURN json_build_object('error', 'Unauthorized: Platform admin access required');
   END IF;
 
-  -- Validate input
-  IF p_roles IS NULL OR array_length(p_roles, 1) = 0 THEN
+  -- Validate input: check for empty array or NULL values
+  IF coalesce(cardinality(p_roles), 0) = 0 OR array_position(p_roles, NULL) IS NOT NULL THEN
     RETURN json_build_object('error', 'At least one role must be selected');
+  END IF;
+
+  -- Check if target user exists
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = p_user_id) THEN
+    RETURN json_build_object('error', 'User not found');
   END IF;
 
   -- Get valid enum values for user_role
@@ -59,6 +65,25 @@ BEGIN
     END LOOP;
   END IF;
 
+  -- Check for club collision: if user already has any of these roles in a different club, reject
+  FOR v_role IN SELECT unnest(p_roles) LOOP
+    IF v_role <> 'admin' THEN
+      SELECT club_id INTO v_existing_club_id
+      FROM profile_roles
+      WHERE profile_id = p_user_id
+        AND role = v_role::user_role
+        AND club_id IS NOT NULL
+        AND club_id <> p_club_id;
+
+      IF v_existing_club_id IS NOT NULL THEN
+        RETURN json_build_object('error', format('User already has role %s in another club', v_role));
+      END IF;
+    END IF;
+  END LOOP;
+
+  -- Advisory lock for admin role changes to prevent concurrent removals
+  PERFORM pg_advisory_xact_lock(hashtext('update_user_roles_safe_admins'));
+
   -- Check if removing admin role would leave no platform admins
   IF NOT ('admin' = ANY(p_roles)) THEN
     -- Check if this user has admin role
@@ -68,6 +93,11 @@ BEGIN
         AND role = 'admin'
         AND club_id IS NULL
     ) THEN
+      -- Prevent users from removing their own admin role
+      IF p_user_id = auth.uid() THEN
+        RETURN json_build_object('error', 'Cannot remove your own admin role');
+      END IF;
+
       -- Check if they're the last platform admin
       SELECT COUNT(*) = 1 INTO v_is_last_admin
       FROM profile_roles
@@ -76,11 +106,6 @@ BEGIN
 
       IF v_is_last_admin THEN
         RETURN json_build_object('error', 'Cannot remove the last platform administrator');
-      END IF;
-
-      -- Prevent users from removing their own admin role
-      IF p_user_id = auth.uid() THEN
-        RETURN json_build_object('error', 'Cannot remove your own admin role');
       END IF;
     END IF;
   END IF;
@@ -98,8 +123,8 @@ BEGIN
       -- Delete non-admin roles not in the new list for this club
       (role <> 'admin' AND role::text <> ALL(p_roles) AND club_id = p_club_id)
       OR
-      -- Delete admin role only if not in new list (never delete platform admin by accident)
-      (role = 'admin' AND 'admin' <> ALL(p_roles) AND club_id IS NOT NULL)
+      -- Delete platform admin role if not in new list
+      (role = 'admin' AND NOT ('admin' = ANY(p_roles)) AND club_id IS NULL)
     );
 
   -- Upsert new roles with correct club_id

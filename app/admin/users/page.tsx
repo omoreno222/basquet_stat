@@ -178,7 +178,8 @@ export default function UsersPage() {
       email: user.email,
       full_name: user.full_name || '',
       roles: user.roles || [user.role],
-      club_id: user.club_id || '',
+      // Default to empty (force explicit choice) or current club being managed
+      club_id: isPlatformAdmin ? '' : (userClubId || ''),
     });
     setShowForm(true);
     setError('');
