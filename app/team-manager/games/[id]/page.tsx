@@ -5,10 +5,19 @@ import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { Profile, Player, Game } from '@/lib/types';
+import { Club } from '@/types/database';
 import { ClubLogo } from '@/components/ClubLogo';
 
 interface GameWithTeam extends Game {
-  teams?: { id: string; name: string; category: string; season: string; created_at: string; logo_url?: string | null };
+  teams?: { 
+    id: string; 
+    name: string; 
+    category: string; 
+    season: string; 
+    created_at: string; 
+    logo_url?: string | null;
+    clubs?: Club;
+  };
 }
 
 interface PlayerWithTeam extends Player {
@@ -59,7 +68,7 @@ export default function GameDetailPage() {
 
     const { data: gameData } = await supabase
       .from('games')
-      .select('*, teams(name, logo_url)')
+      .select('*, teams(name, logo_url, clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
       .eq('id', gameId)
       .single();
 
@@ -203,11 +212,19 @@ export default function GameDetailPage() {
           {/* Game Info */}
           <div className="bg-white shadow rounded-lg p-6 mb-6">
             <div className="flex items-center gap-4 mb-4">
-              <ClubLogo 
-                logoUrl={game.teams?.logo_url} 
-                clubName={game.teams?.name || 'Team'} 
-                size="md"
-              />
+              {game.teams?.clubs ? (
+                <ClubLogo 
+                  logoUrl={game.teams.clubs.logo_url} 
+                  clubName={game.teams.clubs.name} 
+                  size="md"
+                />
+              ) : game.teams?.logo_url ? (
+                <ClubLogo 
+                  logoUrl={game.teams.logo_url} 
+                  clubName={game.teams.name || 'Team'} 
+                  size="md"
+                />
+              ) : null}
               <h2 className="text-2xl font-bold">
                 {game.teams?.name} vs {game.opponent_name}
               </h2>

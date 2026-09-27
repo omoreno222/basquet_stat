@@ -6,9 +6,18 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Profile, Game } from '@/lib/types';
+import { Club } from '@/types/database';
+import { ClubLogo } from '@/components/ClubLogo';
 
 interface GameWithTeam extends Game {
-  teams?: { id: string; name: string; category: string; season: string; created_at: string };
+  teams?: { 
+    id: string; 
+    name: string; 
+    category: string; 
+    season: string; 
+    created_at: string;
+    clubs?: Club;
+  };
 }
 
 export default function TeamManagerDashboard() {
@@ -61,7 +70,7 @@ export default function TeamManagerDashboard() {
   async function loadGames() {
     const { data } = await supabase
       .from('games')
-      .select('*, teams(name)')
+      .select('*, teams(name, clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
       .order('game_date', { ascending: false });
 
     if (data) {
@@ -119,16 +128,25 @@ export default function TeamManagerDashboard() {
                   <li key={game.id} className="px-6 py-4 hover:bg-gray-50">
                     <Link href={`/team-manager/games/${game.id}`}>
                       <div className="flex items-center justify-between cursor-pointer">
-                        <div>
-                          <h3 className="text-lg font-medium text-gray-900">
-                            {game.teams?.name} vs {game.opponent_name}
-                          </h3>
-                          <p className="text-sm text-gray-500">
-                            {new Date(game.game_date).toLocaleDateString()} - {game.venue || 'TBD'}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            Score: {game.team_score} - {game.opponent_score}
-                          </p>
+                        <div className="flex items-center gap-3">
+                          {game.teams?.clubs && (
+                            <ClubLogo 
+                              logoUrl={game.teams.clubs.logo_url} 
+                              clubName={game.teams.clubs.name} 
+                              size="sm"
+                            />
+                          )}
+                          <div>
+                            <h3 className="text-lg font-medium text-gray-900">
+                              {game.teams?.name} vs {game.opponent_name}
+                            </h3>
+                            <p className="text-sm text-gray-500">
+                              {new Date(game.game_date).toLocaleDateString()} - {game.venue || 'TBD'}
+                            </p>
+                            <p className="text-sm text-gray-500">
+                              Score: {game.team_score} - {game.opponent_score}
+                            </p>
+                          </div>
                         </div>
                         <div className="text-right">
                           <span className={`px-2 py-1 text-xs font-semibold rounded uppercase ${
