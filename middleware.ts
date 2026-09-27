@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-
-const PUBLIC_ROUTES = ['/login', '/change-password'];
+import { decideAuthenticatedRoute, PUBLIC_ROUTES } from '@/lib/route-access';
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -128,11 +127,6 @@ export async function middleware(request: NextRequest) {
       return attachSession(NextResponse.redirect(new URL('/login', request.url)));
     }
 
-    // Check if user must change password
-    if (profile.must_change_password && pathname !== '/change-password') {
-      return attachSession(NextResponse.redirect(new URL('/change-password', request.url)));
-    }
-
     // Fetch all roles for multi-role support
     const { data: userRoles, error: rolesError } = await userSupabase
       .from('profile_roles')
@@ -144,38 +138,19 @@ export async function middleware(request: NextRequest) {
       return attachSession(NextResponse.redirect(new URL('/login', request.url)));
     }
 
-    // Extract role strings from profile_roles or fall back to legacy single role
-    const roles = userRoles && userRoles.length > 0 
-      ? userRoles.map(r => r.role) 
+    const roles = userRoles && userRoles.length > 0
+      ? userRoles.map(r => r.role)
       : [profile.role];
 
-    // Role-based route protection
-    const roleRoutes: Record<string, string[]> = {
-      admin: ['/admin', '/team-manager', '/coach', '/parent', '/player'], // Admin can access all areas
-      club_admin: ['/admin', '/team-manager', '/coach', '/parent', '/player'], // Club admin similar to admin
-      team_manager: ['/team-manager'],
-      coach: ['/coach'],
-      parent: ['/parent'],
-      player: ['/player'],
-    };
+    const decision = decideAuthenticatedRoute({
+      pathname,
+      roles,
+      primaryRole: profile.role,
+      mustChangePassword: !!profile.must_change_password,
+    });
 
-    // Collect all allowed routes based on all user roles (union of permissions)
-    const allowedRoutes = roles.flatMap(role => roleRoutes[role] || []);
-
-    // Check if user is accessing any of their allowed routes
-    const isAccessingAllowedRoute = allowedRoutes.some(route => pathname.startsWith(route));
-
-    // Root path handling - use primary role (profiles.role) for default navigation
-    if (pathname === '/') {
-      const defaultRoute = roleRoutes[profile.role]?.[0] || '/login';
-      return attachSession(NextResponse.redirect(new URL(defaultRoute, request.url)));
-    }
-
-    // Block unauthorized access
-    if (!isAccessingAllowedRoute && !PUBLIC_ROUTES.some(route => pathname.startsWith(route))) {
-      // Redirect to their primary role's default route
-      const defaultRoute = roleRoutes[profile.role]?.[0] || '/login';
-      return attachSession(NextResponse.redirect(new URL(defaultRoute, request.url)));
+    if (decision.action === 'redirect') {
+      return attachSession(NextResponse.redirect(new URL(decision.to, request.url)));
     }
 
     return continueWithSession();
