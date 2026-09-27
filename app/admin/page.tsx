@@ -6,7 +6,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Profile } from '@/lib/types';
+import { Club } from '@/types/database';
 import { UserMenu } from '@/components/UserMenu';
+import { ClubSwitcher } from '@/components/ClubSwitcher';
 import { type UserRole } from '@/lib/profile-utils';
 
 export default function AdminDashboard() {
@@ -14,6 +16,8 @@ export default function AdminDashboard() {
   const [roles, setRoles] = useState<UserRole[]>([]);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [isClubAdmin, setIsClubAdmin] = useState(false);
+  const [clubs, setClubs] = useState<Club[]>([]);
+  const [currentClubId, setCurrentClubId] = useState<string | null>(null);
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -59,6 +63,39 @@ export default function AdminDashboard() {
     setIsPlatformAdmin(platformAdmin);
     setIsClubAdmin(clubAdmin || platformAdmin);
 
+    // Load clubs
+    const clubsQuery = platformAdmin
+      ? supabase.from('clubs').select('*').order('name')
+      : clubAdmin && userRoles
+        ? supabase.from('clubs').select('*').eq('id', userRoles.find(r => r.club_id)?.club_id)
+        : null;
+
+    if (clubsQuery) {
+      const { data: clubsData } = await clubsQuery;
+      if (clubsData) {
+        setClubs(clubsData);
+
+        // Load current club from cookie
+        const cookieClubId = document.cookie
+          .split('; ')
+          .find(row => row.startsWith('current_club_id='))
+          ?.split('=')[1];
+
+        if (platformAdmin && cookieClubId === '') {
+          // "All clubs" option
+          setCurrentClubId(null);
+        } else if (cookieClubId && clubsData.find(c => c.id === cookieClubId)) {
+          setCurrentClubId(cookieClubId);
+        } else if (clubsData.length > 0 && !platformAdmin) {
+          // Default to first club for non-platform admins
+          setCurrentClubId(clubsData[0].id);
+        } else if (platformAdmin) {
+          // Default to "All clubs" for platform admins
+          setCurrentClubId(null);
+        }
+      }
+    }
+
     // Load translations
     const locale = profileData.locale || profileData.language || 'en';
     const { data: translationsData } = await supabase
@@ -102,7 +139,15 @@ export default function AdminDashboard() {
                 <span className="text-lg font-semibold text-gray-700">Admin</span>
               </div>
             </div>
-            <div className="flex items-center">
+            <div className="flex items-center gap-3">
+              {clubs.length > 0 && (
+                <ClubSwitcher 
+                  currentClubId={currentClubId}
+                  clubs={clubs}
+                  isPlatformAdmin={isPlatformAdmin}
+                  onClubChange={setCurrentClubId}
+                />
+              )}
               {profile && <UserMenu profile={profile} roles={roles} translations={translations} />}
             </div>
           </div>
