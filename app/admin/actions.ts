@@ -3,91 +3,6 @@
 import { getServerSupabase } from '@/lib/supabase';
 import { assertAdmin, assertClubAdmin } from '@/lib/auth-server';
 
-export async function createUser(formData: {
-  email: string;
-  password: string;
-  full_name: string;
-  role: string;
-  roles?: string[];
-  club_id?: string | null;
-}) {
-  // SECURITY: Verify caller is admin before using service role
-  const authCheck = await assertAdmin();
-  if (authCheck.error) {
-    return { error: authCheck.error };
-  }
-
-  const supabase = getServerSupabase();
-  
-  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-    email: formData.email,
-    password: formData.password,
-    email_confirm: true,
-  });
-
-  if (authError) {
-    return { error: authError.message };
-  }
-
-  if (authData.user) {
-    // Determine roles: use roles array if provided, otherwise fall back to single role
-    const rolesToAssign = formData.roles && formData.roles.length > 0 
-      ? formData.roles 
-      : [formData.role];
-    
-    // Use first role as primary role for profiles.role (backward compatibility)
-    const primaryRole = rolesToAssign[0];
-
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .insert({
-        id: authData.user.id,
-        email: formData.email,
-        full_name: formData.full_name,
-        role: primaryRole,
-        language: 'en',
-      });
-
-    if (profileError) {
-      return { error: profileError.message };
-    }
-
-    // Insert all roles into profile_roles table with club_id
-    const roleInserts = rolesToAssign.map(role => ({
-      user_id: authData.user.id,
-      role: role,
-      club_id: formData.club_id || null,
-    }));
-
-    const { error: rolesError } = await supabase
-      .from('profile_roles')
-      .insert(roleInserts);
-
-    if (rolesError) {
-      return { error: rolesError.message };
-    }
-
-    // Send welcome email with club name if club_id provided
-    if (formData.club_id) {
-      const { data: club } = await supabase
-        .from('clubs')
-        .select('name')
-        .eq('id', formData.club_id)
-        .single();
-
-      // Welcome email will include club context in future enhancement
-      // For now, club name is available for logging/debugging
-      if (club) {
-        console.log(`User created for club: ${club.name}`);
-      }
-    }
-
-    return { success: true, userId: authData.user.id };
-  }
-
-  return { error: 'Failed to create user' };
-}
-
 export async function updateUserRoles(userId: string, roles: string[], clubId?: string | null) {
   // SECURITY: Verify caller is admin before using service role
   const authCheck = await assertAdmin();
@@ -114,21 +29,36 @@ export async function updateUserRoles(userId: string, roles: string[], clubId?: 
     return { error: profileError.message };
   }
 
-  // Delete existing roles
-  const { error: deleteError } = await supabase
+  // Delete existing roles for this club only (or all if clubId is null and we're managing platform roles)
+  let deleteQuery = supabase
     .from('profile_roles')
     .delete()
     .eq('profile_id', userId);
+
+  // If clubId is specified, only delete roles for that club
+  if (clubId !== undefined) {
+    if (clubId === null) {
+      // Managing platform roles - delete only platform admin roles (club_id IS NULL)
+      deleteQuery = deleteQuery.is('club_id', null);
+    } else {
+      // Managing club roles - delete only roles for this specific club
+      deleteQuery = deleteQuery.eq('club_id', clubId);
+    }
+  }
+
+  const { error: deleteError } = await deleteQuery;
 
   if (deleteError) {
     return { error: deleteError.message };
   }
 
-  // Insert new roles with club_id
+  // Insert new roles with appropriate club_id
+  // 'admin' role always gets club_id = null (platform admin)
+  // Other roles get the specified clubId
   const roleInserts = roles.map(role => ({
     profile_id: userId,
     role: role,
-    club_id: clubId || null,
+    club_id: role === 'admin' ? null : (clubId || null),
   }));
 
   const { error: insertError } = await supabase

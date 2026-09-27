@@ -180,11 +180,36 @@ export async function createUserWithPassword(formData: {
  * Generates new password, sends email, sets must_change_password
  */
 export async function resetUserPassword(userId: string, clubId?: string | null) {
+  const supabase = getServerSupabase();
+
   // Verify authorization (platform admin or club admin for that club)
   if (clubId) {
     const authCheck = await assertClubAdmin(clubId);
     if (authCheck.error) {
       return { error: authCheck.error };
+    }
+
+    // Club admin can only reset users within their club
+    // Check that the target user has a role in this club
+    const { data: userRoles } = await supabase
+      .from('profile_roles')
+      .select('role, club_id')
+      .eq('profile_id', userId);
+
+    if (!userRoles || userRoles.length === 0) {
+      return { error: 'User not found in any club' };
+    }
+
+    // Check if user has a role in the specified club
+    const hasRoleInClub = userRoles.some(r => r.club_id === clubId);
+    if (!hasRoleInClub) {
+      return { error: 'User does not belong to your club' };
+    }
+
+    // Prevent resetting platform admins (users with admin role and null club_id)
+    const isPlatformAdmin = userRoles.some(r => r.role === 'admin' && r.club_id === null);
+    if (isPlatformAdmin) {
+      return { error: 'Cannot reset password for platform administrators' };
     }
   } else {
     const authCheck = await assertAdmin();
@@ -192,8 +217,6 @@ export async function resetUserPassword(userId: string, clubId?: string | null) 
       return { error: authCheck.error };
     }
   }
-
-  const supabase = getServerSupabase();
 
   // Get user profile
   const { data: profile } = await supabase

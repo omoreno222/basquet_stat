@@ -62,7 +62,7 @@ export default function PlayerDashboard() {
       .from('players')
       .select('*, teams(name)')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (data) {
       setPlayerData(data);

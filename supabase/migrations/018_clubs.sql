@@ -386,7 +386,16 @@ CREATE POLICY "Users can view teams from their clubs"
   ON teams
   FOR SELECT
   TO authenticated
-  USING (club_id IN (SELECT get_user_clubs()));
+  USING (
+    -- Platform admin, club admins, coaches, team managers see all teams in their clubs
+    (club_id IN (SELECT get_user_clubs()) AND has_privileged_club_role(club_id))
+    -- Platform admin sees all teams
+    OR is_platform_admin()
+    -- Players see only their own team(s)
+    OR id IN (SELECT get_user_player_team_ids())
+    -- Parents see teams of their children
+    OR id IN (SELECT p.team_id FROM players p WHERE p.id IN (SELECT get_user_children_player_ids()))
+  );
 
 DROP POLICY IF EXISTS "Admins can manage teams in their clubs" ON teams;
 CREATE POLICY "Admins can manage teams in their clubs"
@@ -637,8 +646,8 @@ CREATE POLICY "Users can view roles in their clubs"
   TO authenticated
   USING (
     profile_id = auth.uid()
-    OR club_id IN (SELECT get_user_clubs())
     OR is_platform_admin()
+    OR (club_id IN (SELECT get_user_clubs()) AND has_privileged_club_role(club_id))
   );
 
 DROP POLICY IF EXISTS "Admins can manage roles in their clubs" ON profile_roles;
