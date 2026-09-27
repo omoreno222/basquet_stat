@@ -350,7 +350,85 @@ VALUES
   
   ('trke_dark_mode', 'en', 'Dark Mode'),
   ('trke_dark_mode', 'es', 'Modo Oscuro'),
-  ('trke_dark_mode', 'ca', 'Mode Fosc')
+  ('trke_dark_mode', 'ca', 'Mode Fosc'),
+  
+  -- Additional password auth keys
+  ('trke_password_auth_title', 'en', 'Password Required'),
+  ('trke_password_auth_title', 'es', 'Contraseña Requerida'),
+  ('trke_password_auth_title', 'ca', 'Contrasenya Requerida'),
+  
+  ('trke_password_auth_description', 'en', 'Enter your password to continue'),
+  ('trke_password_auth_description', 'es', 'Ingresa tu contraseña para continuar'),
+  ('trke_password_auth_description', 'ca', 'Introdueix la teva contrasenya per continuar'),
+  
+  ('trke_confirm_new_password', 'en', 'Confirm New Password'),
+  ('trke_confirm_new_password', 'es', 'Confirmar Nueva Contraseña'),
+  ('trke_confirm_new_password', 'ca', 'Confirmar Nova Contrasenya'),
+  
+  ('trke_must_change_password_desc', 'en', 'For security, please set a new password before continuing'),
+  ('trke_must_change_password_desc', 'es', 'Por seguridad, establece una nueva contraseña antes de continuar'),
+  ('trke_must_change_password_desc', 'ca', 'Per seguretat, estableix una nova contrasenya abans de continuar'),
+  
+  ('trke_forgot_password_title', 'en', 'Reset Password'),
+  ('trke_forgot_password_title', 'es', 'Restablecer Contraseña'),
+  ('trke_forgot_password_title', 'ca', 'Restablir Contrasenya'),
+  
+  ('trke_forgot_password_desc', 'en', 'Enter your email address and we will send you a new password'),
+  ('trke_forgot_password_desc', 'es', 'Ingresa tu correo electrónico y te enviaremos una nueva contraseña'),
+  ('trke_forgot_password_desc', 'ca', 'Introdueix el teu correu electrònic i t''enviarem una nova contrasenya'),
+  
+  ('trke_send_reset_link', 'en', 'Send New Password'),
+  ('trke_send_reset_link', 'es', 'Enviar Nueva Contraseña'),
+  ('trke_send_reset_link', 'ca', 'Enviar Nova Contrasenya'),
+  
+  ('trke_reset_link_sent', 'en', 'If an account exists with that email, a new password has been sent'),
+  ('trke_reset_link_sent', 'es', 'Si existe una cuenta con ese correo, se ha enviado una nueva contraseña'),
+  ('trke_reset_link_sent', 'ca', 'Si existeix un compte amb aquest correu, s''ha enviat una nova contrasenya'),
+  
+  ('trke_password_reset_success', 'en', 'Password reset successfully'),
+  ('trke_password_reset_success', 'es', 'Contraseña restablecida exitosamente'),
+  ('trke_password_reset_success', 'ca', 'Contrasenya restablerta exitosament'),
+  
+  ('trke_password_changed_success', 'en', 'Password changed successfully'),
+  ('trke_password_changed_success', 'es', 'Contraseña cambiada exitosamente'),
+  ('trke_password_changed_success', 'ca', 'Contrasenya canviada exitosament'),
+  
+  ('trke_email_changed_success', 'en', 'Email changed successfully'),
+  ('trke_email_changed_success', 'es', 'Correo electrónico cambiado exitosamente'),
+  ('trke_email_changed_success', 'ca', 'Correu electrònic canviat exitosament'),
+  
+  ('trke_reset_password', 'en', 'Reset Password'),
+  ('trke_reset_password', 'es', 'Restablecer Contraseña'),
+  ('trke_reset_password', 'ca', 'Restablir Contrasenya'),
+  
+  ('trke_verify_password', 'en', 'Verify Current Password'),
+  ('trke_verify_password', 'es', 'Verificar Contraseña Actual'),
+  ('trke_verify_password', 'ca', 'Verificar Contrasenya Actual'),
+  
+  ('trke_password_incorrect', 'en', 'Incorrect password'),
+  ('trke_password_incorrect', 'es', 'Contraseña incorrecta'),
+  ('trke_password_incorrect', 'ca', 'Contrasenya incorrecta'),
+  
+  ('trke_password_requirements', 'en', 'Password must be at least 6 characters'),
+  ('trke_password_requirements', 'es', 'La contraseña debe tener al menos 6 caracteres'),
+  ('trke_password_requirements', 'ca', 'La contrasenya ha de tenir almenys 6 caràcters'),
+  
+  ('trke_rate_limit_password_reset', 'en', 'Please wait 15 minutes between password reset requests'),
+  ('trke_rate_limit_password_reset', 'es', 'Espera 15 minutos entre solicitudes de restablecimiento'),
+  ('trke_rate_limit_password_reset', 'ca', 'Espera 15 minuts entre sol·licituds de restabliment'),
+  
+  -- Theme variations (light/dark instead of light_mode/dark_mode)
+  ('trke_light_theme', 'en', 'Light'),
+  ('trke_light_theme', 'es', 'Claro'),
+  ('trke_light_theme', 'ca', 'Clar'),
+  
+  ('trke_dark_theme', 'en', 'Dark'),
+  ('trke_dark_theme', 'es', 'Oscuro'),
+  ('trke_dark_theme', 'ca', 'Fosc'),
+  
+  ('trke_theme_updated', 'en', 'Theme updated successfully'),
+  ('trke_theme_updated', 'es', 'Tema actualizado exitosamente'),
+  ('trke_theme_updated', 'ca', 'Tema actualitzat exitosament')
 
 ON CONFLICT (key, locale) DO UPDATE
 SET value = EXCLUDED.value,

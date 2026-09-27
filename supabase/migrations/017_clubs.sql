@@ -25,6 +25,9 @@ BEGIN
   END IF;
 END $$;
 
+-- Drop the old CHECK constraint from migration 005 that doesn't include club_admin
+ALTER TABLE profile_roles DROP CONSTRAINT IF EXISTS valid_role;
+
 -- Create team_category enum
 DO $$
 BEGIN
