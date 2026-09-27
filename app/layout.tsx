@@ -41,8 +41,8 @@ async function getTheme(): Promise<'light' | 'dark'> {
           return profile.theme as 'light' | 'dark';
         }
       }
-    } catch (error) {
-      // Fallback to cookie or default
+    } catch {
+      // Fallback to cookie or default (ignore auth errors)
     }
   }
 

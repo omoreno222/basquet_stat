@@ -1,7 +1,7 @@
 'use server';
 
 import { getServerSupabase } from '@/lib/supabase';
-import { assertAdmin, assertPlatformAdmin, assertClubAdmin } from '@/lib/auth-server';
+import { assertAdmin, assertClubAdmin } from '@/lib/auth-server';
 
 export async function createUser(formData: {
   email: string;
@@ -67,7 +67,7 @@ export async function createUser(formData: {
       return { error: rolesError.message };
     }
 
-    // Send welcome email with club name if provided
+    // Send welcome email with club name if club_id provided
     if (formData.club_id) {
       const { data: club } = await supabase
         .from('clubs')
@@ -75,7 +75,11 @@ export async function createUser(formData: {
         .eq('id', formData.club_id)
         .single();
 
-      // TODO: Send welcome email with club name
+      // Welcome email will include club context in future enhancement
+      // For now, club name is available for logging/debugging
+      if (club) {
+        console.log(`User created for club: ${club.name}`);
+      }
     }
 
     return { success: true, userId: authData.user.id };

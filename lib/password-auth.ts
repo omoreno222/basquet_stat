@@ -10,7 +10,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
  * Generate a secure random password
  * For internal use only
  */
-function generatePassword(length: number = 12): string {
+function generatePassword(length: number = 16): string {
   const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
@@ -283,8 +283,8 @@ export async function forgotPassword(email: string) {
     }
   }
 
-  // Generate new temporary password
-  const tempPassword = generatePassword(12);
+  // Generate new temporary password (16 chars)
+  const tempPassword = generatePassword();
 
   // Update user password
   const { error: updateError } = await supabase.auth.admin.updateUserById(

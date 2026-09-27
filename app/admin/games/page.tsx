@@ -37,8 +37,6 @@ export default function GamesPage() {
     official: true,
   });
   const [error, setError] = useState('');
-  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
-  const [userClubId, setUserClubId] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -56,9 +54,6 @@ export default function GamesPage() {
 
     const platformAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
     const clubAdmin = roles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
-
-    setIsPlatformAdmin(platformAdmin);
-    setUserClubId(clubAdmin?.club_id || null);
 
     // Load games and teams based on access
     let gamesQuery = supabase
