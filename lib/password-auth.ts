@@ -8,8 +8,9 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 /**
  * Generate a secure random password
+ * Exported for testing
  */
-function generatePassword(length: number = 12): string {
+export function generatePassword(length: number = 12): string {
   const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
