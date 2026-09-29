@@ -42,6 +42,7 @@ export interface Game {
   official?: boolean;
   slot_a_user_id: string | null;
   slot_b_user_id: string | null;
+  single_recorder?: boolean;
   clock_running: boolean;
   clock_remaining_ms: number;
   current_period: number;

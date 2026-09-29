@@ -1,42 +1,28 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import { Game, GameStatus, Club } from '@/types/database';
-import { AdminNavPills } from '@/components/NavPills';
-import { Team } from '@/lib/types';
 import Link from 'next/link';
+import { supabase } from '@/lib/supabase';
+import { Club, Game } from '@/types/database';
+import { AdminNavbar } from '@/components/AdminNavbar';
 import { ClubLogo } from '@/components/ClubLogo';
+import { assignmentComplete, userCanOpenLiveGame } from '@/lib/live-access';
+import { useLocaleTranslations } from '@/lib/use-locale-translations';
+import { Plus } from 'lucide-react';
+import { DeleteButton, EditLink } from '../row-actions';
 
 interface GameWithTeam extends Game {
-  teams?: { 
-    name: string; 
-    logo_url?: string | null;
+  teams?: {
+    name: string;
     clubs?: Club;
   };
 }
 
-interface TeamWithSeason extends Team {
-  seasons?: { name: string };
-  clubs?: Club;
-  club_id?: string | null;
-}
-
 export default function GamesPage() {
+  const { t } = useLocaleTranslations();
   const [games, setGames] = useState<GameWithTeam[]>([]);
-  const [teams, setTeams] = useState<TeamWithSeason[]>([]);
+  const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingGame, setEditingGame] = useState<Game | null>(null);
-  const [formData, setFormData] = useState({
-    team_id: '',
-    opponent_name: '',
-    is_home: true,
-    venue: '',
-    game_date: '',
-    status: 'scheduled' as GameStatus,
-    official: true,
-  });
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -47,358 +33,137 @@ export default function GamesPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // Check if user is platform admin or club admin
+    setUserId(user.id);
+
     const { data: roles, error: rolesError } = await supabase
       .from('profile_roles')
       .select('role, club_id')
       .eq('profile_id', user.id);
 
     if (rolesError) {
-      console.error('Error loading roles:', rolesError);
       setError('Failed to load user roles');
       setLoading(false);
       return;
     }
 
-    const platformAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
-    const clubAdmin = roles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
+    const platformAdmin = roles?.some((role) => role.role === 'admin' && role.club_id === null) || false;
+    const clubAdmin = roles?.find((role) => (role.role === 'club_admin' || role.role === 'admin') && role.club_id !== null);
 
-    // Load games and teams based on access
     let gamesQuery = supabase
       .from('games')
-      .select('*, teams(name, logo_url, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
+      .select('*, teams(name, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
       .order('game_date', { ascending: false });
 
-    let teamsQuery = supabase
-      .from('teams')
-      .select('*, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color)')
-      .order('name');
-
-    // Filter by club if not platform admin
     if (!platformAdmin && clubAdmin?.club_id) {
-      // For games, we need to filter by teams that belong to the club
-      // First get team IDs for the club
-      const { data: clubTeams } = await supabase
-        .from('teams')
-        .select('id')
-        .eq('club_id', clubAdmin.club_id);
-
-      if (clubTeams && clubTeams.length > 0) {
-        const teamIds = clubTeams.map(t => t.id);
-        gamesQuery = gamesQuery.in('team_id', teamIds);
-      }
-
-      teamsQuery = teamsQuery.eq('club_id', clubAdmin.club_id);
+      const { data: clubTeams } = await supabase.from('teams').select('id').eq('club_id', clubAdmin.club_id);
+      const teamIds = clubTeams?.map((team) => team.id) || [];
+      gamesQuery = gamesQuery.in('team_id', teamIds.length > 0 ? teamIds : ['00000000-0000-0000-0000-000000000000']);
     }
 
-    const [gamesData, teamsData] = await Promise.all([gamesQuery, teamsQuery]);
-
-    if (gamesData.data) setGames(gamesData.data);
-    if (teamsData.data) setTeams(teamsData.data);
+    const { data, error: gamesError } = await gamesQuery;
+    if (gamesError) {
+      setError(gamesError.message);
+      setLoading(false);
+      return;
+    }
+    setGames(data ?? []);
     setLoading(false);
   }
 
-  function resetForm() {
-    setFormData({
-      team_id: '',
-      opponent_name: '',
-      is_home: true,
-      venue: '',
-      game_date: '',
-      status: 'scheduled',
-      official: true,
-    });
-    setEditingGame(null);
-    setShowForm(false);
-    setError('');
-  }
-
-  function handleEdit(game: GameWithTeam) {
-    setEditingGame(game);
-    const gameDate = new Date(game.game_date);
-    const localDate = new Date(gameDate.getTime() - gameDate.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 16);
-    
-    setFormData({
-      team_id: game.team_id,
-      opponent_name: game.opponent_name,
-      is_home: game.is_home,
-      venue: game.venue || '',
-      game_date: localDate,
-      status: game.status,
-      official: game.official ?? true,
-    });
-    setShowForm(true);
-    setError('');
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError('');
-
-    const submitData = {
-      ...formData,
-      venue: formData.venue || null,
-      game_date: new Date(formData.game_date).toISOString(),
-    };
-
-    if (editingGame) {
-      const { error: updateError } = await supabase
-        .from('games')
-        .update(submitData)
-        .eq('id', editingGame.id);
-
-      if (updateError) {
-        setError(updateError.message);
-        return;
-      }
-    } else {
-      const { error: insertError } = await supabase
-        .from('games')
-        .insert([submitData]);
-
-      if (insertError) {
-        setError(insertError.message);
-        return;
-      }
-    }
-
-    resetForm();
-    loadData();
-  }
-
   async function handleDelete(id: string) {
-    if (!confirm('Are you sure you want to delete this game?')) {
-      return;
-    }
+    if (!confirm(t('trke_game_delete_confirm', 'Are you sure you want to delete this game?'))) return;
 
-    const { error: deleteError } = await supabase
-      .from('games')
-      .delete()
-      .eq('id', id);
-
+    const { error: deleteError } = await supabase.from('games').delete().eq('id', id);
     if (deleteError) {
-      alert(`Error: ${deleteError.message}`);
+      setError(deleteError.message);
       return;
     }
-
     loadData();
   }
 
   if (loading) {
-    return <div className="p-8">Loading...</div>;
+    return <div className="min-h-screen bg-gray-100 p-8 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{t('trke_loading', 'Loading...')}</div>;
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <Link href="/admin" className="text-blue-500 hover:text-blue-700 mr-4">
-                ← Back
-              </Link>
-              <h1 className="text-xl font-bold">Games</h1>
-            </div>
-            <div className="flex items-center">
-              <button
-                onClick={() => setShowForm(true)}
-                className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-              >
-                Add Game
-              </button>
-            </div>
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-800">
+      <AdminNavbar />
+      <div className="lg:pl-56">
+        <div className="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 px-4">
+            <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Games</h1>
+            <Link href="/admin/games/new" className="inline-flex items-center gap-2 rounded bg-blue-500 px-4 py-2 font-bold text-white hover:bg-blue-700">
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {t('trke_add_game', 'Add game')}
+            </Link>
           </div>
-        </div>
-      </nav>
-      <AdminNavPills />
-
-      <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        {showForm && (
-          <div className="mb-6 px-4">
-            <div className="bg-white shadow rounded-lg p-6">
-              <h2 className="text-lg font-bold mb-4">
-                {editingGame ? 'Edit Game' : 'Create Game'}
-              </h2>
-              {error && (
-                <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">
-                  {error}
-                </div>
-              )}
-              <form onSubmit={handleSubmit}>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Team *
-                    </label>
-                    <select
-                      required
-                      value={formData.team_id}
-                      onChange={(e) => setFormData({ ...formData, team_id: e.target.value })}
-                      className="w-full border rounded px-3 py-2"
-                    >
-                      <option value="">Select a team</option>
-                      {teams.map((team) => (
-                        <option key={team.id} value={team.id}>
-                          {team.name} ({team.seasons?.name})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Opponent Name *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={formData.opponent_name}
-                      onChange={(e) => setFormData({ ...formData, opponent_name: e.target.value })}
-                      className="w-full border rounded px-3 py-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Game Date & Time *
-                    </label>
-                    <input
-                      type="datetime-local"
-                      required
-                      value={formData.game_date}
-                      onChange={(e) => setFormData({ ...formData, game_date: e.target.value })}
-                      className="w-full border rounded px-3 py-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Venue
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.venue}
-                      onChange={(e) => setFormData({ ...formData, venue: e.target.value })}
-                      className="w-full border rounded px-3 py-2"
-                      placeholder="e.g. Main Sports Center"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Status *
-                    </label>
-                    <select
-                      required
-                      value={formData.status}
-                      onChange={(e) => setFormData({ ...formData, status: e.target.value as GameStatus })}
-                      className="w-full border rounded px-3 py-2"
-                    >
-                      <option value="scheduled">Scheduled</option>
-                      <option value="live">Live</option>
-                      <option value="final">Final</option>
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={formData.is_home}
-                        onChange={(e) => setFormData({ ...formData, is_home: e.target.checked })}
-                        className="mr-2"
-                      />
-                      <span className="text-sm font-medium text-gray-700">Home Game</span>
-                    </label>
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={formData.official}
-                        onChange={(e) => setFormData({ ...formData, official: e.target.checked })}
-                        className="mr-2"
-                      />
-                      <span className="text-sm font-medium text-gray-700">Official Competition</span>
-                    </label>
-                  </div>
-                </div>
-                <div className="mt-4 flex gap-2">
-                  <button
-                    type="submit"
-                    className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
-                  >
-                    {editingGame ? 'Update' : 'Create'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={resetForm}
-                    className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        <div className="px-4 py-6 sm:px-0">
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
-            <ul className="divide-y divide-gray-200">
-              {games.length === 0 ? (
-                <li className="px-6 py-4 text-gray-500">No games found</li>
-              ) : (
-                games.map((game) => (
-                  <li key={game.id} className="px-6 py-4 hover:bg-gray-50">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        {game.teams?.clubs ? (
-                          <ClubLogo 
-                            logoUrl={game.teams.clubs.logo_url} 
-                            clubName={game.teams.clubs.name} 
-                            size="sm"
-                          />
-                        ) : game.teams?.logo_url ? (
-                          <ClubLogo 
-                            logoUrl={game.teams.logo_url} 
-                            clubName={game.teams.name || 'Team'} 
-                            size="sm"
-                          />
-                        ) : null}
-                        <div>
-                          <h3 className="text-lg font-medium text-gray-900">
-                            {game.teams?.name} vs {game.opponent_name}
-                          </h3>
-                          <p className="text-sm text-gray-500">
-                            {new Date(game.game_date).toLocaleString()} - {game.venue || 'TBD'}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            {game.is_home ? 'Home' : 'Away'} · {game.official ? 'Official' : 'Friendly'}
-                          </p>
+          {error && <div className="mb-4 px-4"><div className="rounded bg-red-100 p-3 text-red-700 dark:bg-red-950 dark:text-red-200">{error}</div></div>}
+          <div className="px-4 py-6 sm:px-0">
+            <div className="overflow-hidden bg-white shadow sm:rounded-md dark:bg-gray-900 dark:ring-1 dark:ring-white/10">
+              <ul className="divide-y divide-gray-200 dark:divide-white/10">
+                {games.length === 0 ? (
+                  <li className="px-6 py-4 text-gray-500 dark:text-gray-400">No games found</li>
+                ) : (
+                  games.map((game) => {
+                    const recorders = {
+                      singleRecorder: game.single_recorder ?? false,
+                      slotAUserId: game.slot_a_user_id,
+                      slotBUserId: game.slot_b_user_id,
+                    };
+                    const live = userCanOpenLiveGame({
+                      status: game.status,
+                      userId,
+                      ...recorders,
+                    });
+                    const needsRecorders = game.status === 'live' && !assignmentComplete(recorders);
+                    const title = `${game.teams?.name} vs ${game.opponent_name}`;
+                    return (
+                    <li key={game.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-white/5">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          {game.teams?.clubs ? (
+                            <ClubLogo logoUrl={game.teams.clubs.logo_url} clubName={game.teams.clubs.name} size="sm" />
+                          ) : null}
+                          <div>
+                            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                              {live ? (
+                                <Link
+                                  href={`/team-manager/games/${game.id}/capture`}
+                                  className="inline-flex items-center gap-2 hover:underline"
+                                >
+                                  <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
+                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
+                                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-600" />
+                                  </span>
+                                  <span className="animate-pulse">{title}</span>
+                                  <span className="sr-only">Live</span>
+                                </Link>
+                              ) : needsRecorders ? (
+                                <Link href={`/admin/games/${game.id}`} className="hover:underline">
+                                  {title}
+                                </Link>
+                              ) : (
+                                <span>{title}</span>
+                              )}
+                            </h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">{new Date(game.game_date).toLocaleString()} - {game.venue || 'TBD'}</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">{game.is_home ? 'Home' : 'Away'} · {game.official ? 'Official' : 'Friendly'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded px-2 py-1 text-xs font-semibold uppercase ${game.status === 'live' ? 'bg-green-100 text-green-800 dark:bg-green-300 dark:text-green-950' : game.status === 'final' ? 'bg-gray-100 text-gray-800 dark:bg-gray-300 dark:text-gray-950' : 'bg-blue-100 text-blue-800 dark:bg-blue-300 dark:text-blue-950'}`}>
+                            {game.status}
+                          </span>
+                          <EditLink href={`/admin/games/${game.id}`} label={`${t('trke_edit', 'Edit')} ${game.opponent_name}`} />
+                          <DeleteButton label={`${t('trke_delete', 'Delete')} ${game.opponent_name}`} onClick={() => handleDelete(game.id)} />
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-1 text-xs font-semibold rounded uppercase ${
-                          game.status === 'live' ? 'text-green-800 bg-green-100' :
-                          game.status === 'final' ? 'text-gray-800 bg-gray-100' :
-                          'text-blue-800 bg-blue-100'
-                        }`}>
-                          {game.status}
-                        </span>
-                        <button
-                          onClick={() => handleEdit(game)}
-                          className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(game.id)}
-                          className="bg-red-500 hover:bg-red-700 text-white px-3 py-1 rounded text-sm"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </li>
-                ))
-              )}
-            </ul>
+                    </li>
+                    );
+                  })
+                )}
+              </ul>
+            </div>
           </div>
         </div>
       </div>

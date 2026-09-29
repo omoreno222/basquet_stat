@@ -91,7 +91,7 @@ export default async function RootLayout({
 
   return (
     <html lang="en" className={`${theme} ${sora.variable} ${manrope.variable}`}>
-      <body className="font-sans antialiased flex flex-col min-h-screen">
+      <body className={`${manrope.className} font-sans antialiased flex flex-col min-h-screen`}>
         <div className="flex-grow">
           {children}
         </div>

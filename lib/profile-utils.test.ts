@@ -109,17 +109,39 @@ describe('validatePassword', () => {
 
 describe('getRoleBadgeClasses', () => {
   it('should return appropriate classes for each role', () => {
-    expect(getRoleBadgeClasses('admin')).toContain('bg-red-100');
-    expect(getRoleBadgeClasses('team_manager')).toContain('bg-blue-100');
-    expect(getRoleBadgeClasses('coach')).toContain('bg-green-100');
-    expect(getRoleBadgeClasses('parent')).toContain('bg-purple-100');
-    expect(getRoleBadgeClasses('player')).toContain('bg-orange-100');
+    expect(getRoleBadgeClasses('admin')).toContain('bg-red-600');
+    expect(getRoleBadgeClasses('admin')).toContain('text-white');
+    expect(getRoleBadgeClasses('club_admin')).toContain('bg-indigo-700');
+    expect(getRoleBadgeClasses('club_admin')).toContain('text-white');
+    expect(getRoleBadgeClasses('team_manager')).toContain('bg-white');
+    expect(getRoleBadgeClasses('team_manager')).toContain('text-blue-800');
+    expect(getRoleBadgeClasses('coach')).toContain('bg-green-700');
+    expect(getRoleBadgeClasses('parent')).toContain('bg-purple-600');
+    expect(getRoleBadgeClasses('player')).toContain('bg-orange-700');
+  });
+
+  it('should stay readable on the navy header in both themes', () => {
+    expect(getRoleBadgeClasses('admin')).toContain('dark:bg-red-300');
+    expect(getRoleBadgeClasses('admin')).toContain('dark:text-red-950');
+    expect(getRoleBadgeClasses('club_admin')).toContain('dark:bg-indigo-300');
+    expect(getRoleBadgeClasses('club_admin')).toContain('dark:text-indigo-950');
+    expect(getRoleBadgeClasses('team_manager')).toContain('dark:bg-sky-200');
+    expect(getRoleBadgeClasses('team_manager')).toContain('dark:text-sky-950');
+    expect(getRoleBadgeClasses('coach')).toContain('dark:bg-green-300');
+    expect(getRoleBadgeClasses('coach')).toContain('dark:text-green-950');
+    expect(getRoleBadgeClasses('parent')).toContain('dark:bg-purple-300');
+    expect(getRoleBadgeClasses('parent')).toContain('dark:text-purple-950');
+    expect(getRoleBadgeClasses('player')).toContain('dark:bg-orange-300');
+    expect(getRoleBadgeClasses('player')).toContain('dark:text-orange-950');
   });
 
   it('should include base classes', () => {
     const classes = getRoleBadgeClasses('admin');
     expect(classes).toContain('inline-flex');
-    expect(classes).toContain('rounded');
-    expect(classes).toContain('font-medium');
+    expect(classes).toContain('rounded-full');
+    expect(classes).toContain('px-4');
+    expect(classes).toContain('py-2');
+    expect(classes).toContain('text-sm');
+    expect(classes).toContain('font-semibold');
   });
 });

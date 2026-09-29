@@ -49,6 +49,8 @@ export interface Team {
   season_id: string;
   club_id: string;
   name: string;
+  fiba_short_name: string | null;
+  coach_id: string | null;
   category: TeamCategory;
   gender: TeamGender;
   logo_url: string | null;
@@ -89,6 +91,7 @@ export interface Game {
   status: GameStatus;
   slot_a_user_id: string | null;
   slot_b_user_id: string | null;
+  single_recorder: boolean;
   clock_running: boolean;
   clock_remaining_ms: number;
   current_period: number;
@@ -96,6 +99,16 @@ export interface Game {
   official: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface GameOperatorStint {
+  id: string;
+  game_id: string;
+  slot: 'a' | 'b';
+  user_id: string;
+  started_at: string;
+  ended_at: string | null;
+  started_by: string | null;
 }
 
 export interface GamePeriod {
@@ -107,6 +120,21 @@ export interface GamePeriod {
   started_at: string | null;
   ended_at: string | null;
   created_at: string;
+}
+
+export interface GameOpponentPlayer {
+  id: string;
+  game_id: string;
+  jersey_number: number | null;
+  name: string | null;
+  is_coach: boolean;
+  created_at: string;
+}
+
+export interface GameOpponentLineup {
+  game_id: string;
+  opponent_player_id: string;
+  position_index: number;
 }
 
 export interface Stint {
@@ -123,6 +151,7 @@ export interface GameEvent {
   id: string;
   game_id: string;
   player_id: string | null;
+  opponent_player_id: string | null;
   event_type: EventType;
   period_number: number;
   clock_remaining_ms: number;

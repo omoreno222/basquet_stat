@@ -4,14 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Building2,
-  Shield,
-  CalendarRange,
-  Users,
-  UserRound,
-  UserCog,
   Trophy,
-  Languages,
   ClipboardList,
   Baby,
   BarChart3,
@@ -36,7 +29,7 @@ export function NavPills({ items, label }: { items: NavPillItem[]; label: string
   const pathname = usePathname();
 
   return (
-    <nav aria-label={label} className="bg-gray-100 dark:bg-gray-950 border-b border-brand/15 dark:border-white/10">
+    <nav aria-label={label} className="border-b border-brand/15 bg-gray-100 dark:border-white/10 dark:bg-gray-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex gap-2 overflow-x-auto py-3">
           {items.map((item) => {
@@ -49,8 +42,8 @@ export function NavPills({ items, label }: { items: NavPillItem[]; label: string
                 aria-current={active ? 'page' : undefined}
                 className={
                   active
-                    ? 'inline-flex items-center gap-2 shrink-0 rounded-full bg-brand text-white px-4 min-h-11 font-display text-sm shadow-sm'
-                    : 'inline-flex items-center gap-2 shrink-0 rounded-full bg-white text-brand border border-brand/25 px-4 min-h-11 font-display text-sm hover:bg-brand/10 dark:bg-gray-900 dark:text-white dark:border-white/25 dark:hover:bg-brand-dark'
+                    ? 'inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full bg-brand px-4 font-display text-sm text-white shadow-sm ring-2 ring-white/70'
+                    : 'inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-brand/25 bg-white px-4 font-display text-sm text-brand shadow-sm hover:bg-brand/10 dark:border-white/50 dark:bg-gray-600 dark:text-white dark:hover:bg-gray-500'
                 }
               >
                 <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -62,21 +55,6 @@ export function NavPills({ items, label }: { items: NavPillItem[]; label: string
       </div>
     </nav>
   );
-}
-
-const adminPills: NavPillItem[] = [
-  { href: '/admin/clubs', label: 'Clubs', icon: Building2 },
-  { href: '/admin/my-club', label: 'My Club', icon: Shield },
-  { href: '/admin/seasons', label: 'Seasons', icon: CalendarRange },
-  { href: '/admin/teams', label: 'Teams', icon: Users },
-  { href: '/admin/players', label: 'Players', icon: UserRound },
-  { href: '/admin/users', label: 'Users', icon: UserCog },
-  { href: '/admin/games', label: 'Games', icon: Trophy },
-  { href: '/admin/translations', label: 'Translations', icon: Languages },
-];
-
-export function AdminNavPills() {
-  return <NavPills label="Admin sections" items={adminPills} />;
 }
 
 export function TeamManagerNavPills() {

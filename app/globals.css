@@ -17,13 +17,13 @@
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+  font-family: Manrope, "Manrope Fallback", ui-sans-serif, system-ui, sans-serif;
 }
 
 h1,
 h2,
 h3 {
-  font-family: var(--font-sora), ui-sans-serif, system-ui, sans-serif;
+  font-family: Sora, "Sora Fallback", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer utilities {

@@ -2,10 +2,9 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import Link from 'next/link';
 import { ClubLogo } from '@/components/ClubLogo';
 import { uploadClubLogo, removeClubLogo } from '../actions';
-import { AdminNavPills } from '@/components/NavPills';
+import { AdminNavbar } from '@/components/AdminNavbar';
 
 interface Club {
   id: string;
@@ -146,25 +145,14 @@ export default function MyClubPage() {
   }
 
   if (loading) {
-    return <div className="p-8">Loading...</div>;
+    return <div className="min-h-screen bg-gray-100 p-8 text-gray-900 dark:bg-gray-800 dark:text-gray-100">Loading...</div>;
   }
 
   if (!club) {
     return (
-      <div className="min-h-screen bg-gray-100">
-        <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between h-16">
-              <div className="flex items-center">
-                <Link href="/admin" className="text-blue-500 hover:text-blue-700 mr-4">
-                  ← Back
-                </Link>
-                <h1 className="text-xl font-bold">My Club</h1>
-              </div>
-            </div>
-          </div>
-        </nav>
-        <AdminNavPills />
+      <div className="min-h-screen bg-gray-100 dark:bg-gray-800">
+        <AdminNavbar />
+        <div className="lg:pl-56">
         <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0">
             <div className="bg-white shadow rounded-lg p-6">
@@ -172,27 +160,18 @@ export default function MyClubPage() {
             </div>
           </div>
         </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <Link href="/admin" className="text-blue-500 hover:text-blue-700 mr-4">
-                ← Back
-              </Link>
-              <h1 className="text-xl font-bold">My Club</h1>
-            </div>
-          </div>
-        </div>
-      </nav>
-      <AdminNavPills />
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-800">
+      <AdminNavbar />
 
+      <div className="lg:pl-56">
       <div className="max-w-3xl mx-auto py-6 sm:px-6 lg:px-8">
+        <h1 className="mb-6 px-4 text-2xl font-semibold text-gray-900 dark:text-gray-100">Dashboard</h1>
         {(error || success) && (
           <div className="mb-4 px-4">
             {error && (
@@ -336,6 +315,7 @@ export default function MyClubPage() {
             </form>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

@@ -2,7 +2,7 @@
  * Profile utility functions
  */
 
-export type UserRole = 'admin' | 'team_manager' | 'coach' | 'parent' | 'player';
+export type UserRole = 'admin' | 'club_admin' | 'team_manager' | 'coach' | 'parent' | 'player';
 
 /**
  * Generate initials from a full name or first/last name
@@ -37,16 +37,21 @@ export function getInitials(firstName?: string | null, lastName?: string | null)
  * @returns Tailwind CSS classes for the role badge
  */
 export function getRoleBadgeClasses(role: UserRole): string {
-  const baseClasses = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium';
-  
+  const baseClasses = 'inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold';
+
+  // Light mode keeps a saturated chip with white text (team manager stays a white
+  // chip so it does not blend into the navy bar). Dark mode uses a lighter chip
+  // with dark text: the bar stays navy, and the same chip still reads on gray-800
+  // profile cards and on the admin lists.
   const colorMap: Record<UserRole, string> = {
-    admin: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-    team_manager: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-    coach: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-    parent: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
-    player: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+    admin: 'bg-red-600 text-white dark:bg-red-300 dark:text-red-950',
+    club_admin: 'bg-indigo-700 text-white dark:bg-indigo-300 dark:text-indigo-950',
+    team_manager: 'border-2 border-current bg-white text-blue-800 dark:border-sky-700 dark:bg-sky-200 dark:text-sky-950',
+    coach: 'bg-green-700 text-white dark:bg-green-300 dark:text-green-950',
+    parent: 'bg-purple-600 text-white dark:bg-purple-300 dark:text-purple-950',
+    player: 'bg-orange-700 text-white dark:bg-orange-300 dark:text-orange-950',
   };
-  
+
   return `${baseClasses} ${colorMap[role]}`;
 }
 

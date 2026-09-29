@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { LogOut } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getInitials, getRoleBadgeClasses, getRoleTranslationKey, type UserRole } from '@/lib/profile-utils';
 
@@ -17,9 +18,11 @@ interface UserMenuProps {
   roles: UserRole[];
   translations: Record<string, string>;
   compact?: boolean; // Hide name on small screens
+  /** White text for the brand-colored navbar. */
+  onBrand?: boolean;
 }
 
-export function UserMenu({ profile, roles, translations, compact = false }: UserMenuProps) {
+export function UserMenu({ profile, roles, translations, compact = false, onBrand = false }: UserMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -50,11 +53,14 @@ export function UserMenu({ profile, roles, translations, compact = false }: User
   
   const initials = getInitials(profile.first_name || profile.full_name, profile.last_name);
 
+  const signOutLabel = translations.trke_sign_out || 'Cerrar sesión';
+
   return (
-    <div className="relative" ref={menuRef}>
+    <div className="flex items-center gap-3" ref={menuRef}>
+      <div className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+        className={`flex items-center gap-2 hover:opacity-80 transition-opacity ${onBrand ? 'text-white' : ''}`}
         aria-label="User menu"
       >
         {/* Avatar */}
@@ -72,27 +78,17 @@ export function UserMenu({ profile, roles, translations, compact = false }: User
           )}
         </div>
 
-        {/* Name and roles - hidden on compact mode */}
-        <div className={`flex flex-col items-start gap-1 ${compact ? 'hidden md:flex' : ''}`}>
-          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`hidden min-w-0 truncate text-sm font-medium sm:inline ${onBrand ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>
             {displayName}
           </span>
-          <div className="flex flex-wrap gap-1">
+          <div className={`flex flex-wrap items-center gap-1 ${compact ? 'md:flex' : ''}`}>
             {roles.map((role) => (
               <span key={role} className={getRoleBadgeClasses(role)}>
                 {translations[getRoleTranslationKey(role)] || role}
               </span>
             ))}
           </div>
-        </div>
-
-        {/* Role pills only on compact mode */}
-        <div className={`flex flex-wrap gap-1 ${compact ? 'flex md:hidden' : 'hidden'}`}>
-          {roles.map((role) => (
-            <span key={role} className={getRoleBadgeClasses(role)}>
-              {translations[getRoleTranslationKey(role)] || role}
-            </span>
-          ))}
         </div>
 
         {/* Dropdown indicator */}
@@ -108,7 +104,7 @@ export function UserMenu({ profile, roles, translations, compact = false }: User
 
       {/* Dropdown menu */}
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg py-1 z-50 border border-gray-200 dark:border-gray-700">
+        <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-700 rounded-md shadow-lg py-1 z-50 border border-gray-200 dark:border-white/20">
           <Link
             href="/profile"
             className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -116,14 +112,25 @@ export function UserMenu({ profile, roles, translations, compact = false }: User
           >
             {translations.trke_my_profile || 'My Profile'}
           </Link>
-          <button
-            onClick={handleSignOut}
-            className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-          >
-            {translations.trke_sign_out || 'Sign Out'}
-          </button>
         </div>
       )}
+      </div>
+      <Link
+        href="/login"
+        onClick={(event) => {
+          event.preventDefault();
+          void handleSignOut();
+        }}
+        className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium ${
+          onBrand
+            ? 'text-white/90 hover:bg-white/10 hover:text-white'
+            : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-200 dark:hover:bg-gray-800 dark:hover:text-white'
+        }`}
+        aria-label={signOutLabel}
+      >
+        <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span className="hidden sm:inline">{signOutLabel}</span>
+      </Link>
     </div>
   );
 }

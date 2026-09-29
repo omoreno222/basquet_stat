@@ -14,6 +14,26 @@ describe('decideAuthenticatedRoute', () => {
     }
   });
 
+  it('lets every role open a profile uuid', () => {
+    const decision = decideAuthenticatedRoute({
+      pathname: '/profile/11111111-1111-4111-8111-111111111111',
+      roles: ['player'],
+      primaryRole: 'player',
+      mustChangePassword: false,
+    });
+    expect(decision).toEqual({ action: 'next' });
+  });
+
+  it('still forces a password change before a profile uuid', () => {
+    const decision = decideAuthenticatedRoute({
+      pathname: '/profile/11111111-1111-4111-8111-111111111111',
+      roles: ['player'],
+      primaryRole: 'player',
+      mustChangePassword: true,
+    });
+    expect(decision).toEqual({ action: 'redirect', to: '/change-password' });
+  });
+
   it('still forces a password change before /profile', () => {
     const decision = decideAuthenticatedRoute({
       pathname: '/profile',

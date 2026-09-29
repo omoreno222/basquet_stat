@@ -4,45 +4,34 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
-import { Profile, Player, Game } from '@/lib/types';
+import { Player, Game } from '@/lib/types';
 import { Club } from '@/types/database';
 import { ClubLogo } from '@/components/ClubLogo';
 import { canStartGame, formatTimeUntilStart, type GameStartCheck } from '@/lib/game-start-window';
+import { assignmentComplete } from '@/lib/live-access';
 import { TeamManagerNavPills } from '@/components/NavPills';
 
 interface GameWithTeam extends Game {
-  teams?: { 
-    id: string; 
-    name: string; 
-    category: string; 
-    season: string; 
-    created_at: string; 
-    logo_url?: string | null;
+  teams?: {
+    id: string;
+    name: string;
+    category: string;
+    season: string;
+    created_at: string;
     clubs?: Club;
   };
-}
-
-interface PlayerWithTeam extends Player {
-  teams?: { name: string };
-}
-
-interface UserProfile extends Profile {
-  roles?: string[];
-  isAdmin?: boolean;
 }
 
 export default function GameDetailPage() {
   const params = useParams();
   const router = useRouter();
   const gameId = params.id as string;
-  
+
   const [game, setGame] = useState<GameWithTeam | null>(null);
-  const [players, setPlayers] = useState<PlayerWithTeam[]>([]);
-  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [recorderNames, setRecorderNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [slotAUserId, setSlotAUserId] = useState<string>('');
-  const [slotBUserId, setSlotBUserId] = useState<string>('');
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [gameStartCheck, setGameStartCheck] = useState<GameStartCheck | null>(null);
 
   const loadData = useCallback(async () => {
@@ -52,33 +41,16 @@ export default function GameDetailPage() {
       return;
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-
-    setCurrentUser(profile);
-
-    // Fetch user roles for multi-role support
-    const { data: userRoles } = await supabase
-      .from('profile_roles')
-      .select('role')
-      .eq('profile_id', user.id);
-
-    const roles = userRoles?.map(r => r.role) || [profile?.role];
-    const isAdmin = roles.includes('admin');
+    setCurrentUserId(user.id);
 
     const { data: gameData } = await supabase
       .from('games')
-      .select('*, teams(name, logo_url, clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
+      .select('*, teams(name, clubs(id, name, short_name, logo_url, primary_color, secondary_color))')
       .eq('id', gameId)
       .single();
 
     if (gameData) {
       setGame(gameData);
-      setSlotAUserId(gameData.slot_a_user_id || '');
-      setSlotBUserId(gameData.slot_b_user_id || '');
 
       if (gameData.team_id) {
         const { data: playersData } = await supabase
@@ -90,31 +62,21 @@ export default function GameDetailPage() {
         setPlayers(playersData || []);
       }
 
-      // Fetch users who have admin or team_manager role (multi-role support)
-      // We get all profile_roles entries with these roles, then fetch the profiles
-      const { data: eligibleRoles } = await supabase
-        .from('profile_roles')
-        .select('profile_id')
-        .in('role', ['admin', 'team_manager']);
-
-      const eligibleUserIds = [...new Set(eligibleRoles?.map(r => r.profile_id) || [])];
-
-      if (eligibleUserIds.length > 0) {
-        const { data: usersData } = await supabase
+      const recorderIds = [gameData.slot_a_user_id, gameData.slot_b_user_id].filter((id): id is string => Boolean(id));
+      if (recorderIds.length > 0) {
+        const { data: profiles } = await supabase
           .from('profiles')
-          .select('id, email, full_name, role, avatar_url, created_at')
-          .in('id', eligibleUserIds)
-          .order('email');
-
-        setUsers(usersData || []);
+          .select('id, full_name, email')
+          .in('id', recorderIds);
+        const names: Record<string, string> = {};
+        profiles?.forEach((profile) => {
+          names[profile.id] = profile.full_name || profile.email;
+        });
+        setRecorderNames(names);
       } else {
-        setUsers([]);
+        setRecorderNames({});
       }
 
-      // Set current user with admin status
-      setCurrentUser({ ...profile, isAdmin } as UserProfile);
-      
-      // Check game start eligibility
       if (gameData.status === 'scheduled') {
         const startCheck = await canStartGame(gameId, user.id);
         setGameStartCheck(startCheck);
@@ -128,57 +90,16 @@ export default function GameDetailPage() {
     loadData();
   }, [loadData]);
 
-  // Periodic check for game start eligibility (every minute)
   useEffect(() => {
-    if (!game || game.status !== 'scheduled' || !currentUser) return;
+    if (!game || game.status !== 'scheduled' || !currentUserId) return;
 
     const interval = setInterval(async () => {
-      const startCheck = await canStartGame(gameId, currentUser.id);
+      const startCheck = await canStartGame(gameId, currentUserId);
       setGameStartCheck(startCheck);
-    }, 60000); // Check every minute
+    }, 60000);
 
     return () => clearInterval(interval);
-  }, [game, currentUser, gameId]);
-
-  async function handleAssignSlots() {
-    if (!slotAUserId && !slotBUserId) {
-      alert('Please assign at least one user to a slot');
-      return;
-    }
-
-    const { error } = await supabase
-      .from('games')
-      .update({
-        slot_a_user_id: slotAUserId || null,
-        slot_b_user_id: slotBUserId || null,
-      })
-      .eq('id', gameId);
-
-    if (error) {
-      alert(`Error: ${error.message}`);
-    } else {
-      alert('Slots assigned successfully!');
-      loadData();
-    }
-  }
-
-  async function handleSwapSlots() {
-    const { error } = await supabase
-      .from('games')
-      .update({
-        slot_a_user_id: slotBUserId || null,
-        slot_b_user_id: slotAUserId || null,
-      })
-      .eq('id', gameId);
-
-    if (error) {
-      alert(`Error: ${error.message}`);
-    } else {
-      setSlotAUserId(slotBUserId);
-      setSlotBUserId(slotAUserId);
-      loadData();
-    }
-  }
+  }, [game, currentUserId, gameId]);
 
   async function handleStartGame() {
     const { error } = await supabase
@@ -206,11 +127,20 @@ export default function GameDetailPage() {
     return <div className="p-8">Game not found</div>;
   }
 
-  const canCapture = currentUser && (
-    currentUser.isAdmin ||
-    currentUser.id === game.slot_a_user_id ||
-    currentUser.id === game.slot_b_user_id
+  const recordersReady = assignmentComplete({
+    singleRecorder: game.single_recorder ?? false,
+    slotAUserId: game.slot_a_user_id,
+    slotBUserId: game.slot_b_user_id,
+  });
+  const canCapture = Boolean(currentUserId) && recordersReady && (
+    currentUserId === game.slot_a_user_id ||
+    currentUserId === game.slot_b_user_id
   );
+  const tabletLabel = currentUserId === game.slot_a_user_id
+    ? 'Tablet A'
+    : currentUserId === game.slot_b_user_id
+      ? 'Tablet B'
+      : '';
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -230,20 +160,13 @@ export default function GameDetailPage() {
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
-          
-          {/* Game Info */}
+
           <div className="bg-white shadow rounded-lg p-6 mb-6">
             <div className="flex items-center gap-4 mb-4">
               {game.teams?.clubs ? (
-                <ClubLogo 
-                  logoUrl={game.teams.clubs.logo_url} 
-                  clubName={game.teams.clubs.name} 
-                  size="md"
-                />
-              ) : game.teams?.logo_url ? (
-                <ClubLogo 
-                  logoUrl={game.teams.logo_url} 
-                  clubName={game.teams.name || 'Team'} 
+                <ClubLogo
+                  logoUrl={game.teams.clubs.logo_url}
+                  clubName={game.teams.clubs.name}
                   size="md"
                 />
               ) : null}
@@ -268,114 +191,41 @@ export default function GameDetailPage() {
                 <p className="text-sm text-gray-500">Score</p>
                 <p className="font-medium text-2xl">{game.team_score} - {game.opponent_score}</p>
               </div>
+              <div>
+                <p className="text-sm text-gray-500">Tablet A</p>
+                <p className="font-medium">{game.slot_a_user_id ? (recorderNames[game.slot_a_user_id] || 'Assigned') : 'Not assigned'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Tablet B</p>
+                <p className="font-medium">
+                  {game.single_recorder
+                    ? 'One recorder'
+                    : game.slot_b_user_id
+                      ? (recorderNames[game.slot_b_user_id] || 'Assigned')
+                      : 'Not assigned'}
+                </p>
+              </div>
             </div>
           </div>
 
-          {/* Slot Assignment */}
-          <div className="bg-white shadow rounded-lg p-6 mb-6">
-            <h3 className="text-lg font-bold mb-4">Slot Assignment</h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Slot A (Clock, Shots, Fouls, Subs)
-                </label>
-                <select
-                  value={slotAUserId}
-                  onChange={(e) => setSlotAUserId(e.target.value)}
-                  className="w-full border rounded px-3 py-2"
-                  disabled={game.status === 'final'}
-                >
-                  <option value="">-- None --</option>
-                  {users.map(user => (
-                    <option key={user.id} value={user.id}>
-                      {user.full_name || user.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Slot B (Rebounds, Assists, Steals, Turnovers)
-                </label>
-                <select
-                  value={slotBUserId}
-                  onChange={(e) => setSlotBUserId(e.target.value)}
-                  className="w-full border rounded px-3 py-2"
-                  disabled={game.status === 'final'}
-                >
-                  <option value="">-- None --</option>
-                  {users.map(user => (
-                    <option key={user.id} value={user.id}>
-                      {user.full_name || user.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={handleAssignSlots}
-                disabled={game.status === 'final'}
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300"
-              >
-                Assign Slots
-              </button>
-              <button
-                onClick={handleSwapSlots}
-                disabled={!game.slot_a_user_id || !game.slot_b_user_id || game.status === 'final'}
-                className="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:bg-gray-300"
-              >
-                Swap A ↔ B
-              </button>
-            </div>
-
-            {game.slot_a_user_id && (
-              <div className="mt-4 text-sm">
-                <p className="text-green-600">
-                  ✓ Slot A: {users.find(u => u.id === game.slot_a_user_id)?.full_name || 'Assigned'}
-                </p>
-              </div>
-            )}
-            {game.slot_b_user_id && (
-              <div className="mt-1 text-sm">
-                <p className="text-green-600">
-                  ✓ Slot B: {users.find(u => u.id === game.slot_b_user_id)?.full_name || 'Assigned'}
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Launch Capture */}
           {canCapture && (
             <div className="bg-white shadow rounded-lg p-6">
               <h3 className="text-lg font-bold mb-4">Live Capture</h3>
-              
+
               {game.status === 'scheduled' && (
                 <div>
                   <button
                     onClick={handleStartGame}
-                    disabled={
-                      (!game.slot_a_user_id && !game.slot_b_user_id) || 
-                      (gameStartCheck !== null && !gameStartCheck.canStart)
-                    }
+                    disabled={!recordersReady || (gameStartCheck !== null && !gameStartCheck.canStart)}
                     className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-300 text-lg font-bold"
                   >
                     {gameStartCheck?.isAdmin ? 'Start Game (Admin Override)' : 'Start Game'}
                   </button>
-                  
+
                   {gameStartCheck && !gameStartCheck.canStart && gameStartCheck.minutesUntilStart && (
                     <p className="mt-2 text-sm text-orange-600">
                       Game can be started in {formatTimeUntilStart(gameStartCheck.minutesUntilStart)}
                       {gameStartCheck.isAdmin && ' (or now as admin)'}
-                    </p>
-                  )}
-                  
-                  {!game.slot_a_user_id && !game.slot_b_user_id && (
-                    <p className="mt-2 text-sm text-red-600">
-                      At least one slot must be assigned
                     </p>
                   )}
                 </div>
@@ -394,17 +244,12 @@ export default function GameDetailPage() {
                 <p className="text-gray-500">Game has ended</p>
               )}
 
-              <p className="mt-4 text-sm text-gray-600">
-                You are assigned to: {
-                  currentUser.id === game.slot_a_user_id ? 'Slot A' :
-                  currentUser.id === game.slot_b_user_id ? 'Slot B' :
-                  'Admin (can use any slot)'
-                }
-              </p>
+              {tabletLabel && (
+                <p className="mt-4 text-sm text-gray-600">You are on {tabletLabel}</p>
+              )}
             </div>
           )}
 
-          {/* Roster */}
           <div className="bg-white shadow rounded-lg p-6 mt-6">
             <h3 className="text-lg font-bold mb-4">Team Roster ({players.length} players)</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">

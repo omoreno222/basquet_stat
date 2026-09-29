@@ -8,7 +8,7 @@ interface ChooseSideModalProps {
 
 export function ChooseSideModal({ onChoose }: ChooseSideModalProps) {
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[60] p-4">
       <div className="bg-gray-800 rounded-lg shadow-2xl max-w-4xl w-full p-6">
         <h2 className="text-2xl font-bold text-white text-center mb-2">
           Choose Attacking Basket
@@ -18,7 +18,7 @@ export function ChooseSideModal({ onChoose }: ChooseSideModalProps) {
         </p>
 
         {/* Court with interactive baskets */}
-        <div className="relative bg-gray-900 rounded-lg p-4 mb-4" style={{ aspectRatio: '2800/1560' }}>
+        <div className="relative bg-gray-900 rounded-lg p-4 mb-4" style={{ aspectRatio: '2800/1500' }}>
           <BasketballCourt className="opacity-90" />
           
           {/* Left basket touch target */}
@@ -57,7 +57,7 @@ export function ChooseSideModal({ onChoose }: ChooseSideModalProps) {
         </div>
 
         <p className="text-gray-400 text-sm text-center">
-          The scorer&apos;s table (TABLE) shows the physical reference point. Choose which basket you&apos;ll attack in Q1.
+          Choose which basket you will attack in Q1. The direction flips at halftime.
         </p>
       </div>
     </div>

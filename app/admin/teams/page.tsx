@@ -1,11 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import { Season, Team, Club, TeamCategory, TeamGender } from '@/types/database';
-import { AdminNavPills } from '@/components/NavPills';
 import Link from 'next/link';
+import { supabase } from '@/lib/supabase';
+import { Club, Team, TeamCategory, TeamGender } from '@/types/database';
+import { AdminNavbar } from '@/components/AdminNavbar';
 import { ClubLogo } from '@/components/ClubLogo';
+import { useLocaleTranslations } from '@/lib/use-locale-translations';
+import { Plus } from 'lucide-react';
+import { DeleteButton, EditLink, ViewLink } from '../row-actions';
 
 interface TeamWithRelations extends Team {
   seasons?: { name: string };
@@ -29,22 +32,10 @@ const TEAM_GENDERS: { value: TeamGender; label: string }[] = [
 ];
 
 export default function TeamsPage() {
+  const { t } = useLocaleTranslations();
   const [teams, setTeams] = useState<TeamWithRelations[]>([]);
-  const [seasons, setSeasons] = useState<Season[]>([]);
-  const [clubs, setClubs] = useState<Club[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingTeam, setEditingTeam] = useState<Team | null>(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    season_id: '',
-    club_id: '',
-    category: 'senior' as TeamCategory,
-    gender: 'mixed' as TeamGender,
-  });
   const [error, setError] = useState('');
-  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
-  const [userClubId, setUserClubId] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -54,26 +45,20 @@ export default function TeamsPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // Check if user is platform admin or club admin
     const { data: roles, error: rolesError } = await supabase
       .from('profile_roles')
       .select('role, club_id')
       .eq('profile_id', user.id);
 
     if (rolesError) {
-      console.error('Error loading roles:', rolesError);
       setError('Failed to load user roles');
       setLoading(false);
       return;
     }
 
-    const platformAdmin = roles?.some(r => r.role === 'admin' && r.club_id === null) || false;
-    const clubAdmin = roles?.find(r => (r.role === 'club_admin' || r.role === 'admin') && r.club_id !== null);
+    const platformAdmin = roles?.some((role) => role.role === 'admin' && role.club_id === null) || false;
+    const clubAdmin = roles?.find((role) => (role.role === 'club_admin' || role.role === 'admin') && role.club_id !== null);
 
-    setIsPlatformAdmin(platformAdmin);
-    setUserClubId(clubAdmin?.club_id || null);
-
-    // Load teams based on access
     let teamsQuery = supabase
       .from('teams')
       .select('*, seasons(name), clubs(id, name, short_name, logo_url, primary_color, secondary_color)')
@@ -83,325 +68,88 @@ export default function TeamsPage() {
       teamsQuery = teamsQuery.eq('club_id', clubAdmin.club_id);
     }
 
-    const [teamsData, seasonsData, clubsData] = await Promise.all([
-      teamsQuery,
-      supabase.from('seasons').select('*').order('start_date', { ascending: false }),
-      platformAdmin 
-        ? supabase.from('clubs').select('*').order('name')
-        : clubAdmin?.club_id 
-          ? supabase.from('clubs').select('*').eq('id', clubAdmin.club_id)
-          : Promise.resolve({ data: [] }),
-    ]);
-
-    if (teamsData.data) setTeams(teamsData.data);
-    if (seasonsData.data) setSeasons(seasonsData.data);
-    if (clubsData.data) setClubs(clubsData.data);
+    const { data } = await teamsQuery;
+    if (data) setTeams(data);
     setLoading(false);
   }
 
-  function resetForm() {
-    setFormData({ 
-      name: '', 
-      season_id: '', 
-      club_id: userClubId || '',
-      category: 'senior',
-      gender: 'mixed',
-    });
-    setEditingTeam(null);
-    setShowForm(false);
-    setError('');
-  }
-
-  function handleEdit(team: TeamWithRelations) {
-    setEditingTeam(team);
-    setFormData({
-      name: team.name,
-      season_id: team.season_id,
-      club_id: team.club_id || '',
-      category: team.category || 'senior',
-      gender: team.gender || 'mixed',
-    });
-    setShowForm(true);
-    setError('');
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError('');
-
-    const finalClubId = formData.club_id || userClubId || null;
-    
-    if (!finalClubId) {
-      setError('Club is required. Please select a club.');
-      return;
-    }
-
-    const submitData = {
-      ...formData,
-      club_id: finalClubId,
-    };
-
-    if (editingTeam) {
-      // Don't allow changing club_id in edit mode
-      if (submitData.club_id !== editingTeam.club_id) {
-        setError('Cannot change team club. Delete and recreate the team if needed.');
-        return;
-      }
-      
-      const { error: updateError } = await supabase
-        .from('teams')
-        .update(submitData)
-        .eq('id', editingTeam.id);
-
-      if (updateError) {
-        setError(updateError.message);
-        return;
-      }
-    } else {
-      const { error: insertError } = await supabase
-        .from('teams')
-        .insert([submitData]);
-
-      if (insertError) {
-        setError(insertError.message);
-        return;
-      }
-    }
-
-    resetForm();
-    loadData();
-  }
-
   async function handleDelete(id: string) {
-    if (!confirm('Are you sure you want to delete this team? This will also delete all associated players and games.')) {
+    if (!confirm(t('trke_team_delete_confirm', 'Are you sure you want to delete this team? This will also delete all associated players and games.'))) {
       return;
     }
 
-    const { error: deleteError } = await supabase
-      .from('teams')
-      .delete()
-      .eq('id', id);
-
+    const { error: deleteError } = await supabase.from('teams').delete().eq('id', id);
     if (deleteError) {
-      alert(`Error: ${deleteError.message}`);
+      setError(deleteError.message);
       return;
     }
-
     loadData();
   }
 
   if (loading) {
-    return <div className="p-8">Loading...</div>;
+    return <div className="min-h-screen bg-gray-100 p-8 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{t('trke_loading', 'Loading...')}</div>;
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <Link href="/admin" className="text-blue-500 hover:text-blue-700 mr-4">
-                ← Back
-              </Link>
-              <h1 className="text-xl font-bold">Teams</h1>
-            </div>
-            <div className="flex items-center">
-              <button
-                onClick={() => setShowForm(true)}
-                className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-              >
-                Add Team
-              </button>
-            </div>
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-800">
+      <AdminNavbar />
+      <div className="lg:pl-56">
+        <div className="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 px-4">
+            <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Teams</h1>
+            <Link href="/admin/teams/new" className="inline-flex items-center gap-2 rounded bg-blue-500 px-4 py-2 font-bold text-white hover:bg-blue-700">
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {t('trke_add_team', 'Add team')}
+            </Link>
           </div>
-        </div>
-      </nav>
-      <AdminNavPills />
-
-      <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        {showForm && (
-          <div className="mb-6 px-4">
-            <div className="bg-white shadow rounded-lg p-6">
-              <h2 className="text-lg font-bold mb-4">
-                {editingTeam ? 'Edit Team' : 'Create Team'}
-              </h2>
-              {error && (
-                <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">
-                  {error}
-                </div>
-              )}
-              <form onSubmit={handleSubmit}>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Team Name *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full border rounded px-3 py-2"
-                    />
-                  </div>
-                  {isPlatformAdmin && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Club *
-                      </label>
-                      <select
-                        required
-                        value={formData.club_id}
-                        onChange={(e) => setFormData({ ...formData, club_id: e.target.value })}
-                        disabled={!!editingTeam}
-                        className={`w-full border rounded px-3 py-2 ${editingTeam ? 'bg-gray-100 cursor-not-allowed' : ''}`}
-                      >
-                        <option value="">Select a club</option>
-                        {clubs.map((club) => (
-                          <option key={club.id} value={club.id}>
-                            {club.name}
-                          </option>
-                        ))}
-                      </select>
-                      {editingTeam && (
-                        <p className="text-xs text-gray-500 mt-1">
-                          Club cannot be changed when editing a team
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  {!isPlatformAdmin && userClubId && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Club
-                      </label>
-                      <input
-                        type="text"
-                        disabled
-                        value={clubs.find(c => c.id === userClubId)?.name || ''}
-                        className="w-full border rounded px-3 py-2 bg-gray-100"
-                      />
-                    </div>
-                  )}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Category *
-                    </label>
-                    <select
-                      required
-                      value={formData.category}
-                      onChange={(e) => setFormData({ ...formData, category: e.target.value as TeamCategory })}
-                      className="w-full border rounded px-3 py-2"
-                    >
-                      {TEAM_CATEGORIES.map((cat) => (
-                        <option key={cat.value} value={cat.value}>
-                          {cat.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Gender *
-                    </label>
-                    <select
-                      required
-                      value={formData.gender}
-                      onChange={(e) => setFormData({ ...formData, gender: e.target.value as TeamGender })}
-                      className="w-full border rounded px-3 py-2"
-                    >
-                      {TEAM_GENDERS.map((gen) => (
-                        <option key={gen.value} value={gen.value}>
-                          {gen.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Season *
-                    </label>
-                    <select
-                      required
-                      value={formData.season_id}
-                      onChange={(e) => setFormData({ ...formData, season_id: e.target.value })}
-                      className="w-full border rounded px-3 py-2"
-                    >
-                      <option value="">Select a season</option>
-                      {seasons.map((season) => (
-                        <option key={season.id} value={season.id}>
-                          {season.name} {season.is_active && '(Active)'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div className="mt-4 flex gap-2">
-                  <button
-                    type="submit"
-                    className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
-                  >
-                    {editingTeam ? 'Update' : 'Create'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={resetForm}
-                    className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        <div className="px-4 py-6 sm:px-0">
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
-            <ul className="divide-y divide-gray-200">
-              {teams.length === 0 ? (
-                <li className="px-6 py-4 text-gray-500">No teams found</li>
-              ) : (
-                teams.map((team) => (
-                  <li key={team.id} className="px-6 py-4 hover:bg-gray-50">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        {team.clubs && (
-                          <ClubLogo 
-                            logoUrl={team.clubs.logo_url} 
-                            clubName={team.clubs.name} 
-                            size="sm"
-                          />
-                        )}
-                        <div>
-                          <h3 className="text-lg font-medium text-gray-900">{team.name}</h3>
-                          <div className="text-sm text-gray-500">
-                            {team.clubs?.name && <span>Club: {team.clubs.name} • </span>}
-                            <span>Season: {team.seasons?.name || 'N/A'}</span>
-                            {team.category && <span> • {TEAM_CATEGORIES.find(c => c.value === team.category)?.label}</span>}
-                            {team.gender && <span> • {TEAM_GENDERS.find(g => g.value === team.gender)?.label}</span>}
+          {error && <div className="mb-4 px-4"><div className="rounded bg-red-100 p-3 text-red-700 dark:bg-red-950 dark:text-red-200">{error}</div></div>}
+          <div className="px-4 py-6 sm:px-0">
+            <div className="overflow-hidden bg-white shadow sm:rounded-md dark:bg-gray-900 dark:ring-1 dark:ring-white/10">
+              <ul className="divide-y divide-gray-200 dark:divide-white/10">
+                {teams.length === 0 ? (
+                  <li className="px-6 py-4 text-gray-500 dark:text-gray-400">No teams found</li>
+                ) : (
+                  teams.map((team) => (
+                    <li key={team.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-white/5">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-4">
+                          {team.clubs && (
+                            <ClubLogo
+                              logoUrl={team.clubs.logo_url}
+                              clubName={team.clubs.name}
+                              size="sm"
+                              className="!size-[50px] shrink-0"
+                            />
+                          )}
+                          <div>
+                            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                              <Link
+                                href={`/admin/teams/${team.id}`}
+                                className="text-gray-900 transition-colors hover:text-blue-600 dark:text-gray-100 dark:hover:text-blue-400"
+                              >
+                                {team.name}
+                              </Link>
+                              {team.fiba_short_name && <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">({team.fiba_short_name})</span>}
+                            </h3>
+                            <div className="text-sm text-gray-500 dark:text-gray-400">
+                              {team.clubs?.name && <span>Club: {team.clubs.name} • </span>}
+                              <span>Season: {team.seasons?.name || 'N/A'}</span>
+                              {team.category && <span> • {TEAM_CATEGORIES.find((category) => category.value === team.category)?.label}</span>}
+                              {team.gender && <span> • {TEAM_GENDERS.find((gender) => gender.value === team.gender)?.label}</span>}
+                            </div>
                           </div>
                         </div>
+                        <div className="flex gap-2">
+                          <ViewLink href={`/admin/teams/${team.id}`} label={`${t('trke_view_players', 'View players')} ${team.name}`} />
+                          <EditLink href={`/admin/teams/${team.id}?edit=1`} label={`${t('trke_edit', 'Edit')} ${team.name}`} />
+                          <DeleteButton label={`${t('trke_delete', 'Delete')} ${team.name}`} onClick={() => handleDelete(team.id)} />
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleEdit(team)}
-                          className="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(team.id)}
-                          className="bg-red-500 hover:bg-red-700 text-white px-3 py-1 rounded text-sm"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </li>
-                ))
-              )}
-            </ul>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
           </div>
         </div>
       </div>

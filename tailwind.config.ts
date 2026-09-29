@@ -6,6 +6,7 @@ const config: Config = {
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./lib/**/*.{js,ts,tsx}",
   ],
   theme: {
     extend: {
@@ -16,8 +17,8 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ['var(--font-manrope)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        display: ['var(--font-sora)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        sans: ['Manrope', 'Manrope Fallback', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['Sora', 'Sora Fallback', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
     },
   },

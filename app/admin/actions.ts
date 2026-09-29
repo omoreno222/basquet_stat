@@ -3,7 +3,23 @@
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import { getServerSupabase } from '@/lib/supabase';
-import { assertAdmin, assertClubAdmin } from '@/lib/auth-server';
+import { assertAdmin, assertClubAdmin, assertPlatformAdmin, getAuthenticatedUser, getUserClubs } from '@/lib/auth-server';
+import {
+  clubSchema,
+  gameSchema,
+  operatorRoleValues,
+  playerSchema,
+  profileEmailSchema,
+  profileFieldsSchema,
+  profilePasswordSchema,
+  profileThemeSchema,
+  schemaError,
+  seasonSchema,
+  teamSchema,
+  userCreateSchema,
+  userRolesSchema,
+  userUpdateSchema,
+} from '@/lib/form-schemas';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -15,9 +31,22 @@ export async function updateUserRoles(userId: string, roles: string[], clubId?: 
     return { error: authCheck.error };
   }
 
-  if (!roles || roles.length === 0) {
-    return { error: 'At least one role must be selected' };
+  const parsedRoles = userRolesSchema.safeParse({ roles, clubId: clubId ?? null });
+  if (!parsedRoles.success) {
+    return { error: schemaError(parsedRoles.error) };
   }
+
+  const access = await getUserClubs();
+  if (access.error) {
+    return { error: access.error };
+  }
+
+  const resolvedClubId = access.isPlatformAdmin
+    ? parsedRoles.data.clubId ?? null
+    : access.clubIds?.[0] ?? null;
+
+  roles = parsedRoles.data.roles;
+  clubId = resolvedClubId;
 
   // Get user-scoped client (anon key + user's access token) so auth.uid() works in the RPC
   const cookieStore = await cookies();
@@ -459,4 +488,406 @@ export async function resetUserPassword(userId: string) {
   'use server';
   const { resetUserPassword: resetPwd } = await import('@/lib/password-auth');
   return resetPwd(userId);
+}
+
+async function userClient() {
+  const auth = await getAuthenticatedUser();
+  if (auth.error || !auth.user) {
+    return { error: auth.error || 'Unauthorized: Not authenticated', supabase: null };
+  }
+
+  const cookieStore = await cookies();
+  const token = cookieStore.get('sb-access-token')?.value;
+  if (!token) {
+    return { error: 'Unauthorized: Not authenticated', supabase: null };
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+
+  return { error: null, supabase };
+}
+
+async function clubAccessError(clubId: string) {
+  const access = await getUserClubs();
+  if (access.error) return access.error;
+  if (access.isPlatformAdmin) return null;
+  if (!access.clubIds?.includes(clubId)) return 'Unauthorized: Club admin access required for this club';
+  return null;
+}
+
+export async function saveClub(input: unknown) {
+  const parsed = clubSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+
+  const client = await userClient();
+  if (client.error || !client.supabase) return { error: client.error || 'Unauthorized' };
+
+  const payload = {
+    name: parsed.data.name,
+    short_name: parsed.data.short_name || null,
+    primary_color: parsed.data.primary_color,
+    secondary_color: parsed.data.secondary_color,
+  };
+
+  if (parsed.data.id) {
+    const denied = await clubAccessError(parsed.data.id);
+    const access = await getUserClubs();
+    if (!access.isPlatformAdmin && denied) return { error: denied };
+
+    const { error } = await client.supabase.from('clubs').update(payload).eq('id', parsed.data.id);
+    if (error) return { error: error.message };
+    return { id: parsed.data.id };
+  }
+
+  const { data, error } = await client.supabase.from('clubs').insert(payload).select('id').single();
+  if (error) return { error: error.message };
+  return { id: data.id as string };
+}
+
+export async function saveSeason(input: unknown) {
+  const parsed = seasonSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+
+  const client = await userClient();
+  if (client.error || !client.supabase) return { error: client.error || 'Unauthorized' };
+
+  const payload = {
+    name: parsed.data.name,
+    start_date: parsed.data.start_date,
+    end_date: parsed.data.end_date,
+    is_active: parsed.data.is_active,
+  };
+
+  if (parsed.data.id) {
+    const { error } = await client.supabase.from('seasons').update(payload).eq('id', parsed.data.id);
+    if (error) return { error: error.message };
+    return { id: parsed.data.id };
+  }
+
+  const { data, error } = await client.supabase.from('seasons').insert(payload).select('id').single();
+  if (error) return { error: error.message };
+  return { id: data.id as string };
+}
+
+export async function saveTeam(input: unknown) {
+  const parsed = teamSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+
+  const client = await userClient();
+  if (client.error || !client.supabase) return { error: client.error || 'Unauthorized' };
+
+  const access = await getUserClubs();
+  if (access.error) return { error: access.error };
+
+  let clubId = parsed.data.club_id || null;
+  if (!access.isPlatformAdmin) {
+    if (!access.clubIds?.length) return { error: 'Club is required. Please select a club.' };
+    if (clubId && !access.clubIds.includes(clubId)) {
+      return { error: 'Unauthorized: Club admin access required for this club' };
+    }
+    clubId = clubId || access.clubIds[0];
+  }
+
+  if (!clubId) return { error: 'Club is required. Please select a club.' };
+
+  if (parsed.data.id) {
+    const { data: existing, error: existingError } = await client.supabase
+      .from('teams')
+      .select('club_id')
+      .eq('id', parsed.data.id)
+      .single();
+
+    if (existingError || !existing) return { error: 'This page does not exist' };
+    if (clubId !== existing.club_id) {
+      return { error: 'Cannot change team club. Delete and recreate the team if needed.' };
+    }
+  }
+
+  const coachId = parsed.data.coach_id || null;
+  if (coachId) {
+    const { data: coachRole, error: coachError } = await client.supabase
+      .from('profile_roles')
+      .select('profile_id')
+      .eq('profile_id', coachId)
+      .eq('role', 'coach')
+      .eq('club_id', clubId)
+      .limit(1);
+    if (coachError) return { error: coachError.message };
+    if (!coachRole?.length) return { error: 'Team coach must be a user with the coach role in this club' };
+  }
+
+  const payload = {
+    name: parsed.data.name,
+    fiba_short_name: parsed.data.fiba_short_name || null,
+    club_id: clubId,
+    coach_id: coachId,
+    season_id: parsed.data.season_id,
+    category: parsed.data.category,
+    gender: parsed.data.gender,
+  };
+
+  if (parsed.data.id) {
+    const { error } = await client.supabase.from('teams').update(payload).eq('id', parsed.data.id);
+    if (error) return { error: error.message };
+    return { id: parsed.data.id };
+  }
+
+  const { data, error } = await client.supabase.from('teams').insert(payload).select('id').single();
+  if (error) return { error: error.message };
+  return { id: data.id as string };
+}
+
+export async function savePlayer(input: unknown) {
+  const parsed = playerSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+
+  const client = await userClient();
+  if (client.error || !client.supabase) return { error: client.error || 'Unauthorized' };
+
+  const { data: team, error: teamError } = await client.supabase
+    .from('teams')
+    .select('club_id')
+    .eq('id', parsed.data.team_id)
+    .single();
+
+  if (teamError || !team?.club_id) {
+    return { error: 'Selected team has no club. Please select a valid team.' };
+  }
+
+  const denied = await clubAccessError(team.club_id);
+  if (denied) return { error: denied };
+
+  const payload = {
+    full_name: parsed.data.full_name,
+    jersey_number: parsed.data.jersey_number,
+    team_id: parsed.data.team_id,
+    club_id: team.club_id,
+    position: parsed.data.position || null,
+    date_of_birth: parsed.data.date_of_birth || null,
+  };
+
+  if (parsed.data.id) {
+    const { error } = await client.supabase.from('players').update(payload).eq('id', parsed.data.id);
+    if (error) return { error: error.message };
+    return { id: parsed.data.id };
+  }
+
+  const { data, error } = await client.supabase.from('players').insert(payload).select('id').single();
+  if (error) return { error: error.message };
+  return { id: data.id as string };
+}
+
+export async function saveGame(input: unknown) {
+  const parsed = gameSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+
+  const client = await userClient();
+  if (client.error || !client.supabase) return { error: client.error || 'Unauthorized' };
+
+  const { data: team, error: teamError } = await client.supabase
+    .from('teams')
+    .select('club_id')
+    .eq('id', parsed.data.team_id)
+    .single();
+
+  if (teamError || !team?.club_id) return { error: 'Team not found' };
+
+  const denied = await clubAccessError(team.club_id);
+  if (denied) return { error: denied };
+
+  const slotB = parsed.data.single_recorder ? null : parsed.data.slot_b_user_id || null;
+  const recorderIds = [parsed.data.slot_a_user_id, slotB].filter((id): id is string => Boolean(id));
+  const { data: recorderRoles, error: recorderError } = await client.supabase
+    .from('profile_roles')
+    .select('profile_id, role, club_id')
+    .in('profile_id', recorderIds)
+    .in('role', [...operatorRoleValues]);
+
+  if (recorderError) return { error: recorderError.message };
+
+  const allowed = new Set(
+    (recorderRoles || [])
+      .filter((role) => (
+        (role.role === 'admin' && role.club_id === null)
+        || ((role.role === 'club_admin' || role.role === 'team_manager') && role.club_id === team.club_id)
+      ))
+      .map((role) => role.profile_id),
+  );
+  if (recorderIds.some((id) => !allowed.has(id))) {
+    return { error: 'Each operator must be an admin, club admin, or team manager of this club' };
+  }
+
+  if (parsed.data.id) {
+    const { data: existing, error: existingError } = await client.supabase
+      .from('games')
+      .select('status, clock_running, slot_a_user_id, slot_b_user_id')
+      .eq('id', parsed.data.id)
+      .single();
+    if (existingError || !existing) return { error: existingError?.message || 'Game not found' };
+
+    const operatorsChanged = existing.slot_a_user_id !== parsed.data.slot_a_user_id
+      || existing.slot_b_user_id !== slotB;
+    if (operatorsChanged && (existing.status === 'final' || parsed.data.status === 'final')) {
+      return { error: 'OPERATOR_FINAL' };
+    }
+    if (operatorsChanged && existing.status === 'live' && existing.clock_running) {
+      return { error: 'OPERATOR_CLOCK' };
+    }
+  }
+
+  const payload = {
+    team_id: parsed.data.team_id,
+    opponent_name: parsed.data.opponent_name,
+    game_date: new Date(parsed.data.game_date).toISOString(),
+    venue: parsed.data.venue || null,
+    status: parsed.data.status,
+    is_home: parsed.data.is_home,
+    official: parsed.data.official,
+    single_recorder: parsed.data.single_recorder,
+    slot_a_user_id: parsed.data.slot_a_user_id,
+    slot_b_user_id: slotB,
+  };
+
+  if (parsed.data.id) {
+    const { error } = await client.supabase.from('games').update(payload).eq('id', parsed.data.id);
+    if (error) return { error: error.message };
+    return { id: parsed.data.id };
+  }
+
+  const { data, error } = await client.supabase.from('games').insert(payload).select('id').single();
+  if (error) return { error: error.message };
+  return { id: data.id as string };
+}
+
+export async function createAdminUser(input: unknown) {
+  const parsed = userCreateSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+
+  const access = await getUserClubs();
+  if (access.error) return { error: access.error };
+
+  let clubId = parsed.data.club_id ?? null;
+  if (!access.isPlatformAdmin) {
+    clubId = access.clubIds?.[0] ?? null;
+  }
+
+  const { createUserWithPassword } = await import('@/lib/password-auth');
+  return createUserWithPassword({
+    email: parsed.data.email,
+    full_name: parsed.data.full_name,
+    role: parsed.data.roles[0],
+    roles: parsed.data.roles,
+    club_id: clubId,
+  });
+}
+
+export async function updateAdminUser(input: unknown) {
+  const parsed = userUpdateSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+
+  const rolesResult = await updateUserRoles(parsed.data.id, parsed.data.roles, parsed.data.club_id ?? null);
+  if (rolesResult.error) return { error: rolesResult.error };
+
+  const supabase = getServerSupabase();
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('email')
+    .eq('id', parsed.data.id)
+    .single();
+  if (profileError || !profile) return { error: profileError?.message || 'User not found' };
+
+  const nextEmail = parsed.data.email.trim();
+  if (nextEmail.toLowerCase() !== profile.email.trim().toLowerCase()) {
+    const { error: authError } = await supabase.auth.admin.updateUserById(parsed.data.id, {
+      email: nextEmail,
+      email_confirm: true,
+    });
+    if (authError) return { error: authError.message };
+  }
+
+  const { error: updateError } = await supabase
+    .from('profiles')
+    .update({
+      full_name: parsed.data.full_name || null,
+      email: nextEmail,
+    })
+    .eq('id', parsed.data.id);
+
+  if (updateError) return { error: updateError.message };
+  return { success: true };
+}
+
+export async function saveProfileFields(profileId: string, input: unknown) {
+  const parsed = profileFieldsSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+  if (!zUuid(profileId)) return { error: 'This page does not exist' };
+
+  const denied = await profileWriteError(profileId);
+  if (denied) return { error: denied };
+
+  const client = await userClient();
+  if (client.error || !client.supabase) return { error: client.error || 'Unauthorized' };
+
+  const { error } = await client.supabase
+    .from('profiles')
+    .update({
+      first_name: parsed.data.first_name,
+      last_name: parsed.data.last_name,
+      locale: parsed.data.locale,
+      phone: parsed.data.phone,
+    })
+    .eq('id', profileId);
+
+  if (error) return { error: error.message };
+  return { success: true };
+}
+
+export async function saveProfileTheme(profileId: string, input: unknown) {
+  const parsed = profileThemeSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+  if (!zUuid(profileId)) return { error: 'This page does not exist' };
+
+  const denied = await profileWriteError(profileId);
+  if (denied) return { error: denied };
+
+  const client = await userClient();
+  if (client.error || !client.supabase) return { error: client.error || 'Unauthorized' };
+
+  const { error } = await client.supabase
+    .from('profiles')
+    .update({ theme: parsed.data.theme })
+    .eq('id', profileId);
+
+  if (error) return { error: error.message };
+  return { success: true };
+}
+
+export async function changeOwnEmail(input: unknown) {
+  const parsed = profileEmailSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+
+  const { changeEmailWithPassword } = await import('@/lib/password-auth');
+  return changeEmailWithPassword(parsed.data.currentPassword, parsed.data.newEmail);
+}
+
+export async function changeOwnPassword(input: unknown) {
+  const parsed = profilePasswordSchema.safeParse(input);
+  if (!parsed.success) return { error: schemaError(parsed.error) };
+
+  const { changePasswordWithCurrent } = await import('@/lib/password-auth');
+  return changePasswordWithCurrent(parsed.data.currentPassword, parsed.data.newPassword);
+}
+
+function zUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+async function profileWriteError(profileId: string) {
+  const auth = await getAuthenticatedUser();
+  if (auth.error || !auth.user) return auth.error || 'Unauthorized: Not authenticated';
+  if (auth.user.id === profileId) return null;
+  const admin = await assertPlatformAdmin();
+  return admin.error;
 }

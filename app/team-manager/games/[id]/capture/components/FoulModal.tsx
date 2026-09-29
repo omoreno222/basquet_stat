@@ -14,6 +14,7 @@ interface FoulModalProps {
   players: Player[];
   playerFoulCounts: Record<string, number>;
   onConfirm: (player: Player, foulType: string, freeThrowsAwarded: number) => void;
+  onPersonalFoul: (player: Player) => void;
   onClose: () => void;
 }
 
@@ -32,7 +33,7 @@ function getPlayerColor(id: string): string {
   return colors[index];
 }
 
-export function FoulModal({ players, playerFoulCounts, onConfirm, onClose }: FoulModalProps) {
+export function FoulModal({ players, playerFoulCounts, onConfirm, onPersonalFoul, onClose }: FoulModalProps) {
   const [step, setStep] = useState<'player' | 'type' | 'fta'>('player');
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [foulType, setFoulType] = useState<string>('');
@@ -43,6 +44,10 @@ export function FoulModal({ players, playerFoulCounts, onConfirm, onClose }: Fou
   };
 
   const handleTypeSelect = (type: string) => {
+    if (type === 'personal' && selectedPlayer) {
+      onPersonalFoul(selectedPlayer);
+      return;
+    }
     setFoulType(type);
     setStep('fta');
   };

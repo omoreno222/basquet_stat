@@ -12,6 +12,8 @@ interface BasketballCourtProps {
   className?: string;
   attackingRight?: boolean;
   isOffense?: boolean;
+  opponentCode?: string;
+  teamLogoUrl?: string | null;
 }
 
 /**
@@ -22,10 +24,33 @@ interface BasketballCourtProps {
  * - Key: 4.9m wide × 5.8m long, free-throw circle radius 1.8m
  * - Restricted area: 1.25m radius from rim
  * 
- * SVG viewBox: 2800 × 1560 (1 unit = 1cm for precision)
- * Court occupies 2800 × 1500, with 60 units bottom margin for scorer's table marker
+ * SVG viewBox: 2800 × 1500 (1 unit = 1cm for precision)
+ * The court fills the viewBox. Side columns and the scoreboard live outside this SVG.
  * MUST maintain aspect ratio - no stretching!
  */
+
+const ATTACK_MARK_R = 46;
+const ATTACK_MARK_TRI_H = 58;
+const ATTACK_MARK_TRI_W = 42;
+const ATTACK_MARK_OVERLAP = 14;
+const ATTACK_MARK_W = ATTACK_MARK_R * 2 + ATTACK_MARK_TRI_W - ATTACK_MARK_OVERLAP;
+const ATTACK_MARK_H = ATTACK_MARK_R * 2;
+
+/** Round mark with a triangular pointer tucked into one side. */
+function attackMarkLayout(x: number, y: number, pointRight: boolean) {
+  const cy = y + ATTACK_MARK_R;
+  const cx = pointRight ? x + ATTACK_MARK_R : x + ATTACK_MARK_W - ATTACK_MARK_R;
+  const baseX = pointRight ? cx + ATTACK_MARK_R - ATTACK_MARK_OVERLAP : cx - ATTACK_MARK_R + ATTACK_MARK_OVERLAP;
+  const tipX = pointRight ? baseX + ATTACK_MARK_TRI_W : baseX - ATTACK_MARK_TRI_W;
+  const topY = cy - ATTACK_MARK_TRI_H / 2;
+  const bottomY = cy + ATTACK_MARK_TRI_H / 2;
+  return {
+    cx,
+    cy,
+    r: ATTACK_MARK_R,
+    triangle: `M ${baseX} ${topY} L ${tipX} ${cy} L ${baseX} ${bottomY} Z`,
+  };
+}
 
 export function BasketballCourt({ 
   onCourtTap, 
@@ -33,6 +58,8 @@ export function BasketballCourt({
   className = '',
   attackingRight = true,
   isOffense = true,
+  opponentCode = '',
+  teamLogoUrl = null,
 }: BasketballCourtProps) {
   const handleClick = (e: React.MouseEvent<SVGElement>) => {
     if (!onCourtTap) return;
@@ -48,10 +75,9 @@ export function BasketballCourt({
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
     
-    // The SVG maintains 2800:1560 aspect ratio with "meet", so calculate letterboxing
+    // The SVG maintains 2800:1500 aspect ratio with "meet", so calculate letterboxing
     const VIEWBOX_WIDTH = 2800;
-    const VIEWBOX_HEIGHT = 1560; // includes 60 units margin at bottom
-    const COURT_HEIGHT = 1500; // actual court height
+    const VIEWBOX_HEIGHT = 1500;
     
     const svgAspect = VIEWBOX_WIDTH / VIEWBOX_HEIGHT;
     const containerAspect = svgWidth / svgHeight;
@@ -80,11 +106,9 @@ export function BasketballCourt({
     const viewBoxX = worldX * VIEWBOX_WIDTH;
     const viewBoxY = worldY * VIEWBOX_HEIGHT;
     
-    // Only register clicks within the actual court bounds (not in margin)
-    if (viewBoxX >= 0 && viewBoxX <= VIEWBOX_WIDTH && viewBoxY >= 0 && viewBoxY <= COURT_HEIGHT) {
-      // Convert to 0-1 range for the court only
+    if (viewBoxX >= 0 && viewBoxX <= VIEWBOX_WIDTH && viewBoxY >= 0 && viewBoxY <= VIEWBOX_HEIGHT) {
       const courtX = viewBoxX / VIEWBOX_WIDTH;
-      const courtY = viewBoxY / COURT_HEIGHT;
+      const courtY = viewBoxY / VIEWBOX_HEIGHT;
       onCourtTap(courtX, courtY);
     }
   };
@@ -94,7 +118,7 @@ export function BasketballCourt({
   // FIBA dimensions in cm (1 unit = 1cm)
   const COURT_LENGTH = 2800; // 28m
   const COURT_WIDTH = 1500; // 15m
-  const VIEWBOX_HEIGHT = 1560; // Court height + 60 units bottom margin for scorer's table
+  const VIEWBOX_HEIGHT = COURT_WIDTH;
   const RIM_FROM_BASELINE = 157.5; // 1.575m
   const RIM_Y = 750; // 7.5m (center of court width)
   const THREE_PT_RADIUS = 675; // 6.75m
@@ -395,33 +419,60 @@ export function BasketballCourt({
         strokeWidth="6" 
       />
       
-      {/* Scorer's Table Marker - centered on halfway line, outside bottom sideline */}
-      {/* This marker represents the physical scorer's table (mesa) and stays fixed regardless of court orientation */}
-      <g id="scorers-table">
-        {/* Table rectangle - small, outside bottom boundary */}
-        <rect 
-          x={COURT_LENGTH / 2 - 80} 
-          y={COURT_WIDTH + 10} 
-          width="160" 
-          height="30" 
-          fill="#8B4513" 
-          stroke="#654321" 
-          strokeWidth="2"
-          rx="2"
-        />
-        {/* Table label */}
-        <text 
-          x={COURT_LENGTH / 2} 
-          y={COURT_WIDTH + 27} 
-          textAnchor="middle" 
-          fontSize="16" 
-          fontWeight="bold" 
-          fill="#ffffff"
-          style={{ userSelect: 'none' }}
-        >
-          TABLE
-        </text>
-      </g>
+      {/* Bottom corner of each attacking half: round mark plus a triangle pointing at that basket. */}
+      {(() => {
+        const pad = 16;
+        const leftX = pad;
+        const rightX = COURT_LENGTH - ATTACK_MARK_W - pad;
+        const markY = COURT_WIDTH - ATTACK_MARK_H - pad;
+        const letters = opponentCode.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase();
+        const homeX = attackingRight ? rightX : leftX;
+        const awayX = attackingRight ? leftX : rightX;
+        const homeMark = attackMarkLayout(homeX, markY, attackingRight);
+        const awayMark = attackMarkLayout(awayX, markY, !attackingRight);
+
+        return (
+          <g style={{ pointerEvents: 'none' }}>
+            <defs>
+              <clipPath id="capture-home-attack-logo">
+                <circle cx={homeMark.cx} cy={homeMark.cy} r={homeMark.r} />
+              </clipPath>
+            </defs>
+            {teamLogoUrl ? (
+              <g>
+                <circle cx={homeMark.cx} cy={homeMark.cy} r={homeMark.r} fill="#ffffff" stroke="#1a1a1a" strokeWidth="3" />
+                <image
+                  href={teamLogoUrl}
+                  x={homeMark.cx - homeMark.r}
+                  y={homeMark.cy - homeMark.r}
+                  width={homeMark.r * 2}
+                  height={homeMark.r * 2}
+                  preserveAspectRatio="xMidYMid slice"
+                  clipPath="url(#capture-home-attack-logo)"
+                />
+                <circle cx={homeMark.cx} cy={homeMark.cy} r={homeMark.r} fill="none" stroke="#1a1a1a" strokeWidth="3" />
+                <path d={homeMark.triangle} fill="#1a1a1a" stroke="#ffffff" strokeWidth="2.5" strokeLinejoin="miter" />
+              </g>
+            ) : null}
+            <circle cx={awayMark.cx} cy={awayMark.cy} r={awayMark.r} fill="#161616" stroke="#ffffff" strokeWidth="3" />
+            {letters ? (
+              <text
+                x={awayMark.cx}
+                y={awayMark.cy}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="#ffffff"
+                fontSize={letters.length > 2 ? 18 : 22}
+                fontWeight="800"
+                fontFamily="system-ui, sans-serif"
+              >
+                {letters}
+              </text>
+            ) : null}
+            <path d={awayMark.triangle} fill="#1a1a1a" stroke="#ffffff" strokeWidth="2.5" strokeLinejoin="miter" />
+          </g>
+        );
+      })()}
 
       {/* Shot markers - enhanced visibility */}
       {shotMarkers.map((marker) => {
