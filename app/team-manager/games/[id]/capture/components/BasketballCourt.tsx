@@ -1,5 +1,7 @@
 'use client';
 
+import { inkOn } from '@/lib/colors';
+
 interface BasketballCourtProps {
   onCourtTap?: (x: number, y: number) => void;
   shotMarkers?: Array<{
@@ -9,11 +11,17 @@ interface BasketballCourtProps {
     made: boolean;
     points: number;
   }>;
+  /** Live tap while recording a turnover. Not drawn from saved events. */
+  placement?: { x: number; y: number } | null;
   className?: string;
   attackingRight?: boolean;
   isOffense?: boolean;
   opponentCode?: string;
+  opponentColor?: string;
   teamLogoUrl?: string | null;
+  tableOnBottom?: boolean;
+  tableLabel?: string;
+  logoInverted?: boolean;
 }
 
 /**
@@ -54,17 +62,36 @@ function attackMarkLayout(x: number, y: number, pointRight: boolean) {
 
 export function BasketballCourt({ 
   onCourtTap, 
-  shotMarkers = [], 
+  shotMarkers = [],
+  placement = null,
   className = '',
   attackingRight = true,
   isOffense = true,
   opponentCode = '',
+  opponentColor = '#737373',
   teamLogoUrl = null,
+  tableOnBottom = true,
+  tableLabel = "Scorer's table",
+  logoInverted = false,
 }: BasketballCourtProps) {
-  const handleClick = (e: React.MouseEvent<SVGElement>) => {
+  const handleClick = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!onCourtTap) return;
 
     const svg = e.currentTarget;
+    const VIEWBOX_WIDTH = 2800;
+    const VIEWBOX_HEIGHT = 1500;
+    const ctm = svg.getScreenCTM();
+    if (ctm) {
+      const point = svg.createSVGPoint();
+      point.x = e.clientX;
+      point.y = e.clientY;
+      const local = point.matrixTransform(ctm.inverse());
+      if (local.x >= 0 && local.x <= VIEWBOX_WIDTH && local.y >= 0 && local.y <= VIEWBOX_HEIGHT) {
+        onCourtTap(local.x / VIEWBOX_WIDTH, local.y / VIEWBOX_HEIGHT);
+      }
+      return;
+    }
+
     const rect = svg.getBoundingClientRect();
     
     // Get the actual rendered SVG dimensions (accounting for aspect ratio preservation)
@@ -76,9 +103,6 @@ export function BasketballCourt({
     const clickY = e.clientY - rect.top;
     
     // The SVG maintains 2800:1500 aspect ratio with "meet", so calculate letterboxing
-    const VIEWBOX_WIDTH = 2800;
-    const VIEWBOX_HEIGHT = 1500;
-    
     const svgAspect = VIEWBOX_WIDTH / VIEWBOX_HEIGHT;
     const containerAspect = svgWidth / svgHeight;
     
@@ -216,6 +240,7 @@ export function BasketballCourt({
         height="300"
         opacity="0.85"
         preserveAspectRatio="xMidYMid meet"
+        transform={logoInverted ? `rotate(180 ${COURT_LENGTH / 2} ${COURT_WIDTH / 2})` : undefined}
         style={{ pointerEvents: 'none' }}
       />
       
@@ -426,6 +451,7 @@ export function BasketballCourt({
         const rightX = COURT_LENGTH - ATTACK_MARK_W - pad;
         const markY = COURT_WIDTH - ATTACK_MARK_H - pad;
         const letters = opponentCode.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase();
+        const awayInk = inkOn(opponentColor);
         const homeX = attackingRight ? rightX : leftX;
         const awayX = attackingRight ? leftX : rightX;
         const homeMark = attackMarkLayout(homeX, markY, attackingRight);
@@ -454,14 +480,14 @@ export function BasketballCourt({
                 <path d={homeMark.triangle} fill="#1a1a1a" stroke="#ffffff" strokeWidth="2.5" strokeLinejoin="miter" />
               </g>
             ) : null}
-            <circle cx={awayMark.cx} cy={awayMark.cy} r={awayMark.r} fill="#161616" stroke="#ffffff" strokeWidth="3" />
+            <circle cx={awayMark.cx} cy={awayMark.cy} r={awayMark.r} fill={opponentColor} stroke={awayInk} strokeWidth="3" />
             {letters ? (
               <text
                 x={awayMark.cx}
                 y={awayMark.cy}
                 textAnchor="middle"
                 dominantBaseline="central"
-                fill="#ffffff"
+                fill={awayInk}
                 fontSize={letters.length > 2 ? 18 : 22}
                 fontWeight="800"
                 fontFamily="system-ui, sans-serif"
@@ -469,10 +495,53 @@ export function BasketballCourt({
                 {letters}
               </text>
             ) : null}
-            <path d={awayMark.triangle} fill="#1a1a1a" stroke="#ffffff" strokeWidth="2.5" strokeLinejoin="miter" />
+            <path d={awayMark.triangle} fill={opponentColor} stroke={awayInk} strokeWidth="2.5" strokeLinejoin="miter" />
           </g>
         );
       })()}
+
+      <g
+        role="img"
+        aria-label={tableLabel}
+        style={{ cursor: 'default' }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <title>{tableLabel}</title>
+        {(() => {
+          const tableW = 480;
+          const tableH = 64;
+          const tableX = (COURT_LENGTH - tableW) / 2;
+          const tableY = tableOnBottom ? COURT_WIDTH - tableH : 0;
+          const lipY = tableOnBottom ? tableY : tableY + tableH - 16;
+          return (
+            <>
+              <rect x={tableX} y={tableY} width={tableW} height={tableH} fill="#1e3a8a" />
+              <rect x={tableX} y={lipY} width={tableW} height={16} fill="#93c5fd" />
+              <rect x={tableX} y={tableY} width={tableW} height={tableH} fill="none" stroke="#ffffff" strokeWidth={4} />
+            </>
+          );
+        })()}
+      </g>
+
+      {placement ? (
+        <g aria-label="Turnover location">
+          <circle
+            cx={placement.x * COURT_LENGTH}
+            cy={placement.y * COURT_WIDTH}
+            r="36"
+            fill="#000"
+            opacity="0.35"
+          />
+          <circle
+            cx={placement.x * COURT_LENGTH}
+            cy={placement.y * COURT_WIDTH}
+            r="22"
+            fill="#f97316"
+            stroke="#fff"
+            strokeWidth="4"
+          />
+        </g>
+      ) : null}
 
       {/* Shot markers - enhanced visibility */}
       {shotMarkers.map((marker) => {
@@ -501,85 +570,4 @@ export function BasketballCourt({
       })}
     </svg>
   );
-}
-
-/**
- * Helper function to check if a point is inside the 3-point line
- * Uses exact FIBA geometry for accurate 2P/3P detection
- */
-export function isInsideThreePointLine(
-  worldX: number,
-  worldY: number,
-  attackingRight: boolean
-): boolean {
-  // Convert world coords (0-1) to court coords (cm)
-  const COURT_LENGTH = 2800;
-  const COURT_WIDTH = 1500;
-  const courtX = worldX * COURT_LENGTH;
-  const courtY = worldY * COURT_WIDTH;
-  
-  // Attacking basket rim position
-  const rimX = attackingRight ? COURT_LENGTH - 157.5 : 157.5;
-  const rimY = 750;
-  
-  // Distance from rim
-  const dx = courtX - rimX;
-  const dy = courtY - rimY;
-  const distFromRim = Math.sqrt(dx * dx + dy * dy);
-  
-  // FIBA 3-point line is 6.75m (675cm) from rim - use strict > for line itself
-  if (distFromRim > 675) {
-    return false; // Outside arc = 3-pointer
-  }
-  
-  // Inside arc radius, but check corner-3 zone (within straight segments)
-  // Corner 3s: y < 90 or y > 1410 (0.9m from sidelines)
-  const isInCorner = (courtY < 90 || courtY > 1410);
-  if (isInCorner) {
-    // In corner zone, check if beyond the arc meeting point (~299cm from baseline)
-    const meetX = attackingRight ? COURT_LENGTH - 299 : 299;
-    const isPastMeetingPoint = attackingRight ? courtX > meetX : courtX < meetX;
-    return !isPastMeetingPoint; // Past meeting point = 3-pointer even in corner
-  }
-  
-  return true; // Inside arc and not in corner-3 zone = 2-pointer
-}
-
-/**
- * Helper function to calculate shot zone from world coordinates
- * Returns zone 1-4 based on FIBA court geometry
- */
-export function calculateShotZone(
-  worldX: number,
-  worldY: number,
-  attackingRight: boolean
-): number {
-  // Convert world coords (0-1) to meters
-  const courtX = worldX * 28; // 28m court length
-  const courtY = worldY * 15; // 15m court width
-  
-  // Attacking basket rim position (1.575m from baseline, 7.5m from sideline)
-  const rimX = attackingRight ? 28 - 1.575 : 1.575;
-  const rimY = 7.5;
-  
-  // Distance from rim in meters
-  const dx = courtX - rimX;
-  const dy = courtY - rimY;
-  const distFromRim = Math.sqrt(dx * dx + dy * dy);
-  
-  // Check if shot is inside the 3-point line
-  const inside3pt = isInsideThreePointLine(worldX, worldY, attackingRight);
-  
-  // Zone classification based on FIBA geometry
-  // Zone 1: Paint/close (< 3m from rim)
-  // Zone 2-3: Mid-range (3-6.75m AND inside 3pt line), split by court width
-  // Zone 4: Beyond 3-point line
-  if (distFromRim < 3.0) {
-    return 1; // Paint/close range
-  } else if (inside3pt) {
-    // Mid-range (inside 3pt line), distinguish left/right based on position relative to center width
-    return dy > 0 ? 2 : 3; // Right (2) vs Left (3) based on y-position
-  } else {
-    return 4; // Long range / 3-point area
-  }
 }

@@ -1,28 +1,26 @@
-/**
- * Recorders are complete when tablet A is set and, unless the game has a
- * single recorder, tablet B is set too.
- */
-export function assignmentComplete(params: {
-  singleRecorder: boolean;
-  slotAUserId: string | null;
-  slotBUserId: string | null;
-}): boolean {
-  if (!params.slotAUserId) return false;
-  if (params.singleRecorder) return !params.slotBUserId;
-  return Boolean(params.slotBUserId);
+/** Platform admin: admin role with no club. */
+export function isPlatformAdmin(roles: { role: string; club_id: string | null }[]): boolean {
+  return roles.some((role) => role.role === 'admin' && role.club_id === null);
 }
 
 /**
- * A live game opens on the court only for the team manager stored on tablet A or B.
+ * A platform admin, or a club admin or team manager of this club, can record its games.
  */
+export function userManagesClub(
+  roles: { role: string; club_id: string | null }[],
+  clubId: string | null,
+): boolean {
+  if (!clubId) return false;
+  return roles.some((role) =>
+    (role.role === 'admin' && role.club_id === null)
+    || ((role.role === 'club_admin' || role.role === 'team_manager') && role.club_id === clubId),
+  );
+}
+
+/** A live game opens on the court for a platform admin or someone who manages that club. */
 export function userCanOpenLiveGame(params: {
   status: string;
-  userId: string | null;
-  singleRecorder: boolean;
-  slotAUserId: string | null;
-  slotBUserId: string | null;
+  managesClub: boolean;
 }): boolean {
-  if (params.status !== 'live' || !params.userId) return false;
-  if (!assignmentComplete(params)) return false;
-  return params.userId === params.slotAUserId || params.userId === params.slotBUserId;
+  return params.status === 'live' && params.managesClub;
 }

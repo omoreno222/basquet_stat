@@ -13,28 +13,15 @@ type Translate = (key: string, fallback: string) => string;
 
 interface FreeThrowSequencePopupProps {
   t: Translate;
+  count: 1 | 2 | 3;
   onConfirm: (result: FreeThrowSequenceResult) => void;
   onClose: () => void;
 }
 
-const COUNTS = [1, 2, 3] as const;
+export function FreeThrowSequencePopup({ t, count, onConfirm, onClose }: FreeThrowSequencePopupProps) {
+  const [shots, setShots] = useState<(FreeThrowMark | null)[]>(() => Array.from({ length: count }, () => null));
 
-function resizeShots(shots: (FreeThrowMark | null)[], count: 1 | 2 | 3) {
-  const next = shots.slice(0, count);
-  while (next.length < count) next.push(null);
-  return next;
-}
-
-export function FreeThrowSequencePopup({ t, onConfirm, onClose }: FreeThrowSequencePopupProps) {
-  const [count, setCount] = useState<1 | 2 | 3>(2);
-  const [shots, setShots] = useState<(FreeThrowMark | null)[]>([null, null]);
-
-  const complete = shots.every((shot) => shot !== null);
-
-  function selectCount(next: 1 | 2 | 3) {
-    setCount(next);
-    setShots((current) => resizeShots(current, next));
-  }
+  const complete = shots.length === count && shots.every((shot) => shot !== null);
 
   function markShot(index: number, mark: FreeThrowMark) {
     setShots((current) => current.map((shot, shotIndex) => (shotIndex === index ? mark : shot)));
@@ -53,39 +40,11 @@ export function FreeThrowSequencePopup({ t, onConfirm, onClose }: FreeThrowSeque
             {t('trke_ft_sequence_title', 'Free throws')}
           </h2>
           <p className="mt-1 text-center text-[11px] font-medium text-neutral-500">
-            {t('trke_ft_sequence_hint', 'Personal foul · choose how many and mark each one')}
+            {t('trke_ft_sequence_mark', 'Mark each free throw')}
           </p>
         </header>
 
         <div className="space-y-5 px-4 py-5">
-          <div>
-            <p className="mb-2 text-center text-[11px] font-black tracking-wider text-neutral-500">
-              {t('trke_ft_sequence_count', 'Number of shots')}
-            </p>
-            <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label={t('trke_ft_sequence_count', 'Number of shots')}>
-              {COUNTS.map((option) => {
-                const selected = count === option;
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    onClick={() => selectCount(option)}
-                    className={`py-4 text-3xl font-black tabular-nums ${
-                      selected
-                        ? 'bg-black text-white'
-                        : 'bg-neutral-200 text-neutral-700 hover:bg-neutral-300'
-                    }`}
-                    style={{ minHeight: '64px' }}
-                  >
-                    {option}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           <div className="space-y-3">
             {shots.map((shot, index) => (
               <div key={index} className="grid grid-cols-[3.5rem_1fr_1fr] items-center gap-2">

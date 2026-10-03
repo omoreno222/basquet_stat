@@ -1,79 +1,50 @@
 import { describe, expect, it } from 'vitest';
-import { assignmentComplete, userCanOpenLiveGame } from './live-access';
+import { isPlatformAdmin, userCanOpenLiveGame, userManagesClub } from './live-access';
 
-const userId = 'user-1';
+const clubId = 'club-1';
 
-describe('assignmentComplete', () => {
-  it('needs both recorders unless the game has a single recorder', () => {
-    expect(assignmentComplete({
-      singleRecorder: false,
-      slotAUserId: userId,
-      slotBUserId: 'user-2',
-    })).toBe(true);
-    expect(assignmentComplete({
-      singleRecorder: true,
-      slotAUserId: userId,
-      slotBUserId: null,
-    })).toBe(true);
-    expect(assignmentComplete({
-      singleRecorder: false,
-      slotAUserId: userId,
-      slotBUserId: null,
-    })).toBe(false);
-    expect(assignmentComplete({
-      singleRecorder: true,
-      slotAUserId: null,
-      slotBUserId: null,
-    })).toBe(false);
+describe('isPlatformAdmin', () => {
+  it('accepts only an admin with no club', () => {
+    expect(isPlatformAdmin([{ role: 'admin', club_id: null }])).toBe(true);
+    expect(isPlatformAdmin([{ role: 'admin', club_id: clubId }])).toBe(false);
+    expect(isPlatformAdmin([{ role: 'club_admin', club_id: null }])).toBe(false);
+  });
+});
+
+describe('userManagesClub', () => {
+  it('accepts a team manager, a club admin, or a platform admin', () => {
+    expect(userManagesClub([
+      { role: 'team_manager', club_id: clubId },
+    ], clubId)).toBe(true);
+    expect(userManagesClub([
+      { role: 'club_admin', club_id: clubId },
+    ], clubId)).toBe(true);
+    expect(userManagesClub([
+      { role: 'admin', club_id: null },
+    ], clubId)).toBe(true);
+  });
+
+  it('rejects another club, a coach, and a missing club', () => {
+    expect(userManagesClub([
+      { role: 'team_manager', club_id: 'club-2' },
+    ], clubId)).toBe(false);
+    expect(userManagesClub([
+      { role: 'coach', club_id: clubId },
+    ], clubId)).toBe(false);
+    expect(userManagesClub([
+      { role: 'team_manager', club_id: clubId },
+    ], null)).toBe(false);
   });
 });
 
 describe('userCanOpenLiveGame', () => {
-  it('lets an assigned recorder open a complete live game', () => {
-    expect(userCanOpenLiveGame({
-      status: 'live',
-      userId,
-      singleRecorder: false,
-      slotAUserId: userId,
-      slotBUserId: 'user-2',
-    })).toBe(true);
-    expect(userCanOpenLiveGame({
-      status: 'live',
-      userId,
-      singleRecorder: false,
-      slotAUserId: 'user-2',
-      slotBUserId: userId,
-    })).toBe(true);
-    expect(userCanOpenLiveGame({
-      status: 'live',
-      userId,
-      singleRecorder: true,
-      slotAUserId: userId,
-      slotBUserId: null,
-    })).toBe(true);
+  it('opens a live game for someone who manages the club', () => {
+    expect(userCanOpenLiveGame({ status: 'live', managesClub: true })).toBe(true);
   });
 
-  it('stays closed when the game is not live, a recorder is missing, or the user is not assigned', () => {
-    expect(userCanOpenLiveGame({
-      status: 'scheduled',
-      userId,
-      singleRecorder: false,
-      slotAUserId: userId,
-      slotBUserId: 'user-2',
-    })).toBe(false);
-    expect(userCanOpenLiveGame({
-      status: 'live',
-      userId,
-      singleRecorder: false,
-      slotAUserId: userId,
-      slotBUserId: null,
-    })).toBe(false);
-    expect(userCanOpenLiveGame({
-      status: 'live',
-      userId,
-      singleRecorder: false,
-      slotAUserId: 'other',
-      slotBUserId: 'user-2',
-    })).toBe(false);
+  it('stays closed when the game is not live or the user does not manage the club', () => {
+    expect(userCanOpenLiveGame({ status: 'scheduled', managesClub: true })).toBe(false);
+    expect(userCanOpenLiveGame({ status: 'final', managesClub: true })).toBe(false);
+    expect(userCanOpenLiveGame({ status: 'live', managesClub: false })).toBe(false);
   });
 });

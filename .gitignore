@@ -29,6 +29,9 @@ yarn-error.log*
 .env*.local
 .env
 
+# local demo credentials (not for deploy)
+/credenciales.txt
+
 # vercel
 .vercel
 

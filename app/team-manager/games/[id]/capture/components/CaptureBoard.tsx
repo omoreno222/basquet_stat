@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { inkOn } from '@/lib/colors';
 
 export type CaptureBoardAction = 'made' | 'miss' | 'foul' | 'turnover';
 
@@ -9,8 +10,8 @@ export interface CaptureBoardPlayer {
   jersey: number;
   fouls: number;
   name: string;
-  avatarUrl: string | null;
   onCourt?: boolean;
+  avatarUrl?: string | null;
 }
 
 export interface CaptureLogItem {
@@ -26,46 +27,72 @@ interface CaptureBoardProps {
   awayName: string;
   homeScore: number;
   awayScore: number;
-  possession: 'home' | 'away';
+  possession: 'home' | 'away' | null;
   periodLabel: string;
-  clockMinutes: string;
-  clockSeconds: string;
+  clockLeft: string;
+  clockRight: string;
+  lastMinute: boolean;
   clockRunning: boolean;
   canControlClock: boolean;
-  onAdjustClock: (unit: 'minute' | 'second', delta: number) => void;
+  onAdjustClock: (unit: 'minute' | 'second' | 'tenth', delta: number) => void;
   onToggleClock: () => void;
+  /** Shown instead of start clock while the opening tip has not been taken. */
+  idleClockLabel?: string;
   homePlayers: CaptureBoardPlayer[];
   awayPlayers: CaptureBoardPlayer[];
   homeBench: CaptureBoardPlayer[];
   awayBench: CaptureBoardPlayer[];
   homePersonalFouls: number;
   awayPersonalFouls: number;
+  timeoutsUsed: number;
+  timeoutMax: number;
+  cambioLabel: string;
+  stepBackLabel: string;
+  cancelDeleteLabel: string;
+  timeoutLabel: string;
+  foulsLabel: string;
+  clockViolationsEnabled: boolean;
+  onShotClock: (side: 'home' | 'away') => void;
+  onEightSeconds: (side: 'home' | 'away') => void;
+  onFiveSeconds: (side: 'home' | 'away') => void;
   activeAction: CaptureBoardAction | null;
+  activeSide: 'home' | 'away' | null;
   onAction: (side: 'home' | 'away', action: CaptureBoardAction) => void;
   homeActionsEnabled: Record<CaptureBoardAction, boolean>;
+  awayTurnoverEnabled: boolean;
   hint: string;
   logItems: CaptureLogItem[];
   onUndo: () => void;
   canUndo: boolean;
   court: ReactNode;
-  jumpBallLabel: string;
-  onJumpBall: () => void;
+  homeAttacksRight: boolean;
   nextLabel?: string;
   onNextPeriod?: () => void;
   onFlipCourt?: () => void;
   onBack?: () => void;
-  onAddAwayPlayer?: () => void;
-  addAwayPlayerLabel?: string;
   homeCoach?: { name: string } | null;
   awayCoach?: { name: string } | null;
   onHomeCoach?: () => void;
   onAwayCoach?: () => void;
-  possessionLabel: string;
   canSetPossession: boolean;
   onSetPossession: (side: 'home' | 'away') => void;
+  courtPickSide: 'home' | 'away' | null;
+  onCourtPlayer: (side: 'home' | 'away', playerId: string) => void;
+  homeColor: string;
+  awayColor: string;
 }
 
 const LABEL_SHADOW = '[text-shadow:0_2px_3px_rgba(0,0,0,0.45)]';
+
+function screenOrientationAngle(): number {
+  const angle = window.screen?.orientation?.angle;
+  if (typeof angle === 'number') return ((angle % 360) + 360) % 360;
+  const legacy = (window as Window & { orientation?: number }).orientation;
+  if (legacy === -90) return 90;
+  if (legacy === 90) return 270;
+  if (legacy === 180) return 180;
+  return 0;
+}
 
 function LogCollapseIcon() {
   return (
@@ -93,308 +120,334 @@ const ACTIONS: { id: CaptureBoardAction; label: string }[] = [
   { id: 'turnover', label: 'TURNOVER' },
 ];
 
-function FoulBolts({ count, compact = false, large = false, fit = false }: { count: number; compact?: boolean; large?: boolean; fit?: boolean }) {
+function FoulBolts({ count }: { count: number }) {
   const filled = Math.min(5, Math.max(0, count));
   const fouledOut = filled >= 5;
-  const size = compact ? 'text-[9px]' : fit ? 'text-sm' : large ? 'text-lg' : 'text-[11px]';
   return (
-    <div className={`flex w-full shrink-0 justify-center ${fit ? 'mt-1 gap-px' : large ? 'mt-1 gap-0.5' : compact ? 'mt-0.5 gap-px' : 'mt-1 gap-px'}`} aria-label={`${filled} personal fouls`}>
-      {Array.from({ length: 5 }, (_, index) => (
-        <span
-          key={index}
-          className={`leading-none ${size} ${
-            index < filled
-              ? fouledOut
-                ? 'text-red-500'
-                : 'text-amber-400'
-              : 'text-white/25'
-          }`}
-        >
-          ⚡
-        </span>
-      ))}
-    </div>
-  );
-}
-
-const BENCH_SLOT = 'h-14 w-14 shrink-0';
-
-function BenchAvatar() {
-  return (
-    <svg viewBox="0 0 56 56" className="absolute inset-0 h-full w-full" aria-hidden="true">
-      <circle cx="28" cy="20" r="9" fill="rgba(255,255,255,0.88)" />
-      <path d="M6 56c2-15 10-22 22-22s20 7 22 22" fill="rgba(255,255,255,0.88)" />
-    </svg>
-  );
-}
-
-function BenchPlayerCard({
-  player,
-  tone,
-}: {
-  player: CaptureBoardPlayer;
-  tone: 'home' | 'away';
-}) {
-  const filledClass = tone === 'home' ? 'bg-black text-white' : 'bg-neutral-500 text-white';
-
-  return (
-    <div
-      title={player.name}
-      className={`relative overflow-hidden rounded-lg shadow-md ${BENCH_SLOT} ${filledClass}`}
-    >
-      {player.avatarUrl ? (
-        <img
-          src={player.avatarUrl}
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover object-top"
-        />
-      ) : (
-        <BenchAvatar />
-      )}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-0.5 pb-px pt-2 text-center">
-        <span className={`text-base font-black tabular-nums leading-none text-white ${LABEL_SHADOW}`}>
-          {player.jersey}
-        </span>
-        <FoulBolts count={player.fouls} compact />
-      </div>
-    </div>
-  );
-}
-
-function PlayerCard({
-  player,
-  tone,
-  size,
-}: {
-  player: CaptureBoardPlayer | null;
-  tone: 'home' | 'away';
-  size: 'court' | 'bench';
-}) {
-  if (size === 'bench' && player) {
-    return <BenchPlayerCard player={player} tone={tone} />;
-  }
-
-  const filledClass = tone === 'home' ? 'bg-black text-white' : 'bg-neutral-500 text-white';
-  const emptyClass = tone === 'home' ? 'bg-neutral-900 text-white/35' : 'bg-neutral-400 text-white/70';
-  const showPhoto = Boolean(player?.avatarUrl) && tone === 'home';
-  const numberOnly = !showPhoto;
-
-  return (
-    <div
-      title={player?.name}
-      className={`flex min-h-0 w-full flex-1 flex-col items-center justify-end overflow-hidden rounded-lg px-1 pb-1 pt-1 shadow-md ${
-        player ? filledClass : emptyClass
-      }`}
-    >
-      {showPhoto && player?.avatarUrl ? (
-        <div className="relative mb-1 min-h-0 w-full flex-1">
-          <img
-            src={player.avatarUrl}
-            alt=""
-            className="absolute inset-0 h-full w-full rounded-md object-cover"
-          />
-        </div>
-      ) : null}
-      {numberOnly ? (
-        <div className="flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden">
-          <span className={`font-black tabular-nums leading-none ${LABEL_SHADOW} ${tone === 'away' ? 'text-6xl' : 'text-5xl'}`}>
-            {player ? player.jersey : '–'}
-          </span>
-        </div>
-      ) : (
-        <span className={`text-3xl font-black tabular-nums leading-none ${LABEL_SHADOW}`}>
-          {player ? player.jersey : '–'}
-        </span>
-      )}
-      <FoulBolts count={player?.fouls ?? 0} large={!numberOnly} fit={numberOnly} />
-    </div>
-  );
-}
-
-function PlayerColumn({
-  players,
-  tone,
-}: {
-  players: CaptureBoardPlayer[];
-  tone: 'home' | 'away';
-}) {
-  const slots = Array.from({ length: 5 }, (_, index) => players[index] ?? null);
-
-  return (
-    <div className="flex h-full min-h-0 w-full min-w-0 flex-col gap-2">
-      {slots.map((player, index) => (
-        <PlayerCard
-          key={player?.id ?? `empty-${tone}-${index}`}
-          player={player}
-          tone={tone}
-          size="court"
-        />
-      ))}
-    </div>
-  );
-}
-
-const BENCH_SLOTS = 12;
-
-function BenchRow({
-  players,
-  tone,
-  addLabel,
-  onAdd,
-  coach,
-  onCoach,
-}: {
-  players: CaptureBoardPlayer[];
-  tone: 'home' | 'away';
-  addLabel?: string;
-  onAdd?: () => void;
-  coach?: { name: string } | null;
-  onCoach?: () => void;
-}) {
-  const sorted = [...players].sort((a, b) => a.jersey - b.jersey || a.name.localeCompare(b.name));
-  const slotCount = Math.max(BENCH_SLOTS, sorted.length);
-  const slots = Array.from({ length: slotCount }, (_, index) => sorted[index] ?? null);
-
-  return (
-    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto rounded-sm bg-white/70 px-1 py-1">
-      <span className="shrink-0 px-1 text-[9px] font-black tracking-wider text-neutral-500">
-        BENCH
-      </span>
-      {coach ? (
-        <button
-          type="button"
-          onClick={onCoach}
-          disabled={!onCoach}
-          title={coach.name}
-          className={`flex ${BENCH_SLOT} flex-col items-center justify-center rounded-lg px-0.5 text-white disabled:opacity-80 ${
-            tone === 'home' ? 'bg-black' : 'bg-neutral-500'
-          }`}
-        >
-          <span className="text-[8px] font-black tracking-wider">COACH</span>
-          <span className="max-w-full truncate text-[10px] font-bold">{coach.name}</span>
-        </button>
-      ) : null}
-      {onAdd ? (
-        <button
-          type="button"
-          onClick={onAdd}
-          aria-label={addLabel}
-          title={addLabel}
-          className={`flex ${BENCH_SLOT} items-center justify-center rounded-lg bg-neutral-700 text-2xl font-black text-white hover:bg-neutral-800`}
-        >
-          +
-        </button>
-      ) : null}
-      {slots.map((player, index) => {
-        if (player && !player.onCourt) {
-          return <PlayerCard key={player.id} player={player} tone={tone} size="bench" />;
-        }
-        if (player?.onCourt) {
-          return (
-            <div
-              key={player.id}
-              title={`${player.name} is on the court`}
-              aria-label={`Empty bench spot, ${player.jersey} is playing`}
-              className={`${BENCH_SLOT} rounded-lg border-2 border-dashed border-neutral-400 bg-white/50`}
-            />
-          );
-        }
+    <div className="flex w-full shrink-0 items-center justify-center gap-0.5" aria-label={`${filled} personal fouls`}>
+      {Array.from({ length: 5 }, (_, index) => {
+        const done = index < filled;
+        const color = done ? (fouledOut ? '#ef4444' : '#f59e0b') : '#a3a3a3';
         return (
-          <div
-            key={`unused-${tone}-${index}`}
-            title="No player"
-            aria-label="Empty roster spot"
-            className={`flex ${BENCH_SLOT} items-center justify-center rounded-lg text-lg font-black ${LABEL_SHADOW} ${
-              tone === 'home' ? 'bg-amber-200 text-amber-800' : 'bg-neutral-300 text-neutral-500'
-            }`}
-          >
-            ∅
-          </div>
+          <svg key={index} viewBox="0 0 16 16" className="h-2.5 w-2.5 shrink-0" aria-hidden="true">
+            <path
+              d="M9.1 1.1 3.2 9.1h4.1L6.4 14.9 13.2 6.4H8.7L9.1 1.1Z"
+              fill={done ? color : 'none'}
+              stroke={color}
+              strokeWidth="1.4"
+              strokeLinejoin="round"
+            />
+          </svg>
         );
       })}
     </div>
   );
 }
 
-function SubButton() {
-  return (
-    <button
-      type="button"
-      className={`flex h-9 min-w-[4.25rem] items-center justify-center rounded-lg px-2 text-sm font-black tracking-wide text-neutral-900 shadow-md ${ACTION_GRAY} ${LABEL_SHADOW}`}
-    >
-      SUB
-    </button>
-  );
+function jerseyFill(color: string | undefined): CSSProperties | undefined {
+  if (!color) return undefined;
+  return { backgroundColor: color, color: inkOn(color) };
 }
 
-function ShotClockButton() {
-  return (
-    <button
-      type="button"
-      className="flex h-9 items-center justify-center rounded-lg bg-red-600 px-2.5 text-xl font-black leading-none text-white"
-    >
-      24s
-    </button>
-  );
+function chipBox(compact: boolean, wide: boolean, fit: boolean) {
+  if (fit) return 'h-full w-full';
+  const height = wide
+    ? compact ? 'h-14' : 'h-16'
+    : compact ? 'h-14 w-14 shrink-0' : 'h-[4.5rem] w-[4.5rem] shrink-0';
+  return `${height} ${wide ? 'w-full' : ''}`;
 }
 
-function PossessionButton({
-  active,
-  label,
-  canSet,
+function JerseyChip({
+  player,
+  color,
   onSelect,
+  compact = false,
+  wide = false,
+  court = false,
+  vacant = false,
+  fit = false,
 }: {
-  active: boolean;
-  label: string;
-  canSet: boolean;
-  onSelect: () => void;
+  player: CaptureBoardPlayer | null;
+  color: string;
+  onSelect?: () => void;
+  compact?: boolean;
+  wide?: boolean;
+  court?: boolean;
+  vacant?: boolean;
+  fit?: boolean;
 }) {
+  const box = chipBox(compact, wide, fit);
+
+  if (!player) {
+    return (
+      <div
+        aria-hidden="true"
+        className={`${box} rounded-md border border-dashed border-neutral-400 bg-neutral-200`}
+      />
+    );
+  }
+
+  if (vacant) {
+    return (
+      <div
+        title={player.name}
+        aria-label={player.name}
+        className={`${box} rounded-md border-2 border-neutral-900 bg-neutral-100`}
+      />
+    );
+  }
+
+  const photo = player.avatarUrl || null;
+  const ring = onSelect ? 'cursor-pointer ring-2 ring-orange-400' : court ? 'ring-2 ring-black ring-offset-1' : '';
+  const typeSize = photo ? '' : fit ? 'text-2xl' : wide ? (compact ? 'text-lg' : 'text-xl') : compact ? 'text-xl' : 'text-2xl';
+  const className = `relative flex flex-col items-center justify-end overflow-hidden rounded-md pb-0.5 font-black tabular-nums leading-none shadow-md ${LABEL_SHADOW} ${box} ${typeSize} ${
+    photo ? 'bg-neutral-200' : ''
+  } ${ring}`;
+  const painted = photo ? undefined : jerseyFill(color);
+  const bolts = <FoulBolts count={player.fouls} />;
+  const content = photo ? (
+    <>
+      <img src={photo} alt="" className="absolute inset-0 h-full w-full object-cover" />
+      <span className="absolute bottom-3.5 right-0.5 z-10 rounded bg-black/80 px-1 text-[10px] font-black leading-none text-white">
+        {player.jersey}
+      </span>
+      <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 to-transparent px-0.5 pb-px pt-2">
+        {bolts}
+      </div>
+    </>
+  ) : (
+    <>
+      <span className="flex min-h-0 flex-1 items-center justify-center">{player.jersey}</span>
+      {bolts}
+    </>
+  );
+
+  if (onSelect) {
+    return (
+      <button type="button" title={player.name} onClick={onSelect} className={className} style={painted}>
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div title={player.name} className={className} style={painted}>
+      {content}
+    </div>
+  );
+}
+
+function CourtPlayerStrip({
+  leftPlayers,
+  rightPlayers,
+  leftColor,
+  rightColor,
+  onSelectLeft,
+  onSelectRight,
+  compact = false,
+}: {
+  leftPlayers: CaptureBoardPlayer[];
+  rightPlayers: CaptureBoardPlayer[];
+  leftColor: string;
+  rightColor: string;
+  onSelectLeft?: (playerId: string) => void;
+  onSelectRight?: (playerId: string) => void;
+  compact?: boolean;
+}) {
+  const chip = (
+    player: CaptureBoardPlayer,
+    color: string,
+    onSelect?: (playerId: string) => void,
+  ) => (
+    <div key={player.id} className="aspect-square h-full shrink-0">
+      <JerseyChip
+        player={player}
+        color={color}
+        fit
+        onSelect={onSelect ? () => onSelect(player.id) : undefined}
+      />
+    </div>
+  );
+
+  return (
+    <div className={`flex w-full items-stretch justify-center gap-1 ${compact ? 'h-[3.75rem]' : 'h-[4.25rem]'}`}>
+      {leftPlayers.slice(0, 5).map((player) => chip(player, leftColor, onSelectLeft))}
+      {leftPlayers.length > 0 && rightPlayers.length > 0 ? <span className="w-2 shrink-0" /> : null}
+      {rightPlayers.slice(0, 5).map((player) => chip(player, rightColor, onSelectRight))}
+    </div>
+  );
+}
+
+function CambioButton({ label, compact = false }: { label: string; compact?: boolean }) {
   return (
     <button
       type="button"
-      onClick={() => {
-        if (!canSet || active) return;
-        onSelect();
-      }}
-      aria-pressed={active}
-      className={`flex h-9 items-center justify-center rounded-lg px-2.5 text-xl font-black leading-none text-white ${
-        active ? 'bg-red-600' : 'bg-neutral-300'
-      } ${canSet ? 'cursor-pointer' : 'cursor-default'}`}
+      className={`flex w-full shrink-0 items-center justify-center rounded-lg font-black text-neutral-900 shadow-md ${ACTION_GRAY} ${
+        compact ? 'h-[3.75rem] px-1 text-[10px]' : 'h-[4.25rem] px-2 text-xs'
+      }`}
     >
       {label}
     </button>
   );
 }
 
-function TimeoutPill({ max, label }: { max: number; label: string }) {
+function SideBench({
+  players,
+  color,
+  compact = false,
+  coach,
+  onCoach,
+}: {
+  players: CaptureBoardPlayer[];
+  color: string;
+  compact?: boolean;
+  coach?: { name: string } | null;
+  onCoach?: () => void;
+}) {
+  const roster = [...players].sort((a, b) => a.jersey - b.jersey || a.name.localeCompare(b.name));
+  const coachBox = `col-span-2 flex w-full items-center justify-center overflow-hidden rounded-md px-1 text-center text-[11px] font-black leading-tight shadow-md ${LABEL_SHADOW} ${
+    compact ? 'h-14' : 'h-16'
+  }`;
+  const coachStyle = jerseyFill(color);
+
   return (
-    <div
-      className="flex h-9 items-center gap-1 rounded-lg bg-black px-2 text-white shadow-md"
-      aria-label={label}
-    >
-      <span className="text-[10px] font-black tracking-wider text-amber-300">TO</span>
-      <span className={`text-xl font-black tabular-nums leading-none ${LABEL_SHADOW}`}>0/{max}</span>
+    <div className="grid h-full min-h-0 grid-cols-2 content-start gap-2 overflow-y-auto">
+      {roster.map((player) => (
+        <JerseyChip
+          key={player.id}
+          player={player}
+          color={color}
+          compact={compact}
+          wide
+          vacant={!!player.onCourt}
+        />
+      ))}
+      {coach ? (
+        onCoach ? (
+          <button type="button" onClick={onCoach} title={coach.name} className={coachBox} style={coachStyle}>
+            <span className="line-clamp-2 min-w-0">{coach.name}</span>
+          </button>
+        ) : (
+          <div title={coach.name} className={coachBox} style={coachStyle}>
+            <span className="line-clamp-2 min-w-0">{coach.name}</span>
+          </div>
+        )
+      ) : null}
     </div>
   );
 }
 
-function TeamStatPills({ personalFouls }: { personalFouls: number }) {
-  const bonus = personalFouls >= 5;
-  const nearBonus = personalFouls === 4;
+function HintBar({
+  stepBackLabel,
+  hint,
+  cancelDeleteLabel,
+  nextLabel,
+  onNextPeriod,
+}: {
+  stepBackLabel: string;
+  hint: string;
+  cancelDeleteLabel: string;
+  nextLabel?: string;
+  onNextPeriod?: () => void;
+}) {
+  return (
+    <div className="flex w-full min-w-0 items-center gap-1">
+      <button
+        type="button"
+        className={`shrink-0 rounded-lg px-2 py-1.5 text-[11px] font-black text-neutral-900 shadow-md ${ACTION_GRAY}`}
+      >
+        {stepBackLabel}
+      </button>
+      <p className="min-w-0 flex-1 truncate text-center text-[11px] font-medium text-neutral-600">{hint}</p>
+      <button
+        type="button"
+        className={`shrink-0 rounded-lg px-2 py-1.5 text-[11px] font-black text-neutral-900 shadow-md ${ACTION_GRAY}`}
+      >
+        {cancelDeleteLabel}
+      </button>
+      {onNextPeriod ? (
+        <button
+          type="button"
+          onClick={onNextPeriod}
+          className={`shrink-0 whitespace-nowrap rounded-lg bg-white px-3 py-1.5 text-[11px] font-black tracking-wide text-black shadow-md ${LABEL_SHADOW}`}
+        >
+          {nextLabel}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+
+function ClockViolationButton({
+  label,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="flex h-9 items-center justify-center rounded-lg bg-red-600 px-2.5 text-xl font-black leading-none text-white disabled:opacity-50"
+    >
+      {label}
+    </button>
+  );
+}
+
+function PossessionDot({ active }: { active: boolean }) {
+  return (
+    <span className="flex w-12 shrink-0 items-center justify-center self-stretch" aria-hidden="true">
+      <span className={`h-8 w-8 rounded-full ${active ? 'animate-pulse bg-red-600' : 'bg-transparent'}`} />
+    </span>
+  );
+}
+
+function ActionStats({
+  fouls,
+  foulsLabel,
+  timeoutLabel,
+  timeoutsUsed,
+  timeoutMax,
+  compact = false,
+}: {
+  fouls: number;
+  foulsLabel: string;
+  timeoutLabel: string;
+  timeoutsUsed: number;
+  timeoutMax: number;
+  compact?: boolean;
+}) {
+  const bonus = fouls >= 5;
+  const nearBonus = fouls === 4;
+  const row = compact ? 'h-7 px-1' : 'h-8 px-1.5';
+  const value = compact ? 'text-sm' : 'text-lg';
 
   return (
-    <div
-      className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-white shadow-md ${
-        bonus ? 'bg-red-600' : 'bg-black'
-      }`}
-      aria-label={`${personalFouls} team personal fouls this period`}
-    >
-      <span aria-hidden className="text-lg leading-none text-amber-400">
-        ⚡
-      </span>
-      <span className={`text-xl font-black tabular-nums leading-none ${LABEL_SHADOW} ${nearBonus ? 'text-amber-300' : 'text-white'}`}>
-        {personalFouls}
-      </span>
+    <div className="flex w-full shrink-0 flex-col gap-1">
+      <div
+        className={`flex items-center justify-between rounded-lg bg-black text-white shadow-md ${row}`}
+        aria-label={`${timeoutLabel} ${timeoutsUsed}/${timeoutMax}`}
+      >
+        <span className="truncate text-[10px] font-black tracking-wider text-amber-300">{timeoutLabel}</span>
+        <span className={`${value} font-black tabular-nums leading-none ${LABEL_SHADOW}`}>{timeoutsUsed}/{timeoutMax}</span>
+      </div>
+      <div
+        className={`flex items-center justify-between rounded-lg text-white shadow-md ${row} ${
+          bonus ? 'bg-red-600' : 'bg-black'
+        }`}
+        aria-label={`${fouls} ${foulsLabel}`}
+      >
+        <span className="truncate text-[10px] font-black tracking-wider text-amber-300">{foulsLabel}</span>
+        <span className={`${value} font-black tabular-nums leading-none ${LABEL_SHADOW} ${nearBonus ? 'text-amber-300' : 'text-white'}`}>
+          {fouls}
+        </span>
+      </div>
     </div>
   );
 }
@@ -402,32 +455,51 @@ function TeamStatPills({ personalFouls }: { personalFouls: number }) {
 function ActionColumn({
   side,
   activeAction,
+  activeSide,
   enabled,
   onAction,
+  direction = 'column',
+  splitTurnover = false,
+  compact = false,
 }: {
   side: 'home' | 'away';
   activeAction: CaptureBoardAction | null;
+  activeSide: 'home' | 'away' | null;
   enabled: Record<CaptureBoardAction, boolean>;
   onAction: (side: 'home' | 'away', action: CaptureBoardAction) => void;
+  direction?: 'column' | 'row';
+  splitTurnover?: boolean;
+  compact?: boolean;
 }) {
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 flex-col gap-2">
+    <div className={direction === 'row'
+      ? 'flex h-full min-h-0 w-full min-w-0 flex-row gap-1'
+      : 'flex h-full min-h-0 w-full min-w-0 flex-col gap-1'}>
       {ACTIONS.map((action) => {
-        const isActive = side === 'home' && activeAction === action.id;
+        const isActive = activeAction === action.id && (activeSide != null ? side === activeSide : side === 'home');
         const isEnabled = enabled[action.id];
+        const turnoverBlocked = action.id === 'turnover' && !isEnabled;
+        const stacked = splitTurnover && action.id === 'turnover';
         return (
           <button
             key={action.id}
             type="button"
             disabled={!isEnabled}
             onClick={() => onAction(side, action.id)}
-            className={`flex min-h-0 w-full flex-1 items-center justify-center rounded-lg px-1 text-center text-xl font-black leading-tight tracking-wide shadow-md ${LABEL_SHADOW} ${
+            className={`flex min-h-0 flex-1 items-center justify-center rounded-lg px-1 text-center font-black leading-tight tracking-wide ${compact ? 'text-[10px]' : 'text-sm'} ${direction === 'row' ? 'min-w-0' : 'w-full'} ${LABEL_SHADOW} ${
               isActive
-                ? 'bg-white text-black ring-2 ring-black'
-                : `${ACTION_GRAY} text-neutral-900 hover:bg-[#c8c8c8]`
-            } disabled:cursor-default disabled:opacity-60 disabled:hover:bg-[#b0b0b0]`}
+                ? 'bg-white text-black ring-2 ring-black shadow-md'
+                : turnoverBlocked
+                  ? 'cursor-default bg-[#8e9894] text-[#e7eeeb] shadow-none'
+                  : `${ACTION_GRAY} text-neutral-900 shadow-md hover:bg-[#c8c8c8] disabled:cursor-default disabled:opacity-60 disabled:hover:bg-[#b0b0b0]`
+            }`}
           >
-            {action.label}
+            {stacked ? (
+              <span className="flex flex-col items-center leading-none">
+                <span>TURN</span>
+                <span>OVER</span>
+              </span>
+            ) : action.label}
           </button>
         );
       })}
@@ -435,71 +507,131 @@ function ActionColumn({
   );
 }
 
+function ClockViolationButtons({
+  side,
+  enabled,
+  onShotClock,
+  onEightSeconds,
+  onFiveSeconds,
+}: {
+  side: 'home' | 'away';
+  enabled: boolean;
+  onShotClock: (side: 'home' | 'away') => void;
+  onEightSeconds: (side: 'home' | 'away') => void;
+  onFiveSeconds: (side: 'home' | 'away') => void;
+}) {
+  return (
+    <>
+      <ClockViolationButton label="24s" disabled={!enabled} onClick={() => onShotClock(side)} />
+      <ClockViolationButton label="8s" disabled={!enabled} onClick={() => onEightSeconds(side)} />
+      <ClockViolationButton label="5s" disabled={!enabled} onClick={() => onFiveSeconds(side)} />
+    </>
+  );
+}
+
+function PossessionWash({ color }: { color: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 animate-pulse"
+      style={{ backgroundColor: `color-mix(in srgb, ${color} 42%, white)` }}
+    />
+  );
+}
+
 function TeamNamePlate({
+  side,
   name,
   align,
   active,
-  label,
   canSet,
   onSelect,
   onBack,
+  onFlipCourt,
+  onShotClock,
+  onEightSeconds,
+  onFiveSeconds,
+  clockViolationsEnabled,
+  color,
 }: {
+  side: 'home' | 'away';
   name: string;
   align: 'start' | 'end';
   active: boolean;
-  label: string;
   canSet: boolean;
   onSelect: () => void;
   onBack?: () => void;
+  onFlipCourt?: () => void;
+  onShotClock: (side: 'home' | 'away') => void;
+  onEightSeconds: (side: 'home' | 'away') => void;
+  onFiveSeconds: (side: 'home' | 'away') => void;
+  clockViolationsEnabled: boolean;
+  color: string;
 }) {
-  const timeouts = (
-    <div className="flex shrink-0 items-start gap-1 p-1">
-      <TimeoutPill max={2} label="0 of 2 timeouts, first and second quarter" />
-      <TimeoutPill max={3} label="0 of 3 timeouts, third and fourth quarter and overtime" />
-    </div>
+  const stripe = (
+    <span aria-hidden="true" className="relative z-10 w-5 shrink-0 self-stretch" style={{ backgroundColor: color }} />
   );
-  const shotClock = (
-    <div className="flex shrink-0 flex-col self-stretch p-1">
-      {onBack ? (
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label="Back to game"
-          className="flex h-9 w-9 items-center justify-center rounded-lg bg-black text-xl font-black leading-none text-white"
-        >
-          ←
-        </button>
-      ) : null}
-      <div className={`mt-auto flex items-end gap-1 ${align === 'end' ? 'flex-row-reverse' : ''}`}>
-        <ShotClockButton />
-        <PossessionButton active={active} label={label} canSet={canSet} onSelect={onSelect} />
+  const towardScore = align === 'start';
+  const selectPossession = () => {
+    if (!canSet || active) return;
+    onSelect();
+  };
+  const clockButtons = (
+    <div className={`flex w-full items-center gap-1 ${towardScore ? 'justify-end' : 'flex-row-reverse justify-end'}`}>
+      <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+        <ClockViolationButtons
+          side={side}
+          enabled={clockViolationsEnabled}
+          onShotClock={onShotClock}
+          onEightSeconds={onEightSeconds}
+          onFiveSeconds={onFiveSeconds}
+        />
       </div>
     </div>
   );
 
   return (
-    <div className="flex min-w-0 flex-1 items-start bg-white shadow-sm">
-      {align === 'start' ? shotClock : timeouts}
-      <div
-        className={`flex min-w-0 flex-1 flex-col justify-center px-4 py-2 ${
-          align === 'end' ? 'items-end' : 'items-start'
-        }`}
-      >
-        <button
-          type="button"
-          onClick={() => {
-            if (!canSet || active) return;
-            onSelect();
-          }}
-          aria-pressed={active}
-          className={`flex min-w-0 max-w-full flex-col text-neutral-900 ${
-            align === 'end' ? 'items-end text-right' : 'items-start text-left'
-          } ${canSet ? 'cursor-pointer' : 'cursor-default'}`}
-        >
-          <span className="max-w-full truncate text-4xl font-bold tracking-tight sm:text-5xl">{name}</span>
-        </button>
+    <div
+      onClick={selectPossession}
+      className={`relative flex min-w-0 flex-1 items-stretch overflow-hidden bg-white shadow-sm ${
+        canSet && !active ? 'cursor-pointer' : 'cursor-default'
+      }`}
+    >
+      {active ? <PossessionWash color={color} /> : null}
+      {align === 'start' ? stripe : null}
+      {align === 'start' ? <PossessionDot active={active} /> : null}
+      <div className={`relative z-10 flex min-w-0 flex-1 flex-col justify-center gap-1 px-2 py-1 ${towardScore ? 'items-end' : 'items-start'}`}>
+        <div className="flex w-full min-w-0 items-center gap-2">
+          {onBack ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onBack();
+              }}
+              aria-label="Back to game"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-black text-xl font-black leading-none text-white"
+            >
+              ←
+            </button>
+          ) : null}
+          {onFlipCourt ? (
+            <span onClick={(event) => event.stopPropagation()}>
+              <FlipCourtButton onFlipCourt={onFlipCourt} />
+            </span>
+          ) : null}
+          <span
+            className={`min-w-0 flex-1 truncate text-4xl font-bold tracking-tight text-neutral-900 sm:text-5xl ${
+              towardScore ? 'text-right' : 'text-left'
+            }`}
+          >
+            {name}
+          </span>
+        </div>
+        {clockButtons}
       </div>
-      {align === 'start' ? timeouts : shotClock}
+      {align === 'end' ? <PossessionDot active={active} /> : null}
+      {align === 'end' ? stripe : null}
     </div>
   );
 }
@@ -542,6 +674,158 @@ function ClockStepper({
   );
 }
 
+function ScoreboardClock({
+  dense,
+  periodLabel,
+  clockLeft,
+  clockRight,
+  lastMinute,
+  clockRunning,
+  canControlClock,
+  onAdjustClock,
+  onToggleClock,
+  idleClockLabel,
+}: {
+  dense: boolean;
+  periodLabel: string;
+  clockLeft: string;
+  clockRight: string;
+  lastMinute: boolean;
+  clockRunning: boolean;
+  canControlClock: boolean;
+  onAdjustClock: (unit: 'minute' | 'second' | 'tenth', delta: number) => void;
+  onToggleClock: () => void;
+  idleClockLabel?: string;
+}) {
+  const leftUnit = lastMinute ? 'second' : 'minute';
+  const rightUnit = lastMinute ? 'tenth' : 'second';
+
+  return (
+    <div className="flex shrink-0 flex-col items-center justify-center px-1">
+      <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-600">
+        {periodLabel}
+      </div>
+      <div className={`flex items-center gap-1 bg-blue-700 text-white ${dense ? 'mt-0.5 px-1.5 py-0.5' : 'mt-1 px-2 py-0.5 shadow-sm'}`}>
+        <ClockStepper
+          value={clockLeft}
+          label={leftUnit}
+          disabled={!canControlClock}
+          onUp={() => onAdjustClock(leftUnit, 1)}
+          onDown={() => onAdjustClock(leftUnit, -1)}
+        />
+        <span className={`font-black leading-none ${dense ? 'text-2xl' : 'text-3xl'}`}>:</span>
+        <ClockStepper
+          value={clockRight}
+          label={rightUnit}
+          disabled={!canControlClock}
+          onUp={() => onAdjustClock(rightUnit, 1)}
+          onDown={() => onAdjustClock(rightUnit, -1)}
+        />
+      </div>
+      <button
+        type="button"
+        onClick={onToggleClock}
+        disabled={!canControlClock}
+        className={`w-full rounded-lg text-center font-black leading-tight tracking-wider text-white whitespace-normal disabled:cursor-default disabled:opacity-50 ${
+          dense ? 'mt-0.5 px-1 py-1 text-[10px]' : 'mt-1 px-2 py-1.5 text-xs shadow-md'
+        } ${
+          clockRunning
+            ? (dense ? 'bg-red-600' : 'bg-red-600 hover:bg-red-700')
+            : (dense ? 'bg-green-600' : 'bg-green-600 hover:bg-green-700')
+        }`}
+      >
+        {clockRunning
+          ? (dense ? 'STOP' : 'STOP CLOCK')
+          : (idleClockLabel ?? (dense ? 'START' : 'START CLOCK'))}
+      </button>
+    </div>
+  );
+}
+
+function FlipCourtButton({ onFlipCourt }: { onFlipCourt: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onFlipCourt}
+      title="Flip which basket we attack"
+      aria-label="Flip which basket we attack"
+      className={`flex h-9 shrink-0 items-center justify-center rounded-lg border border-neutral-300 bg-white px-2.5 text-sm font-black tracking-wide text-black shadow-md ${LABEL_SHADOW}`}
+    >
+      ↔
+    </button>
+  );
+}
+
+function ActionLog({
+  open,
+  onToggle,
+  items,
+  onUndo,
+  canUndo,
+}: {
+  open: boolean;
+  onToggle: (open: boolean) => void;
+  items: CaptureLogItem[];
+  onUndo: () => void;
+  canUndo: boolean;
+}) {
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => onToggle(true)}
+        aria-pressed="false"
+        aria-label="Show action log"
+        className="ml-1 flex h-full min-h-0 w-12 shrink-0 items-center justify-center rounded-lg bg-neutral-800 text-white shadow-sm hover:bg-neutral-700"
+      >
+        <LogExpandIcon />
+      </button>
+    );
+  }
+
+  return (
+    <aside className="ml-1 flex h-full min-h-0 w-52 shrink-0 flex-col overflow-hidden rounded-lg border border-neutral-300 bg-white shadow-sm">
+      <header className="flex items-center justify-between border-b border-neutral-200 bg-neutral-100 px-2 py-1">
+        <span className="text-[11px] font-black tracking-wider">ACTION LOG</span>
+        <button
+          type="button"
+          onClick={() => onToggle(false)}
+          aria-label="Hide action log"
+          aria-pressed="true"
+          className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 hover:bg-white hover:text-black"
+        >
+          <LogCollapseIcon />
+        </button>
+      </header>
+      <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
+        {items.length === 0 ? (
+          <p className="px-2 py-3 text-[11px] text-neutral-400">No actions yet</p>
+        ) : (
+          items.map((item) => (
+            <div key={item.id} className="rounded-lg bg-neutral-100 px-2 py-1.5">
+              <div className="text-[10px] font-bold text-neutral-400">
+                {item.periodLabel} {item.clock}
+              </div>
+              <div className="text-[11px] font-black leading-tight">{item.title}</div>
+              <div className="text-[11px] leading-tight text-neutral-600">{item.detail}</div>
+            </div>
+          ))
+        )}
+      </div>
+      <div className="border-t border-neutral-200 p-1.5">
+        <button
+          type="button"
+          onClick={onUndo}
+          disabled={!canUndo}
+          className="w-full bg-neutral-800 py-2 text-[11px] font-bold text-white hover:bg-neutral-700 disabled:opacity-40"
+        >
+          Undo last
+        </button>
+      </div>
+    </aside>
+  );
+}
+
 export function CaptureBoard({
   homeName,
   awayName,
@@ -549,264 +833,385 @@ export function CaptureBoard({
   awayScore,
   possession,
   periodLabel,
-  clockMinutes,
-  clockSeconds,
+  clockLeft,
+  clockRight,
+  lastMinute,
   clockRunning,
   canControlClock,
   onAdjustClock,
   onToggleClock,
+  idleClockLabel,
   homePlayers,
   awayPlayers,
   homeBench,
   awayBench,
   homePersonalFouls,
   awayPersonalFouls,
+  timeoutsUsed,
+  timeoutMax,
+  cambioLabel,
+  stepBackLabel,
+  cancelDeleteLabel,
+  timeoutLabel,
+  foulsLabel,
+  clockViolationsEnabled,
+  onShotClock,
+  onEightSeconds,
+  onFiveSeconds,
   activeAction,
+  activeSide,
   onAction,
   homeActionsEnabled,
+  awayTurnoverEnabled,
   hint,
   logItems,
   onUndo,
   canUndo,
   court,
-  jumpBallLabel,
-  onJumpBall,
   nextLabel,
   onNextPeriod,
   onFlipCourt,
   onBack,
-  onAddAwayPlayer,
-  addAwayPlayerLabel,
   homeCoach,
   awayCoach,
   onHomeCoach,
   onAwayCoach,
-  possessionLabel,
   canSetPossession,
   onSetPossession,
+  courtPickSide,
+  onCourtPlayer,
+  homeColor,
+  awayColor,
 }: CaptureBoardProps) {
   const [logOpen, setLogOpen] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [portrait, setPortrait] = useState(false);
+  const [courtTurn, setCourtTurn] = useState<0 | 90 | -90>(0);
   const awayActionsEnabled: Record<CaptureBoardAction, boolean> = {
     made: true,
     miss: true,
     foul: true,
-    turnover: true,
+    turnover: awayTurnoverEnabled,
+  };
+
+  useLayoutEffect(() => {
+    const el = shellRef.current;
+    if (!el) return;
+    const apply = () => {
+      const next = el.clientHeight > el.clientWidth;
+      setPortrait((prev) => (prev === next ? prev : next));
+      const angle = screenOrientationAngle();
+      const turn: 0 | 90 | -90 = !next ? 0 : angle === 0 || angle === 270 ? -90 : 90;
+      setCourtTurn((prev) => (prev === turn ? prev : turn));
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(el);
+    screen.orientation?.addEventListener('change', apply);
+    window.addEventListener('orientationchange', apply);
+    return () => {
+      observer.disconnect();
+      screen.orientation?.removeEventListener('change', apply);
+      window.removeEventListener('orientationchange', apply);
+    };
+  }, []);
+
+  const floor = (compact: boolean) => {
+    const bench = compact ? '6.5rem' : '8rem';
+    const actions = compact ? '4rem' : '6.25rem';
+    const courtWidth = compact
+      ? 'min(100cqh, calc(100cqw * 28 / 15))'
+      : 'min(100cqw, calc(100cqh * 28 / 15))';
+    const courtHeight = compact
+      ? 'min(100cqw, calc(100cqh * 15 / 28))'
+      : 'min(100cqh, calc(100cqw * 15 / 28))';
+
+    return (
+    <div
+      className="grid h-full min-h-0 min-w-0 flex-1 gap-1"
+      style={{
+        gridTemplateColumns: `${bench} ${actions} minmax(0,1fr) ${actions} ${bench}`,
+        gridTemplateRows: 'auto minmax(0,1fr) auto',
+      }}
+    >
+      <div className="col-start-1 row-start-1 self-end">
+        <CambioButton label={cambioLabel} compact={compact} />
+      </div>
+      <div className="col-start-2 row-start-1 self-end">
+        <ActionStats
+          fouls={homePersonalFouls}
+          foulsLabel={foulsLabel}
+          timeoutLabel={timeoutLabel}
+          timeoutsUsed={timeoutsUsed}
+          timeoutMax={timeoutMax}
+          compact={compact}
+        />
+      </div>
+      <div className="col-start-3 row-start-1 min-w-0 self-stretch">
+        <CourtPlayerStrip
+          leftPlayers={homePlayers}
+          rightPlayers={awayPlayers}
+          leftColor={homeColor}
+          rightColor={awayColor}
+          onSelectLeft={courtPickSide === 'home' ? (playerId) => onCourtPlayer('home', playerId) : undefined}
+          onSelectRight={courtPickSide === 'away' ? (playerId) => onCourtPlayer('away', playerId) : undefined}
+          compact={compact}
+        />
+      </div>
+      <div className="col-start-4 row-start-1 self-end">
+        <ActionStats
+          fouls={awayPersonalFouls}
+          foulsLabel={foulsLabel}
+          timeoutLabel={timeoutLabel}
+          timeoutsUsed={timeoutsUsed}
+          timeoutMax={timeoutMax}
+          compact={compact}
+        />
+      </div>
+      <div className="col-start-5 row-start-1 self-end">
+        <CambioButton label={cambioLabel} compact={compact} />
+      </div>
+
+      <div className="col-start-1 row-start-2 min-h-0">
+        <SideBench
+          players={homeBench}
+          color={homeColor}
+          compact={compact}
+          coach={homeCoach}
+          onCoach={onHomeCoach}
+        />
+      </div>
+      <div className="col-start-2 row-start-2 flex min-h-0">
+        <ActionColumn
+          side="home"
+          activeAction={activeAction}
+          activeSide={activeSide}
+          enabled={homeActionsEnabled}
+          onAction={onAction}
+          splitTurnover={compact}
+          compact={compact}
+        />
+      </div>
+      <div
+        className="col-start-3 row-start-2 flex min-h-0 min-w-0 items-start justify-center overflow-hidden bg-[#e4e0d8]"
+        style={{ containerType: 'size' }}
+      >
+        <div
+          className="shrink-0"
+          style={{
+            width: courtWidth,
+            height: courtHeight,
+            transform: compact ? `rotate(${courtTurn}deg)` : undefined,
+          }}
+        >
+          {court}
+        </div>
+      </div>
+      <div className="col-start-4 row-start-2 flex min-h-0">
+        <ActionColumn
+          side="away"
+          activeAction={activeAction}
+          activeSide={activeSide}
+          enabled={awayActionsEnabled}
+          onAction={onAction}
+          splitTurnover={compact}
+          compact={compact}
+        />
+      </div>
+      <div className="col-start-5 row-start-2 min-h-0">
+        <SideBench
+          players={awayBench}
+          color={awayColor}
+          compact={compact}
+          coach={awayCoach}
+          onCoach={onAwayCoach}
+        />
+      </div>
+
+      <div className="col-start-3 row-start-3">
+        <HintBar
+          stepBackLabel={stepBackLabel}
+          hint={hint}
+          cancelDeleteLabel={cancelDeleteLabel}
+          nextLabel={nextLabel}
+          onNextPeriod={onNextPeriod}
+        />
+      </div>
+    </div>
+    );
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#eceae6] text-neutral-900">
+    <div ref={shellRef} className="flex h-full min-h-0 flex-col bg-[#eceae6] text-neutral-900">
+      {portrait ? (
+        <>
+          <div className="flex shrink-0 items-stretch gap-1 px-1 pt-1">
+            {onBack || onFlipCourt ? (
+              <div className="flex shrink-0 items-center gap-1 self-center">
+                {onBack ? (
+                  <button
+                    type="button"
+                    onClick={onBack}
+                    aria-label="Back to game"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-black text-xl font-black leading-none text-white"
+                  >
+                    ←
+                  </button>
+                ) : null}
+                {onFlipCourt ? <FlipCourtButton onFlipCourt={onFlipCourt} /> : null}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              title={homeName}
+              onClick={() => {
+                if (!canSetPossession || possession === 'home') return;
+                onSetPossession('home');
+              }}
+              className="relative flex min-w-0 flex-1 items-stretch overflow-hidden bg-white text-left text-xl font-bold text-neutral-900"
+            >
+              <span aria-hidden="true" className="relative z-10 w-5 shrink-0" style={{ backgroundColor: homeColor }} />
+              <span className="relative flex min-w-0 flex-1 items-center px-2">
+                {possession === 'home' ? <PossessionWash color={homeColor} /> : null}
+                <span className="relative z-10 truncate">{homeName}</span>
+              </span>
+            </button>
+            <div className="flex w-14 shrink-0 items-center justify-center bg-blue-700 text-3xl font-black tabular-nums text-white">
+              {homeScore}
+            </div>
+            <ScoreboardClock
+              dense
+              periodLabel={periodLabel}
+              clockLeft={clockLeft}
+              clockRight={clockRight}
+              lastMinute={lastMinute}
+              clockRunning={clockRunning}
+              canControlClock={canControlClock}
+              onAdjustClock={onAdjustClock}
+              onToggleClock={onToggleClock}
+              idleClockLabel={idleClockLabel}
+            />
+            <div className="flex w-14 shrink-0 items-center justify-center bg-blue-700 text-3xl font-black tabular-nums text-white">
+              {awayScore}
+            </div>
+            <button
+              type="button"
+              title={awayName}
+              onClick={() => {
+                if (!canSetPossession || possession === 'away') return;
+                onSetPossession('away');
+              }}
+              className="relative flex min-w-0 flex-1 items-stretch overflow-hidden bg-white text-right text-xl font-bold text-neutral-900"
+            >
+              <span className="relative flex min-w-0 flex-1 items-center justify-end px-2">
+                {possession === 'away' ? <PossessionWash color={awayColor} /> : null}
+                <span className="relative z-10 truncate">{awayName}</span>
+              </span>
+              <span aria-hidden="true" className="relative z-10 w-5 shrink-0" style={{ backgroundColor: awayColor }} />
+            </button>
+          </div>
+          <div className="flex shrink-0 items-center justify-between gap-1 overflow-x-auto px-1 py-1">
+            <div className="flex min-w-0 flex-1 items-center gap-1">
+              <PossessionDot active={possession === 'home'} />
+              <ClockViolationButtons
+                side="home"
+                enabled={clockViolationsEnabled}
+                onShotClock={onShotClock}
+                onEightSeconds={onEightSeconds}
+                onFiveSeconds={onFiveSeconds}
+              />
+            </div>
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+              <div className="flex flex-row-reverse items-center gap-1">
+                <ClockViolationButtons
+                  side="away"
+                  enabled={clockViolationsEnabled}
+                  onShotClock={onShotClock}
+                  onEightSeconds={onEightSeconds}
+                  onFiveSeconds={onFiveSeconds}
+                />
+              </div>
+              <PossessionDot active={possession === 'away'} />
+            </div>
+          </div>
+          <div className="flex min-h-0 flex-1 gap-1 px-1 pb-1">
+            {floor(true)}
+            <ActionLog
+              open={logOpen}
+              onToggle={setLogOpen}
+              items={logItems}
+              onUndo={onUndo}
+              canUndo={canUndo}
+            />
+          </div>
+        </>
+      ) : (
+        <>
       <div className="flex items-stretch gap-2 px-2 pb-1 pt-2">
         <TeamNamePlate
+          side="home"
           name={homeName}
           align="start"
           active={possession === 'home'}
-          label={possessionLabel}
           canSet={canSetPossession}
           onSelect={() => onSetPossession('home')}
           onBack={onBack}
+          onFlipCourt={onFlipCourt}
+          onShotClock={onShotClock}
+          onEightSeconds={onEightSeconds}
+          onFiveSeconds={onFiveSeconds}
+          clockViolationsEnabled={clockViolationsEnabled}
+          color={homeColor}
         />
 
         <div className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center bg-blue-700 text-white shadow-sm">
           <span className="text-4xl font-black tabular-nums leading-none">{homeScore}</span>
         </div>
 
-        <div className="flex shrink-0 flex-col items-center justify-center px-1">
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-600">
-            {periodLabel} in progress
-          </div>
-          <div className="mt-1 flex items-center gap-1 bg-blue-700 px-2 py-0.5 text-white shadow-sm">
-            <ClockStepper
-              value={clockMinutes}
-              label="minute"
-              disabled={!canControlClock}
-              onUp={() => onAdjustClock('minute', 1)}
-              onDown={() => onAdjustClock('minute', -1)}
-            />
-            <span className="text-3xl font-black leading-none">:</span>
-            <ClockStepper
-              value={clockSeconds}
-              label="second"
-              disabled={!canControlClock}
-              onUp={() => onAdjustClock('second', 1)}
-              onDown={() => onAdjustClock('second', -1)}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={onToggleClock}
-            disabled={!canControlClock}
-            className={`mt-1 w-full rounded-lg px-3 py-1.5 text-xs font-black tracking-wider text-white shadow-md disabled:cursor-default disabled:opacity-50 ${
-              clockRunning ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
-            }`}
-          >
-            {clockRunning ? 'STOP CLOCK' : 'START CLOCK'}
-          </button>
-        </div>
+        <ScoreboardClock
+          dense={false}
+          periodLabel={periodLabel}
+          clockLeft={clockLeft}
+          clockRight={clockRight}
+          lastMinute={lastMinute}
+          clockRunning={clockRunning}
+          canControlClock={canControlClock}
+          onAdjustClock={onAdjustClock}
+          onToggleClock={onToggleClock}
+          idleClockLabel={idleClockLabel}
+        />
 
         <div className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center bg-blue-700 text-white shadow-sm">
           <span className="text-4xl font-black tabular-nums leading-none">{awayScore}</span>
         </div>
 
         <TeamNamePlate
+          side="away"
           name={awayName}
           align="end"
           active={possession === 'away'}
-          label={possessionLabel}
           canSet={canSetPossession}
           onSelect={() => onSetPossession('away')}
+          onShotClock={onShotClock}
+          onEightSeconds={onEightSeconds}
+          onFiveSeconds={onFiveSeconds}
+          clockViolationsEnabled={clockViolationsEnabled}
+          color={awayColor}
         />
       </div>
 
-      <div className="px-3 pb-1 text-center text-[11px] font-medium text-neutral-600">{hint}</div>
-
-      <div
-        className="grid min-h-0 w-full min-w-0 flex-1 overflow-hidden px-1 pb-1 [container-type:size]"
-        style={{
-          gridTemplateColumns: logOpen
-            ? '9rem 1.25rem 9rem minmax(0,max-content) 9rem 1.25rem 9rem minmax(8rem,1fr)'
-            : '9rem 1.25rem 9rem minmax(0,1fr) 9rem 1.25rem 9rem 3rem',
-          gridTemplateRows: 'auto minmax(0,1fr) auto',
-          rowGap: '0.25rem',
-        }}
-      >
-        <div className="col-start-1 row-start-1 flex items-center justify-center">
-          <SubButton />
-        </div>
-        <div className="col-start-3 row-start-1 flex items-center justify-center">
-          <TeamStatPills personalFouls={homePersonalFouls} />
-        </div>
-        <div className="col-start-4 row-start-1 flex items-center justify-center gap-1">
-          {onNextPeriod ? (
-            <button
-              type="button"
-              onClick={onNextPeriod}
-              className={`rounded-lg bg-white px-3 py-1.5 text-sm font-black tracking-wide text-black shadow-md hover:bg-neutral-100 ${LABEL_SHADOW}`}
-            >
-              {nextLabel}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={onJumpBall}
-            className={`rounded-lg bg-white px-4 py-1.5 text-sm font-black tracking-wide text-black shadow-md hover:bg-neutral-100 ${LABEL_SHADOW}`}
-          >
-            {jumpBallLabel}
-          </button>
-          {onFlipCourt ? (
-            <button
-              type="button"
-              onClick={onFlipCourt}
-              title="Flip which basket we attack"
-              aria-label="Flip which basket we attack"
-              className={`rounded-lg bg-white px-3 py-1.5 text-sm font-black tracking-wide text-black shadow-md hover:bg-neutral-100 ${LABEL_SHADOW}`}
-            >
-              ↔
-            </button>
-          ) : null}
-        </div>
-        <div className="col-start-5 row-start-1 flex items-center justify-center">
-          <TeamStatPills personalFouls={awayPersonalFouls} />
-        </div>
-        <div className="col-start-7 row-start-1 flex items-center justify-center">
-          <SubButton />
-        </div>
-
-        <div className="col-start-1 row-start-2 h-full min-h-0 min-w-0">
-          <PlayerColumn players={homePlayers} tone="home" />
-        </div>
-        <div className="col-start-2 row-start-2" />
-        <div className="col-start-3 row-start-2 h-full min-h-0 min-w-0">
-          <ActionColumn
-            side="home"
-            activeAction={activeAction}
-            enabled={homeActionsEnabled}
-            onAction={onAction}
-          />
-        </div>
-        <div
-          className="col-start-4 row-start-2 h-full min-h-0 min-w-0 max-w-full bg-[#e4e0d8]"
-          style={logOpen
-            ? { width: 'min(calc((100cqb - 7.25rem) * 28 / 15), max(0px, calc(100cqi - 51.5rem)))' }
-            : undefined}
-        >
-          {court}
-        </div>
-        <div className="col-start-5 row-start-2 h-full min-h-0 min-w-0">
-          <ActionColumn
-            side="away"
-            activeAction={null}
-            enabled={awayActionsEnabled}
-            onAction={onAction}
-          />
-        </div>
-        <div className="col-start-6 row-start-2" />
-        <div className="col-start-7 row-start-2 h-full min-h-0 min-w-0">
-          <PlayerColumn players={awayPlayers} tone="away" />
-        </div>
-        <div className="col-span-7 row-start-3 flex min-w-0 gap-1 overflow-hidden">
-          <BenchRow players={homeBench} tone="home" coach={homeCoach} onCoach={onHomeCoach} />
-          <BenchRow
-            players={awayBench}
-            tone="away"
-            addLabel={addAwayPlayerLabel}
-            onAdd={onAddAwayPlayer}
-            coach={awayCoach}
-            onCoach={onAwayCoach}
-          />
-        </div>
-
-        {logOpen ? (
-          <aside className="col-start-8 row-span-2 row-start-2 ml-2 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-neutral-300 bg-white shadow-sm">
-            <header className="flex items-center justify-between border-b border-neutral-200 bg-neutral-100 px-2 py-1">
-              <span className="text-[11px] font-black tracking-wider">ACTION LOG</span>
-              <button
-                type="button"
-                onClick={() => setLogOpen(false)}
-                aria-label="Hide action log"
-                aria-pressed="true"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 hover:bg-white hover:text-black"
-              >
-                <LogCollapseIcon />
-              </button>
-            </header>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {logItems.length === 0 ? (
-                <p className="px-2 py-3 text-[11px] text-neutral-400">No actions yet</p>
-              ) : (
-                logItems.map((item) => (
-                  <div key={item.id} className="border-b border-neutral-100 px-2 py-1.5">
-                    <div className="text-[10px] font-bold text-neutral-400">
-                      {item.periodLabel} {item.clock}
-                    </div>
-                    <div className="text-[11px] font-black leading-tight">{item.title}</div>
-                    <div className="text-[11px] leading-tight text-neutral-600">{item.detail}</div>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="border-t border-neutral-200 p-1.5">
-              <button
-                type="button"
-                onClick={onUndo}
-                disabled={!canUndo}
-                className="w-full bg-neutral-800 py-2 text-[11px] font-bold text-white hover:bg-neutral-700 disabled:opacity-40"
-              >
-                Undo last
-              </button>
-            </div>
-          </aside>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setLogOpen(true)}
-            aria-pressed="false"
-            aria-label="Show action log"
-            className="col-start-8 row-span-2 row-start-2 ml-2 flex h-full min-h-0 w-[calc(100%-0.5rem)] items-center justify-center rounded-lg bg-neutral-800 text-white shadow-sm hover:bg-neutral-700"
-          >
-            <LogExpandIcon />
-          </button>
-        )}
+      <div className="flex min-h-0 flex-1 gap-1 px-1 pb-1">
+        {floor(false)}
+        <ActionLog
+          open={logOpen}
+          onToggle={setLogOpen}
+          items={logItems}
+          onUndo={onUndo}
+          canUndo={canUndo}
+        />
       </div>
+        </>
+      )}
     </div>
   );
 }

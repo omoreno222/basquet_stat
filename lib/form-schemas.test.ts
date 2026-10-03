@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { opponentRosterSchema, teamSchema } from './form-schemas';
+import { incorporatePlayerSchema, opponentRosterSchema, teamSchema } from './form-schemas';
 
 const validTeam = {
   name: 'Senior A',
@@ -41,6 +41,7 @@ describe('opponentRosterSchema', () => {
   it('stores a blank name as null and does not require a starting five', () => {
     const parsed = opponentRosterSchema.parse({
       game_id: gameId,
+      color: '#737373',
       players: [
         opponentPlayer(4, false, '  '),
         opponentPlayer(5, false, 'Sol'),
@@ -56,10 +57,12 @@ describe('opponentRosterSchema', () => {
   it('rejects a jersey on the coach and a player without one', () => {
     const coachWithJersey = opponentRosterSchema.safeParse({
       game_id: gameId,
+      color: '#737373',
       players: [{ id: null, jersey_number: 4, name: 'Ana', is_coach: true }],
     });
     const playerWithoutJersey = opponentRosterSchema.safeParse({
       game_id: gameId,
+      color: '#737373',
       players: [{ id: null, jersey_number: null, name: 'Sol', is_coach: false }],
     });
     expect(coachWithJersey.success).toBe(false);
@@ -69,6 +72,7 @@ describe('opponentRosterSchema', () => {
   it('rejects a duplicate jersey', () => {
     const parsed = opponentRosterSchema.safeParse({
       game_id: gameId,
+      color: '#737373',
       players: [4, 5, 7, 8, 4].map((jersey) => opponentPlayer(jersey)),
     });
     expect(parsed.success).toBe(false);
@@ -80,10 +84,12 @@ describe('opponentRosterSchema', () => {
   it('accepts four players and rejects a second coach', () => {
     const four = opponentRosterSchema.safeParse({
       game_id: gameId,
+      color: '#737373',
       players: [4, 5, 7, 8].map((jersey) => opponentPlayer(jersey)),
     });
     const twoCoaches = opponentRosterSchema.safeParse({
       game_id: gameId,
+      color: '#737373',
       players: [
         opponentPlayer(4),
         opponentPlayer(1, true, 'Ana'),
@@ -97,10 +103,12 @@ describe('opponentRosterSchema', () => {
   it('rejects a 13th player, jersey 100, and a long name', () => {
     const tooMany = opponentRosterSchema.safeParse({
       game_id: gameId,
+      color: '#737373',
       players: Array.from({ length: 13 }, (_, index) => opponentPlayer(index)),
     });
     const withCoach = opponentRosterSchema.safeParse({
       game_id: gameId,
+      color: '#737373',
       players: [
         ...Array.from({ length: 12 }, (_, index) => opponentPlayer(index)),
         opponentPlayer(20, true, 'Coach'),
@@ -108,15 +116,67 @@ describe('opponentRosterSchema', () => {
     });
     const jersey = opponentRosterSchema.safeParse({
       game_id: gameId,
+      color: '#737373',
       players: [100, 5, 7, 8, 10].map((number) => opponentPlayer(number)),
     });
     const name = opponentRosterSchema.safeParse({
       game_id: gameId,
+      color: '#737373',
       players: [opponentPlayer(4, false, 'a'.repeat(81))],
     });
     expect(tooMany.success).toBe(false);
     expect(withCoach.success).toBe(true);
     expect(jersey.success).toBe(false);
     expect(name.success).toBe(false);
+  });
+
+  it('stores the jersey color in lowercase and rejects a bad color', () => {
+    const parsed = opponentRosterSchema.parse({
+      game_id: gameId,
+      color: '#AbCDef',
+      players: [opponentPlayer(4)],
+    });
+    expect(parsed.color).toBe('#abcdef');
+    expect(opponentRosterSchema.safeParse({
+      game_id: gameId,
+      color: 'blue',
+      players: [opponentPlayer(4)],
+    }).success).toBe(false);
+  });
+});
+
+function playerId(n: number) {
+  return `22222222-2222-4222-8222-${n.toString(16).padStart(12, '0')}`;
+}
+
+describe('incorporatePlayerSchema', () => {
+  it('accepts a team player when fewer than 12 are dressed', () => {
+    const dressed = Array.from({ length: 11 }, (_, index) => playerId(index + 1));
+    const parsed = incorporatePlayerSchema.parse({
+      game_id: gameId,
+      player_id: playerId(12),
+      dressed_ids: dressed,
+    });
+    expect(parsed.player_id).toBe(playerId(12));
+  });
+
+  it('rejects a player who is already dressed', () => {
+    const parsed = incorporatePlayerSchema.safeParse({
+      game_id: gameId,
+      player_id: playerId(1),
+      dressed_ids: [playerId(1), playerId(2)],
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.issues[0]?.message).toBe('already dressed');
+  });
+
+  it('rejects a 13th dressed player', () => {
+    const parsed = incorporatePlayerSchema.safeParse({
+      game_id: gameId,
+      player_id: playerId(13),
+      dressed_ids: Array.from({ length: 12 }, (_, index) => playerId(index + 1)),
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.issues[0]?.message).toBe('at most 12 players');
   });
 });

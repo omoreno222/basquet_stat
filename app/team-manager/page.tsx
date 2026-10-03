@@ -159,11 +159,6 @@ export default function TeamManagerDashboard() {
                           }`}>
                             {game.status}
                           </span>
-                          <div className="mt-2 text-xs text-gray-600">
-                            {game.slot_a_user_id ? '✓' : '○'} Slot A
-                            {' | '}
-                            {game.slot_b_user_id ? '✓' : '○'} Slot B
-                          </div>
                         </div>
                       </div>
                     </Link>
@@ -171,16 +166,6 @@ export default function TeamManagerDashboard() {
                 ))
               )}
             </ul>
-          </div>
-          
-          <div className="mt-6 bg-blue-50 border border-blue-200 rounded p-4">
-            <h3 className="font-semibold text-blue-900">Live Capture (Coming Soon)</h3>
-            <p className="text-sm text-blue-700 mt-1">
-              Slot A: Clock control, shots (1/2/3 pts), fouls, substitutions, opponent score
-            </p>
-            <p className="text-sm text-blue-700">
-              Slot B: Rebounds, assists, turnovers, steals
-            </p>
           </div>
         </div>
       </div>

@@ -8,7 +8,7 @@ import { Player, Game } from '@/lib/types';
 import { Club } from '@/types/database';
 import { ClubLogo } from '@/components/ClubLogo';
 import { canStartGame, formatTimeUntilStart, type GameStartCheck } from '@/lib/game-start-window';
-import { assignmentComplete } from '@/lib/live-access';
+import { userManagesClub } from '@/lib/live-access';
 import { TeamManagerNavPills } from '@/components/NavPills';
 
 interface GameWithTeam extends Game {
@@ -29,7 +29,7 @@ export default function GameDetailPage() {
 
   const [game, setGame] = useState<GameWithTeam | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [recorderNames, setRecorderNames] = useState<Record<string, string>>({});
+  const [canCapture, setCanCapture] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [gameStartCheck, setGameStartCheck] = useState<GameStartCheck | null>(null);
@@ -62,20 +62,11 @@ export default function GameDetailPage() {
         setPlayers(playersData || []);
       }
 
-      const recorderIds = [gameData.slot_a_user_id, gameData.slot_b_user_id].filter((id): id is string => Boolean(id));
-      if (recorderIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from('profiles')
-          .select('id, full_name, email')
-          .in('id', recorderIds);
-        const names: Record<string, string> = {};
-        profiles?.forEach((profile) => {
-          names[profile.id] = profile.full_name || profile.email;
-        });
-        setRecorderNames(names);
-      } else {
-        setRecorderNames({});
-      }
+      const { data: roleRows } = await supabase
+        .from('profile_roles')
+        .select('role, club_id')
+        .eq('profile_id', user.id);
+      setCanCapture(userManagesClub(roleRows ?? [], gameData.teams?.clubs?.id ?? null));
 
       if (gameData.status === 'scheduled') {
         const startCheck = await canStartGame(gameId, user.id);
@@ -127,21 +118,6 @@ export default function GameDetailPage() {
     return <div className="p-8">Game not found</div>;
   }
 
-  const recordersReady = assignmentComplete({
-    singleRecorder: game.single_recorder ?? false,
-    slotAUserId: game.slot_a_user_id,
-    slotBUserId: game.slot_b_user_id,
-  });
-  const canCapture = Boolean(currentUserId) && recordersReady && (
-    currentUserId === game.slot_a_user_id ||
-    currentUserId === game.slot_b_user_id
-  );
-  const tabletLabel = currentUserId === game.slot_a_user_id
-    ? 'Tablet A'
-    : currentUserId === game.slot_b_user_id
-      ? 'Tablet B'
-      : '';
-
   return (
     <div className="min-h-screen bg-gray-100">
       <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
@@ -191,20 +167,6 @@ export default function GameDetailPage() {
                 <p className="text-sm text-gray-500">Score</p>
                 <p className="font-medium text-2xl">{game.team_score} - {game.opponent_score}</p>
               </div>
-              <div>
-                <p className="text-sm text-gray-500">Tablet A</p>
-                <p className="font-medium">{game.slot_a_user_id ? (recorderNames[game.slot_a_user_id] || 'Assigned') : 'Not assigned'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Tablet B</p>
-                <p className="font-medium">
-                  {game.single_recorder
-                    ? 'One recorder'
-                    : game.slot_b_user_id
-                      ? (recorderNames[game.slot_b_user_id] || 'Assigned')
-                      : 'Not assigned'}
-                </p>
-              </div>
             </div>
           </div>
 
@@ -216,7 +178,7 @@ export default function GameDetailPage() {
                 <div>
                   <button
                     onClick={handleStartGame}
-                    disabled={!recordersReady || (gameStartCheck !== null && !gameStartCheck.canStart)}
+                    disabled={gameStartCheck !== null && !gameStartCheck.canStart}
                     className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-300 text-lg font-bold"
                   >
                     {gameStartCheck?.isAdmin ? 'Start Game (Admin Override)' : 'Start Game'}
@@ -242,10 +204,6 @@ export default function GameDetailPage() {
 
               {game.status === 'final' && (
                 <p className="text-gray-500">Game has ended</p>
-              )}
-
-              {tabletLabel && (
-                <p className="mt-4 text-sm text-gray-600">You are on {tabletLabel}</p>
               )}
             </div>
           )}

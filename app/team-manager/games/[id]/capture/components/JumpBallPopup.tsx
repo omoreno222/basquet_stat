@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { inkOn } from '@/lib/colors';
 
 export type JumpBallWinner = 'home' | 'away';
 
@@ -16,8 +17,6 @@ export interface JumpBallResult {
   label: string;
 }
 
-type Jumper = { side: 'home' | 'away'; id: string };
-
 type Translate = (key: string, fallback: string) => string;
 
 interface JumpBallPopupProps {
@@ -27,6 +26,7 @@ interface JumpBallPopupProps {
   awayName: string;
   homePlayers: JumpBallPlayer[];
   awayPlayers: JumpBallPlayer[];
+  awayColor: string;
   onStartClock: () => void;
   onConfirm: (result: JumpBallResult) => void;
   onClose: () => void;
@@ -51,31 +51,31 @@ export function JumpBallPopup({
   awayName,
   homePlayers,
   awayPlayers,
+  awayColor,
   onStartClock,
   onConfirm,
   onClose,
 }: JumpBallPopupProps) {
-  const [jumper, setJumper] = useState<Jumper | null>(null);
+  const [homeId, setHomeId] = useState<string | null>(null);
+  const [awayId, setAwayId] = useState<string | null>(null);
+  const [winner, setWinner] = useState<JumpBallWinner | null>(null);
   const homeSlots = Array.from({ length: COURT_SLOTS }, (_, index) => homePlayers[index] ?? null);
   const awaySlots = Array.from({ length: COURT_SLOTS }, (_, index) => awayPlayers[index] ?? null);
 
-  const homeJumper = jumper?.side === 'home'
-    ? homePlayers.find((player) => player.id === jumper.id) ?? null
-    : null;
-  const awayJumper = jumper?.side === 'away'
-    ? awayPlayers.find((player) => player.id === jumper.id) ?? null
-    : null;
-  const canFinish = clockRunning && (homeJumper !== null || awayJumper !== null);
+  const homeJumper = homePlayers.find((player) => player.id === homeId) ?? null;
+  const awayJumper = awayPlayers.find((player) => player.id === awayId) ?? null;
+  const canFinish = clockRunning && homeJumper !== null && awayJumper !== null && winner !== null;
+
+  function pick(side: JumpBallWinner, id: string) {
+    if (side === 'home') setHomeId(id);
+    else setAwayId(id);
+  }
 
   function confirm() {
-    if (!canFinish || !jumper) return;
-    if (jumper.side === 'home' && homeJumper) {
-      onConfirm({ winner: 'home', label: jumperLabel(homeJumper, homeName) });
-      return;
-    }
-    if (jumper.side === 'away' && awayJumper) {
-      onConfirm({ winner: 'away', label: jumperLabel(awayJumper, awayName) });
-    }
+    if (!canFinish || !winner || !homeJumper || !awayJumper) return;
+    const player = winner === 'home' ? homeJumper : awayJumper;
+    const team = winner === 'home' ? homeName : awayName;
+    onConfirm({ winner, label: jumperLabel(player, team) });
   }
 
   return (
@@ -91,12 +91,12 @@ export function JumpBallPopup({
             {t('trke_jump_title', 'Jump ball')}
           </h2>
           <p className="mt-1 text-center text-[11px] font-medium text-neutral-500">
-            {t('trke_jump_hint', 'Start the clock, then tap who jumps')}
+            {t('trke_jump_hint', 'Tap one jumper on each team. Start the clock and mark who wins.')}
           </p>
         </header>
 
         <div className="flex min-h-0 flex-1 gap-3 px-3 py-3">
-          <section className={`flex w-36 shrink-0 flex-col gap-2 ${clockRunning ? '' : 'pointer-events-none opacity-40'}`} aria-label={homeName}>
+          <section className="flex w-36 shrink-0 flex-col gap-2" aria-label={homeName}>
             <p className="truncate text-center text-[11px] font-black tracking-wider text-neutral-500">
               {homeName}
             </p>
@@ -110,17 +110,21 @@ export function JumpBallPopup({
                     />
                   );
                 }
-                const selected = jumper?.side === 'home' && jumper.id === player.id;
+                const selected = homeId === player.id;
+                const won = selected && winner === 'home';
                 return (
                   <button
                     key={player.id}
                     type="button"
                     role="radio"
                     aria-checked={selected}
-                    disabled={!clockRunning}
-                    onClick={() => setJumper({ side: 'home', id: player.id })}
-                    className={`flex min-h-0 flex-1 flex-col items-center justify-end overflow-hidden rounded-lg px-1 pb-1 text-white disabled:cursor-not-allowed ${
-                      selected ? 'bg-black ring-4 ring-amber-400' : 'bg-neutral-900 hover:bg-black'
+                    onClick={() => pick('home', player.id)}
+                    className={`flex min-h-0 flex-1 flex-col items-center justify-end overflow-hidden rounded-lg px-1 pb-1 text-white ${
+                      won
+                        ? 'bg-amber-500 text-neutral-900 ring-4 ring-amber-300'
+                        : selected
+                          ? 'bg-black ring-4 ring-amber-400'
+                          : 'bg-neutral-900 hover:bg-black'
                     }`}
                   >
                     {player.avatarUrl ? (
@@ -131,7 +135,7 @@ export function JumpBallPopup({
                       />
                     ) : null}
                     <span className="text-4xl font-black tabular-nums leading-none">{player.jersey}</span>
-                    <span className="mt-1 max-w-full truncate text-[10px] font-bold text-white/80">
+                    <span className={`mt-1 max-w-full truncate text-[10px] font-bold ${won ? 'text-neutral-900/80' : 'text-white/80'}`}>
                       {shortName(player.name)}
                     </span>
                   </button>
@@ -157,15 +161,42 @@ export function JumpBallPopup({
                 : t('trke_jump_start_clock', 'Start clock')}
             </button>
             <p className="text-center text-sm font-black text-neutral-800">
-              {homeJumper
-                ? jumperLabel(homeJumper, homeName)
-                : awayJumper
-                  ? jumperLabel(awayJumper, awayName)
-                  : t('trke_jump_who', 'Who jumps?')}
+              {homeJumper && awayJumper
+                ? t('trke_jump_winner', 'Who wins the tip?')
+                : t('trke_jump_who', 'Who jumps?')}
             </p>
+            {homeJumper && awayJumper ? (
+              <div className="flex w-full max-w-xs gap-2">
+                <button
+                  type="button"
+                  onClick={() => setWinner('home')}
+                  className={`flex-1 px-2 py-3 text-xs font-black ${
+                    winner === 'home' ? 'bg-amber-400 text-neutral-900' : 'bg-neutral-900 text-white'
+                  }`}
+                >
+                  {jumperLabel(homeJumper, homeName)}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWinner('away')}
+                  className={`flex-1 px-2 py-3 text-xs font-black ${
+                    winner === 'away' ? 'bg-amber-400 text-neutral-900' : 'text-neutral-900'
+                  }`}
+                  style={winner === 'away' ? undefined : { backgroundColor: awayColor, color: inkOn(awayColor) }}
+                >
+                  {jumperLabel(awayJumper, awayName)}
+                </button>
+              </div>
+            ) : (
+              <p className="text-center text-xs font-bold text-neutral-500">
+                {[homeJumper ? jumperLabel(homeJumper, homeName) : null, awayJumper ? jumperLabel(awayJumper, awayName) : null]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+            )}
           </div>
 
-          <section className={`flex w-36 shrink-0 flex-col gap-2 ${clockRunning ? '' : 'pointer-events-none opacity-40'}`} aria-label={awayName}>
+          <section className="flex w-36 shrink-0 flex-col gap-2" aria-label={awayName}>
             <p className="truncate text-center text-[11px] font-black tracking-wider text-neutral-500">
               {awayName}
             </p>
@@ -179,21 +210,25 @@ export function JumpBallPopup({
                     />
                   );
                 }
-                const selected = jumper?.side === 'away' && jumper.id === player.id;
+                const selected = awayId === player.id;
+                const won = selected && winner === 'away';
                 return (
                   <button
                     key={player.id}
                     type="button"
                     role="radio"
                     aria-checked={selected}
-                    disabled={!clockRunning}
-                    onClick={() => setJumper({ side: 'away', id: player.id })}
-                    className={`flex min-h-0 flex-1 flex-col items-center justify-end overflow-hidden rounded-lg px-1 pb-1 text-white disabled:cursor-not-allowed ${
-                      selected ? 'bg-neutral-600 ring-4 ring-amber-400' : 'bg-neutral-400 hover:bg-neutral-500'
+                    onClick={() => pick('away', player.id)}
+                    className={`flex min-h-0 flex-1 flex-col items-center justify-end overflow-hidden rounded-lg px-1 pb-1 ${
+                      won || selected ? 'ring-4 ring-amber-400' : ''
                     }`}
+                    style={{
+                      backgroundColor: won ? '#fbbf24' : awayColor,
+                      color: won ? '#171717' : inkOn(awayColor),
+                    }}
                   >
                     <span className="text-4xl font-black tabular-nums leading-none">{player.jersey}</span>
-                    <span className="mt-1 max-w-full truncate text-[10px] font-bold text-white/80">
+                    <span className="mt-1 max-w-full truncate text-[10px] font-bold opacity-80">
                       {player.name.trim() ? shortName(player.name) : awayName}
                     </span>
                   </button>

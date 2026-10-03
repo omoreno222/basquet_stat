@@ -215,21 +215,6 @@ export default function LoginPage() {
             </form>
           </>
         )}
-
-        <div className="mt-6 text-sm text-gray-600">
-          <p className="font-semibold mb-2">Demo Accounts:</p>
-          <ul className="space-y-1">
-            <li>Admin: <span className="font-mono">oscar@basquet.local</span> / basquet2024</li>
-            <li>Team Manager: <span className="font-mono">manager@basquet.local</span> / basquet2024</li>
-            <li>Team Manager: <span className="font-mono">pere.alier@basquet.local</span> / basquet2024</li>
-            <li>Coach: <span className="font-mono">coach@basquet.local</span> / basquet2024</li>
-            <li>Parent: <span className="font-mono">parent@basquet.local</span> / basquet2024</li>
-            <li>Player: <span className="font-mono">player@basquet.local</span> / basquet2024</li>
-          </ul>
-          <p className="mt-3 text-xs text-gray-500">
-            💡 For dual-tablet tests: Use <span className="font-mono">oscar</span> + <span className="font-mono">pere.alier</span> or <span className="font-mono">manager</span> + <span className="font-mono">pere.alier</span>
-          </p>
-        </div>
       </div>
     </div>
   );

@@ -5,7 +5,7 @@ export const userRoleValues = ['admin', 'club_admin', 'team_manager', 'coach', '
 export const teamCategoryValues = ['premini', 'mini', 'infantil', 'cadete', 'junior', 'sub22', 'senior'] as const;
 export const teamGenderValues = ['male', 'female', 'mixed'] as const;
 export const gameStatusValues = ['scheduled', 'live', 'final'] as const;
-export const operatorRoleValues = ['admin', 'club_admin', 'team_manager'] as const;
+export const kitColorValues = ['primary', 'secondary'] as const;
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Invalid color');
 
@@ -92,6 +92,7 @@ const opponentRosterPlayerSchema = z.object({
 
 export const opponentRosterSchema = z.object({
   game_id: z.string().uuid(),
+  color: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, 'invalid color').transform((value) => value.toLowerCase()),
   players: z.array(opponentRosterPlayerSchema).max(13, 'at most 12 opponent players'),
 }).refine((value) => {
   const jerseys = value.players.flatMap((player) => (player.jersey_number === null ? [] : [player.jersey_number]));
@@ -121,6 +122,21 @@ export const gameSquadSchema = z.object({
   path: ['player_ids'],
 });
 
+export const incorporatePlayerSchema = z.object({
+  game_id: z.string().uuid(),
+  player_id: z.string().uuid(),
+  dressed_ids: z.array(z.string().uuid()).max(12, 'at most 12 players'),
+}).refine((value) => uniqueIds(value.dressed_ids), {
+  message: 'duplicate player',
+  path: ['dressed_ids'],
+}).refine((value) => !value.dressed_ids.includes(value.player_id), {
+  message: 'already dressed',
+  path: ['player_id'],
+}).refine((value) => value.dressed_ids.length < 12, {
+  message: 'at most 12 players',
+  path: ['dressed_ids'],
+});
+
 export const periodLineupSchema = z.object({
   game_id: z.string().uuid(),
   period_number: z.number().int().min(1).max(20),
@@ -145,18 +161,8 @@ export const gameSchema = z.object({
   status: z.enum(gameStatusValues),
   is_home: z.boolean(),
   official: z.boolean(),
-  single_recorder: z.boolean(),
-  slot_a_user_id: z.string().uuid('Recorder A is required'),
-  slot_b_user_id: optionalUuid,
-}).refine((value) => value.single_recorder || Boolean(value.slot_b_user_id), {
-  message: 'Choose both operators, or mark one recorder.',
-  path: ['slot_b_user_id'],
-}).refine((value) => !value.single_recorder || !value.slot_b_user_id, {
-  message: 'Choose both operators, or mark one recorder.',
-  path: ['slot_b_user_id'],
-}).refine((value) => !value.slot_b_user_id || value.slot_a_user_id !== value.slot_b_user_id, {
-  message: 'The two operators must be different people.',
-  path: ['slot_b_user_id'],
+  kit_color: z.enum(kitColorValues),
+  opponent_color: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, 'Invalid color').transform((value) => value.toLowerCase()),
 });
 
 export const userCreateSchema = z.object({

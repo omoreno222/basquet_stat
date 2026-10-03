@@ -7,6 +7,7 @@ export interface LineupChoice {
   jersey: number;
   name: string;
   eliminated: boolean;
+  avatarUrl?: string | null;
 }
 
 type Translate = (key: string, fallback: string) => string;
@@ -22,6 +23,8 @@ interface PeriodLineupModalProps {
   initialAwayIds: string[];
   homeRequired: number;
   awayRequired: number;
+  undressedPlayers: LineupChoice[];
+  onIncorporate: (playerId: string) => Promise<string | null>;
   onSave: (homeIds: string[], awayIds: string[]) => Promise<string | null>;
   onClose: () => void;
 }
@@ -64,6 +67,9 @@ function SideList({
                 onChange={() => onToggle(player.id)}
                 className="h-5 w-5 accent-neutral-900 disabled:opacity-40"
               />
+              {player.avatarUrl ? (
+                <img src={player.avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-md object-cover" />
+              ) : null}
               <span className="w-8 text-lg font-black tabular-nums">{player.jersey}</span>
               <span className="min-w-0 flex-1 truncate text-sm font-medium">
                 {player.name}
@@ -88,6 +94,8 @@ export function PeriodLineupModal({
   initialAwayIds,
   homeRequired,
   awayRequired,
+  undressedPlayers,
+  onIncorporate,
   onSave,
   onClose,
 }: PeriodLineupModalProps) {
@@ -95,6 +103,8 @@ export function PeriodLineupModal({
   const [awayIds, setAwayIds] = useState(initialAwayIds.filter((id) => awayPlayers.some((player) => player.id === id && !player.eliminated)));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [incorporating, setIncorporating] = useState(false);
   const eliminatedLabel = t('trke_period_lineup_eliminated', 'Fouled out');
 
   function toggle(side: 'home' | 'away', id: string) {
@@ -107,6 +117,33 @@ export function PeriodLineupModal({
       if (current.length >= 5) return current;
       return [...current, id];
     });
+    setError(null);
+  }
+
+  function openIncorporate() {
+    if (undressedPlayers.length === 0) {
+      setPicking(false);
+      setError(t('trke_squad_incorporate_none', 'Every player on the team is already dressed'));
+      return;
+    }
+    if (homePlayers.length >= 12) {
+      setPicking(false);
+      setError(t('trke_squad_incorporate_full', 'This game already has 12 dressed players'));
+      return;
+    }
+    setError(null);
+    setPicking(true);
+  }
+
+  async function add(playerId: string) {
+    setIncorporating(true);
+    const message = await onIncorporate(playerId);
+    setIncorporating(false);
+    if (message) {
+      setError(message);
+      return;
+    }
+    setPicking(false);
     setError(null);
   }
 
@@ -137,14 +174,46 @@ export function PeriodLineupModal({
           </p>
         </header>
         <div className="flex min-h-0 flex-1 gap-3 overflow-y-auto px-3 py-3">
-          <SideList
-            title={homeName}
-            players={homePlayers}
-            selected={homeIds}
-            required={homeRequired}
-            eliminatedLabel={eliminatedLabel}
-            onToggle={(id) => toggle('home', id)}
-          />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <SideList
+              title={homeName}
+              players={homePlayers}
+              selected={homeIds}
+              required={homeRequired}
+              eliminatedLabel={eliminatedLabel}
+              onToggle={(id) => toggle('home', id)}
+            />
+            <button
+              type="button"
+              onClick={openIncorporate}
+              className="mt-2 bg-neutral-200 py-3 text-sm font-bold text-neutral-800 hover:bg-neutral-300"
+              style={{ minHeight: '48px' }}
+            >
+              {t('trke_squad_incorporate', 'Add a player')}
+            </button>
+            {picking && (
+              <div className="mt-2 flex flex-col gap-2">
+                <p className="text-center text-[11px] font-medium text-neutral-500">
+                  {t('trke_squad_incorporate_hint', 'Choose a player from the team who is not dressed. At most 12.')}
+                </p>
+                {undressedPlayers.map((player) => (
+                  <button
+                    key={player.id}
+                    type="button"
+                    disabled={incorporating}
+                    onClick={() => { void add(player.id); }}
+                    className="flex min-h-11 items-center gap-2 rounded-lg border border-neutral-200 px-2 py-2 text-left hover:bg-neutral-50 disabled:opacity-40"
+                  >
+                    {player.avatarUrl ? (
+                      <img src={player.avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-md object-cover" />
+                    ) : null}
+                    <span className="w-8 text-lg font-black tabular-nums">{player.jersey}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{player.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <SideList
             title={awayName}
             players={awayPlayers}

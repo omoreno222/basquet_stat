@@ -7,7 +7,6 @@ import { assertAdmin, assertClubAdmin, assertPlatformAdmin, getAuthenticatedUser
 import {
   clubSchema,
   gameSchema,
-  operatorRoleValues,
   playerSchema,
   profileEmailSchema,
   profileFieldsSchema,
@@ -697,46 +696,6 @@ export async function saveGame(input: unknown) {
   const denied = await clubAccessError(team.club_id);
   if (denied) return { error: denied };
 
-  const slotB = parsed.data.single_recorder ? null : parsed.data.slot_b_user_id || null;
-  const recorderIds = [parsed.data.slot_a_user_id, slotB].filter((id): id is string => Boolean(id));
-  const { data: recorderRoles, error: recorderError } = await client.supabase
-    .from('profile_roles')
-    .select('profile_id, role, club_id')
-    .in('profile_id', recorderIds)
-    .in('role', [...operatorRoleValues]);
-
-  if (recorderError) return { error: recorderError.message };
-
-  const allowed = new Set(
-    (recorderRoles || [])
-      .filter((role) => (
-        (role.role === 'admin' && role.club_id === null)
-        || ((role.role === 'club_admin' || role.role === 'team_manager') && role.club_id === team.club_id)
-      ))
-      .map((role) => role.profile_id),
-  );
-  if (recorderIds.some((id) => !allowed.has(id))) {
-    return { error: 'Each operator must be an admin, club admin, or team manager of this club' };
-  }
-
-  if (parsed.data.id) {
-    const { data: existing, error: existingError } = await client.supabase
-      .from('games')
-      .select('status, clock_running, slot_a_user_id, slot_b_user_id')
-      .eq('id', parsed.data.id)
-      .single();
-    if (existingError || !existing) return { error: existingError?.message || 'Game not found' };
-
-    const operatorsChanged = existing.slot_a_user_id !== parsed.data.slot_a_user_id
-      || existing.slot_b_user_id !== slotB;
-    if (operatorsChanged && (existing.status === 'final' || parsed.data.status === 'final')) {
-      return { error: 'OPERATOR_FINAL' };
-    }
-    if (operatorsChanged && existing.status === 'live' && existing.clock_running) {
-      return { error: 'OPERATOR_CLOCK' };
-    }
-  }
-
   const payload = {
     team_id: parsed.data.team_id,
     opponent_name: parsed.data.opponent_name,
@@ -745,9 +704,8 @@ export async function saveGame(input: unknown) {
     status: parsed.data.status,
     is_home: parsed.data.is_home,
     official: parsed.data.official,
-    single_recorder: parsed.data.single_recorder,
-    slot_a_user_id: parsed.data.slot_a_user_id,
-    slot_b_user_id: slotB,
+    kit_color: parsed.data.kit_color,
+    opponent_color: parsed.data.opponent_color,
   };
 
   if (parsed.data.id) {

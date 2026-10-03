@@ -40,14 +40,12 @@ export interface Game {
   game_date: string;
   status: string;
   official?: boolean;
-  slot_a_user_id: string | null;
-  slot_b_user_id: string | null;
-  single_recorder?: boolean;
   clock_running: boolean;
   clock_remaining_ms: number;
   current_period: number;
   possession: 'home' | 'away';
   attack_right_first: boolean;
+  opponent_color?: string;
   created_at: string;
   updated_at?: string;
   teams?: Team;

@@ -6,10 +6,10 @@ import { supabase } from '@/lib/supabase';
 import { Club, Game } from '@/types/database';
 import { AdminNavbar } from '@/components/AdminNavbar';
 import { ClubLogo } from '@/components/ClubLogo';
-import { assignmentComplete, userCanOpenLiveGame } from '@/lib/live-access';
+import { isPlatformAdmin, userCanOpenLiveGame, userManagesClub } from '@/lib/live-access';
 import { useLocaleTranslations } from '@/lib/use-locale-translations';
 import { Plus } from 'lucide-react';
-import { DeleteButton, EditLink } from '../row-actions';
+import { DeleteButton, EditLink, ResetButton } from '../row-actions';
 
 interface GameWithTeam extends Game {
   teams?: {
@@ -18,10 +18,23 @@ interface GameWithTeam extends Game {
   };
 }
 
+function kitSwatch(game: GameWithTeam) {
+  const club = game.teams?.clubs;
+  if (!club) return null;
+  const secondary = game.kit_color === 'secondary';
+  return {
+    color: secondary ? club.secondary_color : club.primary_color,
+    labelKey: secondary ? 'trke_club_secondary_color' : 'trke_club_primary_color',
+    fallback: secondary ? 'Secondary color' : 'Primary color',
+  };
+}
+
 export default function GamesPage() {
   const { t } = useLocaleTranslations();
   const [games, setGames] = useState<GameWithTeam[]>([]);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [roles, setRoles] = useState<{ role: string; club_id: string | null }[]>([]);
+  const [platformAdmin, setPlatformAdmin] = useState(false);
+  const [resettingId, setResettingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -33,9 +46,7 @@ export default function GamesPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    setUserId(user.id);
-
-    const { data: roles, error: rolesError } = await supabase
+    const { data: roleRows, error: rolesError } = await supabase
       .from('profile_roles')
       .select('role, club_id')
       .eq('profile_id', user.id);
@@ -46,8 +57,11 @@ export default function GamesPage() {
       return;
     }
 
-    const platformAdmin = roles?.some((role) => role.role === 'admin' && role.club_id === null) || false;
-    const clubAdmin = roles?.find((role) => (role.role === 'club_admin' || role.role === 'admin') && role.club_id !== null);
+    const loadedRoles = roleRows ?? [];
+    setRoles(loadedRoles);
+    const platformAdmin = isPlatformAdmin(loadedRoles);
+    setPlatformAdmin(platformAdmin);
+    const clubAdmin = loadedRoles.find((role) => (role.role === 'club_admin' || role.role === 'admin') && role.club_id !== null);
 
     let gamesQuery = supabase
       .from('games')
@@ -68,6 +82,24 @@ export default function GamesPage() {
     }
     setGames(data ?? []);
     setLoading(false);
+  }
+
+  async function handleReset(id: string) {
+    if (!confirm(t('trke_game_reset_confirm', 'Reset this game? Score, events, and lineups go back to zero. It stays live so you can open it again.'))) return;
+
+    setResettingId(id);
+    setError('');
+    const { error: resetError } = await supabase.rpc('reset_game_for_testing', { p_game_id: id });
+    setResettingId(null);
+
+    if (resetError) {
+      const forbidden = resetError.message.toLowerCase().includes('platform admin');
+      setError(forbidden
+        ? t('trke_purge_forbidden', 'Only a platform admin can do this')
+        : t('trke_game_reset_error', 'Could not reset the game'));
+      return;
+    }
+    loadData();
   }
 
   async function handleDelete(id: string) {
@@ -105,18 +137,12 @@ export default function GamesPage() {
                   <li className="px-6 py-4 text-gray-500 dark:text-gray-400">No games found</li>
                 ) : (
                   games.map((game) => {
-                    const recorders = {
-                      singleRecorder: game.single_recorder ?? false,
-                      slotAUserId: game.slot_a_user_id,
-                      slotBUserId: game.slot_b_user_id,
-                    };
                     const live = userCanOpenLiveGame({
                       status: game.status,
-                      userId,
-                      ...recorders,
+                      managesClub: userManagesClub(roles, game.teams?.clubs?.id ?? null),
                     });
-                    const needsRecorders = game.status === 'live' && !assignmentComplete(recorders);
                     const title = `${game.teams?.name} vs ${game.opponent_name}`;
+                    const kit = kitSwatch(game);
                     return (
                     <li key={game.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-white/5">
                       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -138,22 +164,39 @@ export default function GamesPage() {
                                   <span className="animate-pulse">{title}</span>
                                   <span className="sr-only">Live</span>
                                 </Link>
-                              ) : needsRecorders ? (
-                                <Link href={`/admin/games/${game.id}`} className="hover:underline">
-                                  {title}
-                                </Link>
                               ) : (
                                 <span>{title}</span>
                               )}
                             </h3>
                             <p className="text-sm text-gray-500 dark:text-gray-400">{new Date(game.game_date).toLocaleString()} - {game.venue || 'TBD'}</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">{game.is_home ? 'Home' : 'Away'} · {game.official ? 'Official' : 'Friendly'}</p>
+                            <p className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                              <span>{game.is_home ? 'Home' : 'Away'} · {game.official ? 'Official' : 'Friendly'}</span>
+                              {kit ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="h-4 w-4 rounded border border-gray-300 dark:border-white/20" style={{ backgroundColor: kit.color }} />
+                                  <span>{t(kit.labelKey, kit.fallback)}</span>
+                                </span>
+                              ) : null}
+                              {game.opponent_color ? (
+                                <span className="inline-flex items-center gap-1" title={t('trke_opponent_color', 'Opponent color')}>
+                                  <span className="h-4 w-4 rounded border border-gray-300 dark:border-white/20" style={{ backgroundColor: game.opponent_color }} />
+                                  <span>{game.opponent_name}</span>
+                                </span>
+                              ) : null}
+                            </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className={`rounded px-2 py-1 text-xs font-semibold uppercase ${game.status === 'live' ? 'bg-green-100 text-green-800 dark:bg-green-300 dark:text-green-950' : game.status === 'final' ? 'bg-gray-100 text-gray-800 dark:bg-gray-300 dark:text-gray-950' : 'bg-blue-100 text-blue-800 dark:bg-blue-300 dark:text-blue-950'}`}>
                             {game.status}
                           </span>
+                          {platformAdmin ? (
+                            <ResetButton
+                              label={t('trke_game_reset', 'Reiniciar')}
+                              disabled={resettingId === game.id}
+                              onClick={() => handleReset(game.id)}
+                            />
+                          ) : null}
                           <EditLink href={`/admin/games/${game.id}`} label={`${t('trke_edit', 'Edit')} ${game.opponent_name}`} />
                           <DeleteButton label={`${t('trke_delete', 'Delete')} ${game.opponent_name}`} onClick={() => handleDelete(game.id)} />
                         </div>
