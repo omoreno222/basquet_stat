@@ -119,9 +119,9 @@ export function JumpBallPopup({
                     role="radio"
                     aria-checked={selected}
                     onClick={() => pick('home', player.id)}
-                    className={`flex min-h-0 flex-1 flex-col items-center justify-end overflow-hidden rounded-lg px-1 pb-1 text-white ${
+                    className={`relative flex min-h-0 flex-1 flex-col items-center justify-end overflow-hidden rounded-lg text-white ${
                       won
-                        ? 'bg-amber-500 text-neutral-900 ring-4 ring-amber-300'
+                        ? 'bg-amber-500 ring-4 ring-amber-300'
                         : selected
                           ? 'bg-black ring-4 ring-amber-400'
                           : 'bg-neutral-900 hover:bg-black'
@@ -131,12 +131,14 @@ export function JumpBallPopup({
                       <img
                         src={player.avatarUrl}
                         alt=""
-                        className="mb-1 h-8 w-8 rounded-full object-cover"
+                        className="absolute inset-0 h-full w-full object-cover"
                       />
                     ) : null}
-                    <span className="text-4xl font-black tabular-nums leading-none">{player.jersey}</span>
-                    <span className={`mt-1 max-w-full truncate text-[10px] font-bold ${won ? 'text-neutral-900/80' : 'text-white/80'}`}>
-                      {shortName(player.name)}
+                    <span className={`relative z-10 flex w-full flex-col items-center px-1 pb-1 pt-8 ${player.avatarUrl ? 'bg-gradient-to-t from-black/80 to-transparent' : ''}`}>
+                      <span className="text-4xl font-black tabular-nums leading-none">{player.jersey}</span>
+                      <span className="mt-1 max-w-full truncate text-[10px] font-bold text-white/90">
+                        {shortName(player.name)}
+                      </span>
                     </span>
                   </button>
                 );
