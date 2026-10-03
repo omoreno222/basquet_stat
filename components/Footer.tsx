@@ -1,6 +1,6 @@
 'use client';
 
-import Image from 'next/image';
+import { SeasonMathLogo } from '@/components/SeasonMathLogo';
 
 interface FooterProps {
   translations: Record<string, string>;
@@ -14,13 +14,7 @@ export function Footer({ translations, version }: FooterProps) {
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           {/* Logo and copyright */}
           <div className="flex items-center gap-4">
-            <Image
-              src="/images/seasonmath-logo.png"
-              alt="SeasonMath"
-              width={32}
-              height={32}
-              className="w-8 h-8"
-            />
+            <SeasonMathLogo width={32} height={32} className="w-8 h-8" />
             <span className="text-sm">
               {translations.trke_footer_copyright || '© 2026 SeasonMath'}
             </span>

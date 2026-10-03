@@ -9,6 +9,7 @@ import { Club } from '@/types/database';
 import { ClubLogo } from '@/components/ClubLogo';
 import { canStartGame, formatTimeUntilStart, type GameStartCheck } from '@/lib/game-start-window';
 import { userManagesClub } from '@/lib/live-access';
+import { AdminNavbar } from '@/components/AdminNavbar';
 import { TeamManagerNavPills } from '@/components/NavPills';
 
 interface GameWithTeam extends Game {
@@ -30,6 +31,8 @@ export default function GameDetailPage() {
   const [game, setGame] = useState<GameWithTeam | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [canCapture, setCanCapture] = useState(false);
+  const [adminShell, setAdminShell] = useState(false);
+  const [gamesHref, setGamesHref] = useState('/team-manager');
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [gameStartCheck, setGameStartCheck] = useState<GameStartCheck | null>(null);
@@ -66,7 +69,11 @@ export default function GameDetailPage() {
         .from('profile_roles')
         .select('role, club_id')
         .eq('profile_id', user.id);
-      setCanCapture(userManagesClub(roleRows ?? [], gameData.teams?.clubs?.id ?? null));
+      const roles = roleRows ?? [];
+      setCanCapture(userManagesClub(roles, gameData.teams?.clubs?.id ?? null));
+      const usesAdminShell = roles.some((role) => role.role === 'admin' || role.role === 'club_admin');
+      setAdminShell(usesAdminShell);
+      setGamesHref(usesAdminShell ? '/admin/games' : '/team-manager');
 
       if (gameData.status === 'scheduled') {
         const startCheck = await canStartGame(gameId, user.id);
@@ -120,20 +127,34 @@ export default function GameDetailPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <Link href="/team-manager" className="text-blue-500 hover:text-blue-700 mr-4">
-                ← Back to Games
-              </Link>
-              <h1 className="text-xl font-bold">Game Management</h1>
+      {adminShell ? (
+        <AdminNavbar />
+      ) : (
+        <>
+          <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex justify-between h-16">
+                <div className="flex items-center">
+                  <Link href={gamesHref} className="text-blue-500 hover:text-blue-700 mr-4">
+                    ← Back to Games
+                  </Link>
+                  <h1 className="text-xl font-bold">Game Management</h1>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      </nav>
-      <TeamManagerNavPills />
+          </nav>
+          <TeamManagerNavPills />
+        </>
+      )}
 
+      <div className={adminShell ? 'lg:pl-56' : undefined}>
+      {adminShell ? (
+        <div className="max-w-7xl mx-auto px-4 pt-6 sm:px-6 lg:px-8">
+          <Link href={gamesHref} className="text-sm font-medium text-blue-700 hover:text-blue-900">
+            ← Back to Games
+          </Link>
+        </div>
+      ) : null}
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
 
@@ -220,6 +241,7 @@ export default function GameDetailPage() {
           </div>
 
         </div>
+      </div>
       </div>
     </div>
   );

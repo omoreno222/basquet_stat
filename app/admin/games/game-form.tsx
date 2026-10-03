@@ -37,7 +37,15 @@ function toLocalInput(value: string) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-export function GameForm({ gameId }: { gameId?: string }) {
+function captureReturnPath(gameId: string | undefined, returnTo: string | undefined) {
+  if (!gameId || !returnTo) return null;
+  if (!returnTo.startsWith('/') || returnTo.startsWith('//') || returnTo.includes('\\')) return null;
+  const pathname = returnTo.split('?')[0]?.split('#')[0] ?? '';
+  if (pathname !== `/team-manager/games/${gameId}/capture`) return null;
+  return pathname;
+}
+
+export function GameForm({ gameId, returnTo }: { gameId?: string; returnTo?: string }) {
   const router = useRouter();
   const { t } = useLocaleTranslations();
   const [loading, setLoading] = useState(true);
@@ -114,6 +122,8 @@ export function GameForm({ gameId }: { gameId?: string }) {
     };
   }, [gameId]);
 
+  const doneHref = captureReturnPath(gameId, returnTo) ?? '/admin/games';
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setSaving(true);
@@ -127,9 +137,8 @@ export function GameForm({ gameId }: { gameId?: string }) {
       setError(result.error || 'Could not save the game');
       return;
     }
-    router.push('/admin/games');
+    router.push(doneHref);
   }
-
   const title = gameId ? t('trke_game_edit', 'Edit game') : t('trke_game_new', 'New game');
   const selectedTeam = teams.find((team) => team.id === formData.team_id);
   const selectedClub = clubColors(selectedTeam?.clubs);
@@ -141,7 +150,7 @@ export function GameForm({ gameId }: { gameId?: string }) {
     : [];
 
   return (
-    <FormScreen title={title} backHref="/admin/games" backLabel={t('trke_back', 'Back')}>
+    <FormScreen title={title} backHref={doneHref} backLabel={t('trke_back', 'Back')}>
       {loading ? (
         <p>{t('trke_loading', 'Loading...')}</p>
       ) : missing ? (
@@ -251,7 +260,7 @@ export function GameForm({ gameId }: { gameId?: string }) {
             <button type="submit" disabled={saving} className="rounded bg-green-500 px-4 py-2 font-bold text-white hover:bg-green-700 disabled:opacity-50">
               {gameId ? t('trke_update', 'Update') : t('trke_create', 'Create')}
             </button>
-            <button type="button" onClick={() => router.push('/admin/games')} className="rounded bg-gray-500 px-4 py-2 font-bold text-white hover:bg-gray-700">
+            <button type="button" onClick={() => router.push(doneHref)} className="rounded bg-gray-500 px-4 py-2 font-bold text-white hover:bg-gray-700">
               {t('trke_cancel', 'Cancel')}
             </button>
           </div>

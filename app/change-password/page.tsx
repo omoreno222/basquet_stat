@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { changePasswordWithCurrent } from '@/lib/password-auth';
-import Image from 'next/image';
+import { SeasonMathLogo } from '@/components/SeasonMathLogo';
 
 export default function ChangePasswordPage() {
   const router = useRouter();
@@ -101,10 +101,8 @@ export default function ChangePasswordPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-800">
       <div className="max-w-md w-full bg-white dark:bg-gray-700 rounded-lg shadow-lg p-8 ring-1 ring-black/5 dark:ring-white/15">
         <div className="text-center mb-8">
-          <Image 
-            src="/images/seasonmath-logo.png" 
-            alt="SeasonMath" 
-            width={120} 
+          <SeasonMathLogo
+            width={120}
             height={120}
             className="h-12 w-auto mx-auto mb-4"
           />

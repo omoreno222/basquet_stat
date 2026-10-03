@@ -1,7 +1,7 @@
 export type UserRole = 'admin' | 'club_admin' | 'team_manager' | 'coach' | 'parent' | 'player';
 export type GameStatus = 'scheduled' | 'live' | 'final';
 export type KitColor = 'primary' | 'secondary';
-export type EventType = 'shot' | 'free_throw' | 'foul' | 'rebound' | 'assist' | 'steal' | 'turnover';
+export type EventType = 'shot' | 'free_throw' | 'foul' | 'rebound' | 'assist' | 'steal' | 'turnover' | 'timeout';
 export type Locale = 'en' | 'es' | 'ca';
 export type TeamCategory = 'premini' | 'mini' | 'infantil' | 'cadete' | 'junior' | 'sub22' | 'senior';
 export type TeamGender = 'male' | 'female' | 'mixed';
@@ -94,6 +94,7 @@ export interface Game {
   clock_remaining_ms: number;
   current_period: number;
   possession: 'home' | 'away' | null;
+  opening_tip_winner?: 'home' | 'away' | null;
   official: boolean;
   kit_color: KitColor;
   opponent_color: string;
@@ -154,6 +155,7 @@ export interface GameEvent {
   is_offensive: boolean | null;
   turnover_type: string | null;
   turnover_side: 'home' | 'away' | null;
+  timeout_side: 'home' | 'away' | null;
   recorded_by_user_id: string | null;
   created_at: string;
 }

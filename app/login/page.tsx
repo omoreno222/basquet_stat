@@ -90,11 +90,14 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+    <div
+      className="min-h-screen flex items-center justify-center bg-black bg-cover bg-center bg-no-repeat"
+      style={{ backgroundImage: "url('/images/login-bg.jpg')" }}
+    >
+      <div className="bg-white/95 p-8 rounded-lg shadow-2xl w-full max-w-md">
         <div className="flex justify-center mb-6">
           <Image 
-            src="/images/seasonmath-logo.png" 
+            src="/images/seasonmath-logo-light.png" 
             alt="SeasonMath" 
             width={200} 
             height={200}

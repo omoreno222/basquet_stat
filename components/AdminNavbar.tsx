@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
+import { SeasonMathLogo } from '@/components/SeasonMathLogo';
 import { usePathname } from 'next/navigation';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -196,9 +196,7 @@ export function AdminNavbar({ accessory }: { accessory?: ReactNode }) {
             {menuOpen ? <X className="h-5 w-5" aria-hidden="true" /> : <Menu className="h-5 w-5" aria-hidden="true" />}
           </button>
           <Link href="/admin/my-club" className="flex shrink-0 items-center">
-            <Image
-              src="/images/seasonmath-logo.png"
-              alt="SeasonMath"
+            <SeasonMathLogo
               width={188}
               height={188}
               className="h-[78.125px] w-auto"

@@ -16,6 +16,9 @@ export async function middleware(request: NextRequest) {
   const refreshToken = request.cookies.get('sb-refresh-token')?.value;
 
   if (!token && !refreshToken) {
+    if (pathname === '/') {
+      return NextResponse.next();
+    }
     return NextResponse.redirect(new URL('/login', request.url));
   }
 

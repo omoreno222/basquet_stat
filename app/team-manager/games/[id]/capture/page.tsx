@@ -9,25 +9,47 @@ import { BasketballCourt } from './components/BasketballCourt';
 import { CaptureBoard, type CaptureBoardAction } from './components/CaptureBoard';
 import { FreeThrowSequencePopup, type FreeThrowSequenceResult } from './components/FreeThrowSequencePopup';
 import { JumpBallPopup, type JumpBallResult } from './components/JumpBallPopup';
+import { OpponentBenchAddModal } from './components/OpponentBenchAddModal';
 import { OpponentRosterModal, type OpponentRosterInput } from './components/OpponentRosterModal';
 import { SquadPickerModal } from './components/SquadPickerModal';
 import { PeriodLineupModal } from './components/PeriodLineupModal';
+import { SubstitutionPopup, type SubstitutionChoice, type SubstitutionSwap } from './components/SubstitutionPopup';
 import { ChooseSideModal } from './components/ChooseSideModal';
 import { TurnoverReasonModal } from './components/TurnoverReasonModal';
 import { FoulSituationModal } from './components/FoulSituationModal';
+import { CaptureNoticeModal } from './components/CaptureNoticeModal';
+import { MadeAssistPopup, MadeFreeThrowCountPopup } from './components/MadeShotPopups';
+import { PeriodInboundModal } from './components/PeriodInboundModal';
 import { commitCapturePlay } from './actions';
+import {
+  missChooseFouler,
+  missChooseRebounder,
+  missChooseShooter,
+  missChooseThrowCount,
+  missCourtTap,
+  missStepBack,
+  missStopsClock,
+  openMiss,
+  type MissDraft,
+} from '@/lib/capture/miss';
 import { useLocaleTranslations } from '@/lib/use-locale-translations';
 import {
+  clockViolationCountsAsTeamFoul,
   foulCountsForPlayer,
   foulCountsForTeam,
   foulEjects,
-  foulFreeThrowCount,
+  foulOrdinalCopy,
   foulKindFallback,
   foulKindKey,
   foulKinds,
   foulNeedsOther,
+  foulThrowAllowance,
+  madeAssistRequired,
+  madeStopsClock,
   offenseAttacksRight,
   otherCaptureSide,
+  shotInPaint,
+  shotOnAttackingHalf,
   shotValueFromWorld,
   turnoverReasonFallback,
   turnoverReasonKey,
@@ -41,16 +63,27 @@ import {
   type TurnoverReason,
 } from '@/lib/capture/plays';
 import { normalizeHexColor } from '@/lib/colors';
-import { gameSquadSchema, incorporatePlayerSchema, opponentRosterSchema, periodLineupSchema, schemaError } from '@/lib/form-schemas';
-import { userManagesClub } from '@/lib/live-access';
+import { gameSquadSchema, incorporatePlayerSchema, openingTipWinnerSchema, opponentBenchAddSchema, opponentRosterSchema, periodLineupSchema, schemaError } from '@/lib/form-schemas';
+import { userCanEditGame, userManagesClub } from '@/lib/live-access';
 import { canStartPeriod, isEliminated, minimumToStart } from '@/lib/period-lineup';
+import { nextClockFromRemote } from '@/lib/capture/clock-sync';
+import { clockFace, liveRemaining, sameClockFace, type ClockFace } from '@/lib/capture/clock-run';
+import { periodInbound } from '@/lib/capture/period-inbound';
+import { onCourtAfterSubs } from '@/lib/capture/substitutions';
+import { countTimeouts, periodOutcome, timeoutWindow } from '@/lib/capture/timeouts';
 import { Profile } from '@/lib/types';
 import type { GameOpponentPlayer } from '@/types/database';
 
 const TURNOVER_REASON_CLOSE_MS = 600;
+const TIMEOUT_TICK_MS = 300;
 
 function opponentShirt(player: GameOpponentPlayer) {
   return player.jersey_number ?? 0;
+}
+
+function readTipWinner(value: unknown): 'home' | 'away' | null {
+  const parsed = openingTipWinnerSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function isInvertedLandscape(): boolean {
@@ -94,6 +127,7 @@ interface Game {
   clock_remaining_ms: number;
   current_period: number;
   possession: 'home' | 'away' | null;
+  opening_tip_winner?: 'home' | 'away' | null;
   attack_right_first: boolean;
   created_at?: string;
   updated_at?: string;
@@ -118,6 +152,7 @@ interface GameEvent {
   game_id: string;
   player_id?: string;
   player_out_id?: string;
+  opponent_player_out_id?: string | null;
   event_type: string;
   period_number: number;
   clock_remaining_ms: number;
@@ -131,6 +166,7 @@ interface GameEvent {
   is_offensive?: boolean;
   turnover_type?: string | null;
   turnover_side?: 'home' | 'away' | null;
+  timeout_side?: 'home' | 'away' | null;
   opponent_player_id?: string | null;
   coach_technical_side?: 'home' | 'away' | null;
   foul_side?: 'home' | 'away' | null;
@@ -143,6 +179,13 @@ interface GameEvent {
   player?: Player;
   player_out?: Player;
 }
+
+type CaptureNotice =
+  | { kind: 'timeout_cap'; body: string }
+  | { kind: 'period_ended' }
+  | { kind: 'attack_change' }
+  | { kind: 'overtime' }
+  | { kind: 'final' };
 
 /**
  * COORDINATE SYSTEM CONVENTION:
@@ -179,26 +222,44 @@ function getPeriodLabel(period: number): string {
   return `OT${period - 4}`;
 }
 
-/** Above one minute the board shows mm:ss. In the final minute it shows ss:d (tenths). */
-function scoreboardClock(remainingMs: number): { lastMinute: boolean; left: string; right: string } {
-  const ms = Math.max(0, remainingMs);
-  if (ms < 60_000) {
-    const seconds = Math.floor(ms / 1000);
-    const tenth = Math.floor((ms % 1000) / 100);
-    return {
-      lastMinute: true,
-      left: seconds.toString().padStart(2, '0'),
-      right: String(tenth),
-    };
+function playStep(type: string): number {
+  if (type === 'free_throw') return 4;
+  if (type === 'foul') return 3;
+  if (type === 'rebound') return 2;
+  if (type === 'shot') return 1;
+  return 0;
+}
+
+function newerCaptureEvent(
+  a: { period_number: number; clock_remaining_ms: number; created_at?: string | null; event_type: string },
+  b: { period_number: number; clock_remaining_ms: number; created_at?: string | null; event_type: string },
+): number {
+  if (a.period_number !== b.period_number) return b.period_number - a.period_number;
+  if (a.clock_remaining_ms !== b.clock_remaining_ms) return a.clock_remaining_ms - b.clock_remaining_ms;
+  const aAt = a.created_at ?? '';
+  const bAt = b.created_at ?? '';
+  if (aAt !== bAt) return aAt < bAt ? 1 : -1;
+  return playStep(b.event_type) - playStep(a.event_type);
+}
+
+function scoreAfterMadeShots(events: GameEvent[]): Map<string, string> {
+  const scores = new Map<string, string>();
+  let home = 0;
+  let away = 0;
+  const ordered = [...events].sort((a, b) => newerCaptureEvent(b, a));
+  for (const event of ordered) {
+    const scoring = (event.event_type === 'shot' || event.event_type === 'free_throw')
+      && event.made
+      && event.points;
+    if (scoring) {
+      if (event.player_id) home += event.points ?? 0;
+      else if (event.opponent_player_id) away += event.points ?? 0;
+    }
+    if ((event.event_type === 'shot' || event.event_type === 'free_throw') && event.made) {
+      scores.set(event.id, `${home}-${away}`);
+    }
   }
-  const totalSeconds = Math.ceil(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return {
-    lastMinute: false,
-    left: minutes.toString().padStart(2, '0'),
-    right: seconds.toString().padStart(2, '0'),
-  };
+  return scores;
 }
 
 export default function GameCapturePage() {
@@ -211,6 +272,7 @@ export default function GameCapturePage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [currentUser, setCurrentUser] = useState<Profile | null>(null);
   const [allowed, setAllowed] = useState(false);
+  const [canEditGame, setCanEditGame] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [events, setEvents] = useState<GameEvent[]>([]);
@@ -256,16 +318,37 @@ export default function GameCapturePage() {
   const turnoverCloseTimer = useRef<number | null>(null);
   const clockViolationRef = useRef(false);
   const [foulSide, setFoulSide] = useState<CaptureSide | null>(null);
-  const [foulStep, setFoulStep] = useState<'court' | 'player' | 'type' | 'situation' | 'other' | null>(null);
+  const [foulStep, setFoulStep] = useState<'court' | 'player' | 'type' | 'other' | null>(null);
   const [foulOffenderId, setFoulOffenderId] = useState<string | null>(null);
   const [foulKind, setFoulKind] = useState<FoulKind | null>(null);
   const [foulContext, setFoulContext] = useState<FoulContext | null>(null);
   const [foulCoach, setFoulCoach] = useState(false);
+  const [foulOffense, setFoulOffense] = useState(false);
   const [foulPick, setFoulPick] = useState<string | null>(null);
-  const [foulThrowCount, setFoulThrowCount] = useState<1 | 2 | 3>(1);
+  const [foulThrowCount, setFoulThrowCount] = useState<1 | 2 | 3 | null>(null);
+  const [showFoulThrowCount, setShowFoulThrowCount] = useState(false);
   const foulSavingRef = useRef(false);
   const foulPickRef = useRef<string | null>(null);
   const foulCloseTimer = useRef<number | null>(null);
+  const [shotSide, setShotSide] = useState<CaptureSide | null>(null);
+  const [shotStep, setShotStep] = useState<'court' | 'shooter' | 'assist' | 'fouler' | 'ft' | null>(null);
+  const [shotPersonal, setShotPersonal] = useState(false);
+  const [shotThrowCount, setShotThrowCount] = useState<1 | 2 | 3 | null>(null);
+  const [shotShooterId, setShotShooterId] = useState<string | null>(null);
+  const [shotAssistId, setShotAssistId] = useState<string | null>(null);
+  const [shotFoulerId, setShotFoulerId] = useState<string | null>(null);
+  const [shotPoints, setShotPoints] = useState<2 | 3 | null>(null);
+  const [shotPaint, setShotPaint] = useState(false);
+  const [shotSaving, setShotSaving] = useState(false);
+  const shotSavingRef = useRef(false);
+  const shotPersonalRef = useRef(false);
+  const shotWasRunningRef = useRef(false);
+  const shotClockAtRef = useRef<number | null>(null);
+  const [miss, setMiss] = useState<MissDraft | null>(null);
+  const [missSaving, setMissSaving] = useState(false);
+  const missSavingRef = useRef(false);
+  const missWasRunningRef = useRef(false);
+  const missClockAtRef = useRef<number | null>(null);
   const foulDraftRef = useRef<{
     side: CaptureSide;
     kind: FoulKind;
@@ -275,30 +358,144 @@ export default function GameCapturePage() {
     coach: boolean;
     throws: FreeThrowMark[];
   } | null>(null);
+  const [subSide, setSubSide] = useState<CaptureSide | null>(null);
+  const [subError, setSubError] = useState<string | null>(null);
+  const [subSaving, setSubSaving] = useState(false);
+  const subSavingRef = useRef(false);
 
   useEffect(() => () => {
     if (turnoverCloseTimer.current !== null) window.clearTimeout(turnoverCloseTimer.current);
     if (foulCloseTimer.current !== null) window.clearTimeout(foulCloseTimer.current);
+    if (timeoutTickTimer.current !== null) window.clearTimeout(timeoutTickTimer.current);
   }, []);
   
   // New lineup and action modals
   const [showFreeThrowScript, setShowFreeThrowScript] = useState(false);
   const [showJumpBall, setShowJumpBall] = useState(false);
   const [showOpponentRoster, setShowOpponentRoster] = useState(false);
+  const [showOpponentBenchAdd, setShowOpponentBenchAdd] = useState(false);
   const [opponentPlayers, setOpponentPlayers] = useState<GameOpponentPlayer[]>([]);
   const [periodLineups, setPeriodLineups] = useState<PeriodLineupRow[]>([]);
   const [squadIds, setSquadIds] = useState<string[]>([]);
   const [homeCoachName, setHomeCoachName] = useState<string | null>(null);
   const [showSquad, setShowSquad] = useState(false);
   const [showPeriodLineup, setShowPeriodLineup] = useState(false);
+  const [showInbound, setShowInbound] = useState(false);
+  const [inboundFlipped, setInboundFlipped] = useState<'home' | 'away' | null>(null);
+  const [openingTipWinner, setOpeningTipWinner] = useState<'home' | 'away' | null>(null);
+  const openingTipWinnerRef = useRef<'home' | 'away' | null>(null);
+  const inboundAnsweredPeriodRef = useRef<number | null>(null);
   const [showChooseSide, setShowChooseSide] = useState(false);
   const [sideChosen, setSideChosen] = useState(false);
+  const [captureNotice, setCaptureNotice] = useState<CaptureNotice | null>(null);
+  const [timeoutTickSide, setTimeoutTickSide] = useState<CaptureSide | null>(null);
+  const timeoutTickTimer = useRef<number | null>(null);
 
   // Refs
   const channelRef = useRef<RealtimeChannel | null>(null);
   const clockIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const clockRunningRef = useRef(false);
   const clockRemainingRef = useRef(600000);
+  const clockEndsAtRef = useRef<number | null>(null);
+  const clockListenersRef = useRef(new Set<() => void>());
+  const clockFaceRef = useRef<ClockFace>(clockFace(false, 600000));
+  const adoptClockRef = useRef<(running: boolean, remainingMs: number, period?: number, own?: boolean) => void>(() => {});
+  const updateGameStateRef = useRef<(updates: Partial<Game>) => Promise<boolean>>(async () => false);
+  const currentPeriodRef = useRef(1);
+  // After this tablet starts, stops, or edits the clock, its on-screen
+  // value wins over the row Postgres echoes back.
+  const clockOwnedRef = useRef(false);
+  const requestPeriodEndRef = useRef<(source: 'clock' | 'next') => void>(() => {});
+  const noticeOpenRef = useRef(false);
+  const periodEndBusyRef = useRef(false);
+  const teamScoreRef = useRef(0);
+  const opponentScoreRef = useRef(0);
+  const gameStatusRef = useRef('');
+  teamScoreRef.current = teamScore;
+  opponentScoreRef.current = opponentScore;
+  gameStatusRef.current = game?.status ?? '';
+
+  function releaseClockInterval() {
+    if (clockIntervalRef.current) {
+      clearInterval(clockIntervalRef.current);
+      clockIntervalRef.current = null;
+    }
+  }
+
+  function clockNow(now = Date.now()) {
+    const ms = liveRemaining(
+      clockRunningRef.current,
+      clockRemainingRef.current,
+      clockEndsAtRef.current,
+      now,
+    );
+    clockRemainingRef.current = ms;
+    return ms;
+  }
+
+  function publishFace() {
+    const next = clockFace(clockRunningRef.current, clockRemainingRef.current);
+    if (sameClockFace(clockFaceRef.current, next)) return;
+    clockFaceRef.current = next;
+    clockListenersRef.current.forEach((listener) => listener());
+  }
+
+  function armTicker() {
+    releaseClockInterval();
+    const endsAt = clockEndsAtRef.current;
+    if (!clockRunningRef.current || endsAt == null) return;
+    clockIntervalRef.current = setInterval(() => {
+      if (clockEndsAtRef.current !== endsAt || !clockRunningRef.current) return;
+      const remaining = liveRemaining(true, 0, endsAt, Date.now());
+      clockRemainingRef.current = remaining;
+      if (remaining > 0) {
+        publishFace();
+        return;
+      }
+      clockRunningRef.current = false;
+      clockEndsAtRef.current = null;
+      clockOwnedRef.current = true;
+      releaseClockInterval();
+      setClockRunning(false);
+      setClockRemaining(0);
+      publishFace();
+      requestPeriodEndRef.current('clock');
+      void updateGameStateRef.current({ clock_running: false, clock_remaining_ms: 0 });
+    }, 50);
+  }
+
+  function adoptClock(running: boolean, remainingMs: number, period?: number, own = false) {
+    releaseClockInterval();
+    const ms = Math.max(0, Math.round(remainingMs));
+    const active = running && ms > 0;
+    if (own) clockOwnedRef.current = true;
+    clockRunningRef.current = active;
+    clockRemainingRef.current = ms;
+    clockEndsAtRef.current = active ? Date.now() + ms : null;
+    if (period != null) {
+      currentPeriodRef.current = period;
+      setCurrentPeriod(period);
+    }
+    setClockRunning(active);
+    setClockRemaining(ms);
+    publishFace();
+    if (active) armTicker();
+  }
+
+  function holdClock(running: boolean, remainingMs: number, period?: number) {
+    adoptClock(running, remainingMs, period, true);
+  }
+
+  adoptClockRef.current = adoptClock;
+
+  const subscribeClock = useCallback((listener: () => void) => {
+    clockListenersRef.current.add(listener);
+    return () => {
+      clockListenersRef.current.delete(listener);
+    };
+  }, []);
+
+  const getClockFace = useCallback(() => clockFaceRef.current, []);
 
   // Derive on-court players from starting lineup + substitution events using useMemo
   // This ensures it's always up-to-date and avoids stale closure issues
@@ -312,8 +509,12 @@ export default function GameCapturePage() {
     .map((row) => row.opponent_player_id as string);
 
   const onCourtPlayerIds = useMemo(() => {
-    return deriveOnCourtPlayers(homeLineupIds, events, currentPeriod);
+    return onCourtAfterSubs(homeLineupIds, events, currentPeriod, 'home');
   }, [homeLineupIds, events, currentPeriod]);
+
+  const awayOnCourtIds = useMemo(() => {
+    return onCourtAfterSubs(awayLineupIds, events, currentPeriod, 'away');
+  }, [awayLineupIds, events, currentPeriod]);
 
   // Helper to get period length in milliseconds (FIBA rules)
   // Q1-Q4: 10 minutes (600,000 ms)
@@ -347,35 +548,6 @@ export default function GameCapturePage() {
     };
   };
 
-  // Derive current on-court players from starting lineup + substitution events
-  function deriveOnCourtPlayers(startingIds: string[], allEvents: GameEvent[], period: number): string[] {
-    const subs = allEvents
-      .filter(e => e.event_type === 'substitution' && e.period_number === period && e.player_id && e.player_out_id)
-      .sort((a, b) => {
-        if (a.period_number !== b.period_number) {
-          return a.period_number - b.period_number;
-        }
-        // Higher clock = earlier in period
-        if (a.clock_remaining_ms !== b.clock_remaining_ms) {
-          return b.clock_remaining_ms - a.clock_remaining_ms;
-        }
-        // Tie-breaker: sort by created_at ASC (earlier insertions first)
-        if (a.created_at && b.created_at) {
-          return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0;
-        }
-        return 0;
-      });
-
-    const currentLineup = [...startingIds];
-    for (const sub of subs) {
-      const outIndex = currentLineup.indexOf(sub.player_out_id!);
-      if (outIndex !== -1) {
-        currentLineup[outIndex] = sub.player_id!;
-      }
-    }
-    return currentLineup;
-  }
-
   const updateGameState = useCallback(async (updates: Partial<Game>) => {
     const { error } = await supabase
       .from('games')
@@ -386,9 +558,7 @@ export default function GameCapturePage() {
     return !error;
   }, [gameId]);
 
-  const handlePeriodEnd = useCallback(() => {
-    alert(`Period ${currentPeriod} ended`);
-  }, [currentPeriod]);
+  updateGameStateRef.current = updateGameState;
 
   const loadData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -405,6 +575,14 @@ export default function GameCapturePage() {
 
     setCurrentUser(profile);
 
+    const { data: roleRows } = await supabase
+      .from('profile_roles')
+      .select('role, club_id')
+      .eq('profile_id', user.id);
+    const roles = roleRows && roleRows.length > 0
+      ? roleRows
+      : [{ role: profile?.role ?? '', club_id: null }];
+
     const { data: gameData, error: gameError } = await supabase
       .from('games')
       .select('*, teams(name, club_id, coach_id, clubs(name, logo_url, primary_color, secondary_color))')
@@ -418,12 +596,9 @@ export default function GameCapturePage() {
     }
 
     if (gameData) {
-      const { data: roleRows } = await supabase
-        .from('profile_roles')
-        .select('role, club_id')
-        .eq('profile_id', user.id);
-      const assigned = userManagesClub(roleRows ?? [], gameData.teams?.club_id ?? null);
+      const assigned = userManagesClub(roles, gameData.teams?.club_id ?? null);
       setAllowed(assigned);
+      setCanEditGame(userCanEditGame(roles, gameData.teams?.club_id ?? null));
       if (!assigned) {
         setLoading(false);
         return;
@@ -431,17 +606,18 @@ export default function GameCapturePage() {
 
       setLoadError(null);
       setGame(gameData);
-      const remaining = gameData.clock_remaining_ms ?? getPeriodLengthMs(gameData.current_period || 1);
-      const running = Boolean(gameData.clock_running);
-      clockRemainingRef.current = remaining;
-      clockRunningRef.current = running;
-      setClockRemaining(remaining);
-      setClockRunning(running);
-      setCurrentPeriod(gameData.current_period || 1);
+      if (!clockOwnedRef.current) {
+        const period = gameData.current_period || 1;
+        const remaining = gameData.clock_remaining_ms ?? getPeriodLengthMs(period);
+        adoptClockRef.current(Boolean(gameData.clock_running), remaining, period, Boolean(gameData.clock_running));
+      }
       setPossession(gameData.possession || 'home');
       setTeamScore(gameData.team_score || 0);
       setOpponentScore(gameData.opponent_score || 0);
       setAttackRightFirst(gameData.attack_right_first ?? true);
+      const tipWinner = readTipWinner(gameData.opening_tip_winner);
+      openingTipWinnerRef.current = tipWinner;
+      setOpeningTipWinner(tipWinner);
       
       // Check if side has been chosen (if game has started or events exist, side was chosen)
       const hasStarted = gameData.current_period > 0 || (gameData.team_score + gameData.opponent_score) > 0;
@@ -644,10 +820,22 @@ export default function GameCapturePage() {
         (payload: { new: Game }) => {
           if (payload.new) {
             const newData = payload.new;
-            
-            setClockRemaining(newData.clock_remaining_ms);
-            setClockRunning(newData.clock_running);
-            setCurrentPeriod(newData.current_period);
+            if (!clockOwnedRef.current) {
+              const clock = nextClockFromRemote(
+                {
+                  running: clockRunningRef.current,
+                  remainingMs: clockRemainingRef.current,
+                  period: currentPeriodRef.current,
+                },
+                {
+                  running: Boolean(newData.clock_running),
+                  remainingMs: newData.clock_remaining_ms,
+                  period: newData.current_period || currentPeriodRef.current,
+                },
+                false,
+              );
+              adoptClockRef.current(clock.running, clock.remainingMs, clock.period, false);
+            }
             if (newData.possession === 'home' || newData.possession === 'away' || newData.possession === null) {
               setPossession(newData.possession);
             }
@@ -655,6 +843,11 @@ export default function GameCapturePage() {
             setOpponentScore(newData.opponent_score);
             if (newData.attack_right_first !== undefined) {
               setAttackRightFirst(newData.attack_right_first);
+            }
+            const tipWinner = readTipWinner(newData.opening_tip_winner);
+            if (tipWinner) {
+              openingTipWinnerRef.current = tipWinner;
+              setOpeningTipWinner(tipWinner);
             }
 
             setGame((prev) => ({ ...prev, ...newData }) as Game);
@@ -748,7 +941,7 @@ export default function GameCapturePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameId]);
 
-  const opponentLineupLocked = events.length > 0 || clockRemaining < getPeriodLengthMs(currentPeriod) || currentPeriod > 1;
+  const opponentLineupLocked = events.length > 0 || clockRunning || clockRemaining < getPeriodLengthMs(currentPeriod) || currentPeriod > 1;
   const opponentPlaying = opponentPlayers.filter((player) => !player.is_coach);
   const awayCoach = opponentPlayers.find((player) => player.is_coach);
   const awayCoachName = awayCoach
@@ -781,59 +974,28 @@ export default function GameCapturePage() {
     setShowOpponentRoster(true);
   }, [loading, allowed, opponentLineupLocked, opponentPlaying.length]);
 
-  // Clock ticker - ONLY for Slot A
   useEffect(() => {
-    if (clockIntervalRef.current) {
-      clearInterval(clockIntervalRef.current);
-      clockIntervalRef.current = null;
-    }
+    if (!clockRunning || !subSide || subSavingRef.current) return;
+    setSubSide(null);
+    setSubError(null);
+  }, [clockRunning, subSide]);
 
+  // Wall-clock sync. The on-screen clock is local; this only publishes it.
+  useEffect(() => {
     if (!allowed || !clockRunning) return;
 
-    clockIntervalRef.current = setInterval(() => {
-      setClockRemaining(prev => {
-        const newTime = Math.max(0, prev - 100);
-        clockRemainingRef.current = newTime;
-        if (newTime === 0) {
-          clockRunningRef.current = false;
-          setClockRunning(false);
-          handlePeriodEnd();
-          updateGameState({ clock_running: false, clock_remaining_ms: 0 });
-        }
-        return newTime;
-      });
-    }, 100);
-
-    return () => {
-      if (clockIntervalRef.current) {
-        clearInterval(clockIntervalRef.current);
-        clockIntervalRef.current = null;
-      }
-    };
-  }, [allowed, clockRunning, handlePeriodEnd, updateGameState]);
-
-  // Periodic clock sync - Slot A safety net
-  useEffect(() => {
-    if (!allowed || !clockRunning || !game) return;
-
     const interval = setInterval(() => {
-      supabase
+      if (!clockRunningRef.current) return;
+      const remaining = clockNow();
+      void supabase
         .from('games')
-        .update({ clock_remaining_ms: clockRemaining })
+        .update({ clock_remaining_ms: remaining })
         .eq('id', gameId)
-        .then();
+        .eq('clock_running', true);
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [allowed, clockRunning, clockRemaining, game, gameId]);
-
-  useEffect(() => {
-    clockRunningRef.current = clockRunning;
-  }, [clockRunning]);
-
-  useEffect(() => {
-    clockRemainingRef.current = clockRemaining;
-  }, [clockRemaining]);
+  }, [allowed, clockRunning, gameId]);
 
   function courtRoster(side: CaptureSide) {
     if (side === 'home') {
@@ -846,7 +1008,7 @@ export default function GameCapturePage() {
           avatar_url: player.avatar_url,
         }));
     }
-    return awayLineupIds.flatMap((id) => {
+    return awayOnCourtIds.flatMap((id) => {
       const player = opponentPlayers.find((item) => item.id === id && !item.is_coach);
       if (!player) return [];
       return [{
@@ -912,7 +1074,420 @@ export default function GameCapturePage() {
     setBoardNote(t('trke_turnover_hint_court', 'Tap the court where the ball was lost'));
   }
 
+  function shooterHint(points: 2 | 3) {
+    return points === 3
+      ? t('trke_made_hint_shooter_3', '3-point basket. Choose the shooter.')
+      : t('trke_made_hint_shooter_2', '2-point basket. Choose the shooter.');
+  }
+
+  function clearShotUi() {
+    setShotSide(null);
+    setShotStep(null);
+    setShotShooterId(null);
+    setShotAssistId(null);
+    setShotFoulerId(null);
+    setShotPoints(null);
+    setShotPaint(false);
+    setShotPersonal(false);
+    setShotThrowCount(null);
+    setPendingAction(null);
+    setTapCoordinates(null);
+    shotPersonalRef.current = false;
+    shotWasRunningRef.current = false;
+    shotClockAtRef.current = null;
+  }
+
+  function cancelShot(resumeClock = true) {
+    if (shotSavingRef.current) return;
+    const wasRunning = shotWasRunningRef.current;
+    const clockAt = shotClockAtRef.current;
+    const personal = shotPersonalRef.current;
+    clearShotUi();
+    setBoardNote(null);
+    if (resumeClock && personal && wasRunning && clockAt != null) {
+      holdClock(true, clockAt);
+      void updateGameState({ clock_running: true, clock_remaining_ms: clockAt });
+    }
+  }
+
+  function armMade(side: CaptureSide, personal: boolean) {
+    if (noticeOpenRef.current || gameStatusRef.current === 'final' || clockViolationRef.current) return;
+    if (foulStep || turnoverStep || subSide || miss) return;
+    if (possession !== side) return;
+    if (courtRoster(side).length === 0) {
+      setBoardNote(t('trke_made_hint_roster', 'Put players on the court before the basket'));
+      return;
+    }
+    const clockAtPlay = clockNow();
+    shotWasRunningRef.current = clockRunningRef.current;
+    shotClockAtRef.current = clockAtPlay;
+    shotPersonalRef.current = personal;
+    setShotPersonal(personal);
+    setShotThrowCount(null);
+    if (madeStopsClock(personal)) {
+      holdClock(false, clockAtPlay);
+      void updateGameState({ clock_running: false, clock_remaining_ms: clockAtPlay });
+    }
+    setShotSide(side);
+    setShotStep('court');
+    setShotShooterId(null);
+    setShotAssistId(null);
+    setShotFoulerId(null);
+    setShotPoints(null);
+    setShotPaint(false);
+    setTapCoordinates(null);
+    setPendingAction(personal ? 'made_personal' : 'made');
+    setBoardNote(t('trke_made_hint_court', 'Tap the shot on the attacking half'));
+  }
+
+  function stepShotBack() {
+    if (shotSavingRef.current || !shotStep) return;
+    if (shotStep === 'court') {
+      cancelShot();
+      return;
+    }
+    if (shotStep === 'shooter') {
+      setShotStep('court');
+      setTapCoordinates(null);
+      setShotPoints(null);
+      setShotPaint(false);
+      setBoardNote(t('trke_made_hint_court', 'Tap the shot on the attacking half'));
+      return;
+    }
+    if (shotStep === 'assist') {
+      setShotShooterId(null);
+      setShotStep('shooter');
+      setBoardNote(shotPoints === 3 ? shooterHint(3) : shooterHint(2));
+      return;
+    }
+    if (shotStep === 'fouler') {
+      setShotFoulerId(null);
+      setShotStep('assist');
+      setBoardNote(t('trke_made_hint_assist', 'Choose the assist'));
+      return;
+    }
+    if (shotThrowCount) {
+      setShotThrowCount(null);
+      setBoardNote(t('trke_made_ft_count', 'How many free throws?'));
+      return;
+    }
+    setShotFoulerId(null);
+    setShotStep('fouler');
+    setBoardNote(t('trke_made_hint_fouler', 'Choose who committed the foul'));
+  }
+
+  function madeErrorText(code: string) {
+    if (code === 'made_half') return t('trke_made_hint_half', 'That point is not on the attacking half');
+    if (code === 'made_assist') return t('trke_made_hint_assist', 'Choose the assist');
+    if (code === 'made_foul') return t('trke_made_hint_fouler', 'Choose who committed the foul');
+    if (code === 'made_eliminated') return t('trke_foul_hint_eliminated', 'That player is already eliminated');
+    if (code === 'made_player') return t('trke_made_hint_shooter_2', '2-point basket. Choose the shooter.');
+    return t('trke_made_hint_error', 'Could not save the basket');
+  }
+
+  async function saveMade(extra: { foulerId: string | null; throws: FreeThrowMark[] }) {
+    if (shotSavingRef.current || !shotSide || !tapCoordinates || !shotShooterId || shotPoints == null) return;
+    const side = shotSide;
+    const clockAtPlay = shotClockAtRef.current ?? clockNow();
+    shotSavingRef.current = true;
+    setShotSaving(true);
+    try {
+      const result = await commitCapturePlay({
+        play: 'made',
+        gameId,
+        periodNumber: currentPeriod,
+        clockRemainingMs: clockAtPlay,
+        side,
+        coordX: tapCoordinates.x,
+        coordY: tapCoordinates.y,
+        shooterId: shotShooterId,
+        assistId: shotAssistId,
+        foulerId: extra.foulerId,
+        throws: extra.throws,
+      });
+      if ('error' in result) {
+        setBoardNote(madeErrorText(result.error));
+        return;
+      }
+      if (result.groupId) {
+        const { data } = await supabase
+          .from('game_events')
+          .select(`
+            *,
+            player:players!game_events_player_id_fkey(full_name, jersey_number, avatar_url),
+            player_out:players!game_events_player_out_id_fkey(full_name, jersey_number, avatar_url)
+          `)
+          .eq('play_group_id', result.groupId);
+        if (data) {
+          const added = [...data].sort(newerCaptureEvent);
+          setEvents((prev) => {
+            const ids = new Set(prev.map((event) => event.id));
+            const fresh = added.filter((event) => !ids.has(event.id));
+            return fresh.length ? [...fresh, ...prev] : prev;
+          });
+        }
+      }
+      setPossession(result.possession ?? null);
+      setGame((prev) => (prev ? { ...prev, possession: result.possession ?? null } : prev));
+      if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
+      if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
+      const lastThrow = extra.throws[extra.throws.length - 1];
+      const note = !extra.foulerId
+        ? t('trke_made_hint_scored', 'Basket.')
+        : lastThrow === 'made'
+          ? t('trke_foul_hint_inbound', 'Inbound. Press start clock.')
+          : t('trke_foul_hint_live', 'Live ball. Set possession, then press start clock.');
+      clearShotUi();
+      setBoardNote(note);
+    } catch {
+      setBoardNote(t('trke_made_hint_error', 'Could not save the basket'));
+    } finally {
+      shotSavingRef.current = false;
+      setShotSaving(false);
+    }
+  }
+
+  function chooseMadeAssist(assistId: string | null) {
+    if (shotSavingRef.current || shotStep !== 'assist' || !shotSide || !shotShooterId) return;
+    if (assistId === shotShooterId) return;
+    if (assistId && !courtRoster(shotSide).some((player) => player.id === assistId)) return;
+    setShotAssistId(assistId);
+    if (!shotPersonalRef.current) {
+      void saveMade({ foulerId: null, throws: [] });
+      return;
+    }
+    setShotStep('fouler');
+    setBoardNote(t('trke_made_hint_fouler', 'Choose who committed the foul'));
+  }
+
+  function selectShotCourtPlayer(side: CaptureSide, playerId: string) {
+    if (shotSavingRef.current || !shotSide) return;
+    if (!courtRoster(side).some((player) => player.id === playerId)) return;
+    if (playerIsOut(playerId, side)) {
+      setBoardNote(t('trke_foul_hint_eliminated', 'That player is already eliminated'));
+      return;
+    }
+    if (shotStep === 'shooter' && side === shotSide) {
+      setShotShooterId(playerId);
+      setShotStep('assist');
+      setBoardNote(t('trke_made_hint_assist', 'Choose the assist'));
+      return;
+    }
+    if (shotStep === 'fouler' && side === otherCaptureSide(shotSide)) {
+      setShotFoulerId(playerId);
+      setShotThrowCount(null);
+      setShotStep('ft');
+      setBoardNote(t('trke_made_ft_count', 'How many free throws?'));
+    }
+  }
+
+  function missShooterHint(points: 2 | 3) {
+    return points === 3
+      ? t('trke_miss_hint_shooter_3', 'Missed 3. Choose the shooter.')
+      : t('trke_miss_hint_shooter_2', 'Missed 2. Choose the shooter.');
+  }
+
+  function missHint(draft: MissDraft) {
+    if (draft.step === 'court') return t('trke_miss_hint_court', 'Tap the miss on the attacking half');
+    if (draft.step === 'shooter') return missShooterHint(draft.points === 3 ? 3 : 2);
+    if (draft.step === 'rebound') return t('trke_miss_hint_rebound', 'Choose who took the rebound');
+    if (draft.step === 'fouler') return t('trke_made_hint_fouler', 'Choose who committed the foul');
+    if (draft.throwCount) return t('trke_made_hint_ft', 'Mark the free throw');
+    return t('trke_made_ft_count', 'How many free throws?');
+  }
+
+  function clearMissUi() {
+    setMiss(null);
+    setPendingAction(null);
+    setTapCoordinates(null);
+    missWasRunningRef.current = false;
+    missClockAtRef.current = null;
+  }
+
+  function cancelMiss(resumeClock = true) {
+    if (missSavingRef.current || !miss) return;
+    const personal = miss.personal;
+    const wasRunning = missWasRunningRef.current;
+    const clockAt = missClockAtRef.current;
+    clearMissUi();
+    setBoardNote(null);
+    if (resumeClock && missStopsClock(personal) && wasRunning && clockAt != null) {
+      holdClock(true, clockAt);
+      void updateGameState({ clock_running: true, clock_remaining_ms: clockAt });
+    }
+  }
+
+  function armMiss(side: CaptureSide, personal: boolean) {
+    if (noticeOpenRef.current || gameStatusRef.current === 'final' || clockViolationRef.current) return;
+    if (foulStep || turnoverStep || subSide || shotStep) return;
+    if (possession !== side) return;
+    if (courtRoster(side).length === 0) {
+      setBoardNote(t('trke_miss_hint_roster', 'Put players on the court before the miss'));
+      return;
+    }
+    const clockAtPlay = clockNow();
+    missWasRunningRef.current = clockRunningRef.current;
+    missClockAtRef.current = clockAtPlay;
+    if (missStopsClock(personal)) {
+      holdClock(false, clockAtPlay);
+      void updateGameState({ clock_running: false, clock_remaining_ms: clockAtPlay });
+    }
+    setMiss(openMiss(side, personal));
+    setPendingAction(personal ? 'miss_personal' : 'miss');
+    setTapCoordinates(null);
+    setBoardNote(t('trke_miss_hint_court', 'Tap the miss on the attacking half'));
+  }
+
+  function stepMissBack() {
+    if (missSavingRef.current || !miss) return;
+    const next = missStepBack(miss);
+    if (next === 'cancel') {
+      cancelMiss();
+      return;
+    }
+    setMiss(next);
+    setTapCoordinates(next.coord);
+    setBoardNote(missHint(next));
+  }
+
+  function missErrorText(code: string) {
+    if (code === 'miss_half') return t('trke_made_hint_half', 'That point is not on the attacking half');
+    if (code === 'miss_rebound') return t('trke_miss_hint_rebound', 'Choose who took the rebound');
+    if (code === 'miss_foul') return t('trke_made_hint_fouler', 'Choose who committed the foul');
+    if (code === 'miss_eliminated') return t('trke_foul_hint_eliminated', 'That player is already eliminated');
+    if (code === 'miss_player') return t('trke_miss_hint_shooter_2', 'Missed 2. Choose the shooter.');
+    return t('trke_miss_hint_error', 'Could not save the miss');
+  }
+
+  async function saveMiss(draft: MissDraft, throws: FreeThrowMark[]) {
+    if (
+      missSavingRef.current
+      || !draft.coord
+      || !draft.shooterId
+      || draft.points == null
+    ) return;
+    if (draft.personal) {
+      if (!draft.foulerId || draft.rebounderId) return;
+    } else if (!draft.rebounderId) return;
+    const clockAtPlay = missClockAtRef.current ?? clockNow();
+    missSavingRef.current = true;
+    setMissSaving(true);
+    setMiss(draft);
+    try {
+      const result = await commitCapturePlay({
+        play: 'miss',
+        gameId,
+        periodNumber: currentPeriod,
+        clockRemainingMs: clockAtPlay,
+        side: draft.side,
+        coordX: draft.coord.x,
+        coordY: draft.coord.y,
+        shooterId: draft.shooterId,
+        rebounderId: draft.personal ? null : draft.rebounderId,
+        foulerId: draft.personal ? draft.foulerId : null,
+        throws: draft.personal ? throws : [],
+      });
+      if ('error' in result) {
+        setBoardNote(missErrorText(result.error));
+        return;
+      }
+      if (result.groupId) {
+        const { data } = await supabase
+          .from('game_events')
+          .select(`
+            *,
+            player:players!game_events_player_id_fkey(full_name, jersey_number, avatar_url),
+            player_out:players!game_events_player_out_id_fkey(full_name, jersey_number, avatar_url)
+          `)
+          .eq('play_group_id', result.groupId);
+        if (data) {
+          const added = [...data].sort(newerCaptureEvent);
+          setEvents((prev) => {
+            const ids = new Set(prev.map((event) => event.id));
+            const fresh = added.filter((event) => !ids.has(event.id));
+            return fresh.length ? [...fresh, ...prev] : prev;
+          });
+        }
+      }
+      setPossession(result.possession ?? null);
+      setGame((prev) => (prev ? { ...prev, possession: result.possession ?? null } : prev));
+      if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
+      if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
+      const lastThrow = throws[throws.length - 1];
+      const note = !draft.personal
+        ? t('trke_miss_hint_scored', 'Miss.')
+        : lastThrow === 'made'
+          ? t('trke_foul_hint_inbound', 'Inbound. Press start clock.')
+          : t('trke_foul_hint_live', 'Live ball. Set possession, then press start clock.');
+      clearMissUi();
+      setBoardNote(note);
+    } catch {
+      setBoardNote(t('trke_miss_hint_error', 'Could not save the miss'));
+    } finally {
+      missSavingRef.current = false;
+      setMissSaving(false);
+    }
+  }
+
+  function selectMissPlayer(side: CaptureSide, playerId: string) {
+    if (missSavingRef.current || !miss) return;
+    if (!courtRoster(side).some((player) => player.id === playerId)) return;
+    if (playerIsOut(playerId, side)) {
+      setBoardNote(t('trke_foul_hint_eliminated', 'That player is already eliminated'));
+      return;
+    }
+    if (miss.step === 'shooter' && side === miss.side) {
+      const next = missChooseShooter(miss, playerId);
+      if (!next) return;
+      setMiss(next);
+      setBoardNote(next.step === 'fouler'
+        ? t('trke_made_hint_fouler', 'Choose who committed the foul')
+        : t('trke_miss_hint_rebound', 'Choose who took the rebound'));
+      return;
+    }
+    if (miss.step === 'rebound') {
+      const picked = missChooseRebounder(miss, side, playerId);
+      if (!picked.ok) return;
+      void saveMiss(picked.draft, []);
+      return;
+    }
+    if (miss.step === 'fouler' && side === otherCaptureSide(miss.side)) {
+      const next = missChooseFouler(miss, playerId);
+      if (!next) return;
+      setMiss(next);
+      setBoardNote(t('trke_made_ft_count', 'How many free throws?'));
+    }
+  }
+
   function handleCourtTap(worldX: number, worldY: number) {
+    if (miss?.step === 'court') {
+      const attacksRight = offenseAttacksRight(miss.side, currentPeriod, attackRightFirst);
+      const tapped = missCourtTap(miss, worldX, worldY, attacksRight);
+      if (!tapped.ok) {
+        setBoardNote(t('trke_made_hint_half', 'That point is not on the attacking half'));
+        return;
+      }
+      setTapCoordinates(tapped.draft.coord);
+      setMiss(tapped.draft);
+      setBoardNote(missShooterHint(tapped.draft.points === 3 ? 3 : 2));
+      return;
+    }
+    if (miss) return;
+    if (shotStep === 'court' && shotSide) {
+      const attacksRight = offenseAttacksRight(shotSide, currentPeriod, attackRightFirst);
+      if (!shotOnAttackingHalf(worldX, attacksRight)) {
+        setBoardNote(t('trke_made_hint_half', 'That point is not on the attacking half'));
+        return;
+      }
+      const points = shotValueFromWorld(worldX, worldY, attacksRight);
+      setTapCoordinates({ x: worldX, y: worldY });
+      setShotPoints(points);
+      setShotPaint(shotInPaint(worldX, worldY, attacksRight));
+      setShotStep('shooter');
+      setBoardNote(shooterHint(points));
+      return;
+    }
+    if (shotStep) return;
     if (foulStep === 'court') {
       setTapCoordinates({ x: worldX, y: worldY });
       setFoulStep('player');
@@ -938,15 +1513,18 @@ export default function GameCapturePage() {
     const normalized = worldToNormalized(tapCoordinates.x, tapCoordinates.y);
     const stopsClock = turnoverStopsClock(reason);
     const nextPossession = otherCaptureSide(turnoverSide);
+    const wasRunning = clockRunningRef.current;
+    const clockAtPlay = clockNow();
     turnoverSavingRef.current = true;
     setTurnoverSaving(true);
     setPossession(nextPossession);
+    if (stopsClock) holdClock(false, clockAtPlay);
     try {
       const result = await commitCapturePlay({
         play: 'turnover',
         gameId,
         periodNumber: currentPeriod,
-        clockRemainingMs: Math.max(0, Math.round(clockRemainingRef.current)),
+        clockRemainingMs: clockAtPlay,
         coordX: Math.min(1, Math.max(0, normalized.x)),
         coordY: Math.min(1, Math.max(0, normalized.y)),
         side: turnoverSide,
@@ -959,6 +1537,7 @@ export default function GameCapturePage() {
         setPossession(turnoverSide);
         setTurnoverStep('reason');
         setShowTurnoverMenu(true);
+        if (stopsClock && wasRunning) holdClock(true, clockAtPlay);
         return;
       }
       const { data } = await supabase
@@ -975,10 +1554,6 @@ export default function GameCapturePage() {
       }
       setPossession(nextPossession);
       setGame((prev) => (prev ? { ...prev, possession: nextPossession } : prev));
-      if (stopsClock) {
-        setClockRunning(false);
-        clockRunningRef.current = false;
-      }
       setTurnoverSide(null);
       setTurnoverStep(null);
       setTurnoverOffenderId(null);
@@ -993,6 +1568,7 @@ export default function GameCapturePage() {
       setBoardNote(message);
       setPossession(turnoverSide);
       setShowTurnoverMenu(true);
+      if (stopsClock && wasRunning) holdClock(true, clockAtPlay);
     } finally {
       turnoverSavingRef.current = false;
       setTurnoverSaving(false);
@@ -1024,22 +1600,26 @@ export default function GameCapturePage() {
   }
 
   async function recordClockViolation(play: ClockViolation, side: CaptureSide) {
-    if (turnoverStep || foulStep || turnoverSavingRef.current || clockViolationRef.current) return;
+    if (shotStep || miss || turnoverStep || foulStep || subSide || turnoverSavingRef.current || clockViolationRef.current) return;
     if (possession !== side) {
       setBoardNote(t('trke_turnover_hint_wrong_side', 'Only the team with the ball can turn it over'));
       return;
     }
+    const wasRunning = clockRunningRef.current;
+    const clockAtPlay = clockNow();
+    holdClock(false, clockAtPlay);
     clockViolationRef.current = true;
     try {
       const result = await commitCapturePlay({
         play,
         gameId,
         periodNumber: currentPeriod,
-        clockRemainingMs: Math.max(0, Math.round(clockRemainingRef.current)),
+        clockRemainingMs: clockAtPlay,
         side,
       });
       if ('error' in result) {
         setBoardNote(t('trke_turnover_hint_error', 'Could not save the turnover'));
+        if (wasRunning) holdClock(true, clockAtPlay);
         return;
       }
       const { data } = await supabase
@@ -1055,8 +1635,6 @@ export default function GameCapturePage() {
         setEvents((prev) => (prev.some((event) => event.id === data.id) ? prev : [data, ...prev]));
       }
       setPossession(otherCaptureSide(side));
-      setClockRunning(false);
-      clockRunningRef.current = false;
       setBoardNote(play === 'shot_clock'
         ? t('trke_shot_clock_hint', '24s violation. Press start clock.')
         : play === 'eight_seconds'
@@ -1064,6 +1642,103 @@ export default function GameCapturePage() {
           : t('trke_five_seconds_hint', '5s violation. Press start clock.'));
     } catch {
       setBoardNote(t('trke_turnover_hint_error', 'Could not save the turnover'));
+      if (wasRunning) holdClock(true, clockAtPlay);
+    } finally {
+      clockViolationRef.current = false;
+    }
+  }
+
+  function timeoutCapText(period: number) {
+    if (period <= 2) return t('trke_timeout_none_first_half', 'No more timeouts in the first two periods');
+    if (period <= 4) return t('trke_timeout_none_second_half', 'No more timeouts in periods 3 and 4');
+    return t('trke_timeout_none_overtime', 'No more timeouts in this overtime');
+  }
+
+  function openCaptureNotice(notice: CaptureNotice) {
+    noticeOpenRef.current = true;
+    setCaptureNotice(notice);
+  }
+
+  function closeCaptureNotice() {
+    noticeOpenRef.current = false;
+    setCaptureNotice(null);
+  }
+
+  async function recordTimeout(side: CaptureSide) {
+    if (noticeOpenRef.current || shotStep || miss || turnoverStep || foulStep || subSide || turnoverSavingRef.current || clockViolationRef.current) return;
+    if (clockRunningRef.current) return;
+    if (gameStatusRef.current === 'final') return;
+    const period = currentPeriodRef.current;
+    if (countTimeouts(events, side, period) >= timeoutWindow(period).max) {
+      openCaptureNotice({ kind: 'timeout_cap', body: timeoutCapText(period) });
+      return;
+    }
+    const clockAtPlay = clockNow();
+    const pendingId = `pending-timeout-${side}-${clockAtPlay}`;
+    holdClock(false, clockAtPlay);
+    setTimeoutTickSide(side);
+    if (timeoutTickTimer.current !== null) window.clearTimeout(timeoutTickTimer.current);
+    timeoutTickTimer.current = window.setTimeout(() => {
+      timeoutTickTimer.current = null;
+      setTimeoutTickSide(null);
+    }, TIMEOUT_TICK_MS);
+    clockViolationRef.current = true;
+    await new Promise((resolve) => window.setTimeout(resolve, TIMEOUT_TICK_MS));
+    setEvents((prev) => [{
+      id: pendingId,
+      game_id: gameId,
+      event_type: 'timeout',
+      period_number: period,
+      clock_remaining_ms: clockAtPlay,
+      elapsed_ms: 0,
+      timeout_side: side,
+      recorded_by_user_id: currentUser?.id ?? '',
+      created_at: new Date().toISOString(),
+    }, ...prev.filter((event) => event.id !== pendingId)]);
+    const dropPending = () => {
+      setEvents((prev) => prev.filter((event) => event.id !== pendingId));
+    };
+    try {
+      const result = await commitCapturePlay({
+        play: 'timeout',
+        gameId,
+        periodNumber: period,
+        clockRemainingMs: clockAtPlay,
+        side,
+      });
+      if ('error' in result) {
+        dropPending();
+        openCaptureNotice({
+          kind: 'timeout_cap',
+          body: result.error === 'timeout_cap'
+            ? timeoutCapText(period)
+            : t('trke_timeout_error', 'Could not save the timeout'),
+        });
+        return;
+      }
+      const { data } = await supabase
+        .from('game_events')
+        .select(`
+          *,
+          player:players!game_events_player_id_fkey(full_name, jersey_number, avatar_url),
+          player_out:players!game_events_player_out_id_fkey(full_name, jersey_number, avatar_url)
+        `)
+        .eq('id', result.id)
+        .single();
+      setEvents((prev) => {
+        if (!data) {
+          return prev.map((event) => (event.id === pendingId ? { ...event, id: result.id } : event));
+        }
+        const rest = prev.filter((event) => event.id !== pendingId && event.id !== result.id);
+        return [data, ...rest];
+      });
+      setBoardNote(t('trke_timeout_hint', 'Timeout. Press start clock.'));
+    } catch {
+      dropPending();
+      openCaptureNotice({
+        kind: 'timeout_cap',
+        body: t('trke_timeout_error', 'Could not save the timeout'),
+      });
     } finally {
       clockViolationRef.current = false;
     }
@@ -1094,6 +1769,9 @@ export default function GameCapturePage() {
     setFoulKind(null);
     setFoulContext(null);
     setFoulCoach(false);
+    setFoulOffense(false);
+    setFoulThrowCount(null);
+    setShowFoulThrowCount(false);
     setShowFreeThrowScript(false);
     setPendingAction(null);
     setTapCoordinates(null);
@@ -1105,21 +1783,63 @@ export default function GameCapturePage() {
     setBoardNote(null);
   }
 
+  function stepFoulBack() {
+    if (foulSavingRef.current) return;
+    clearFoulTimer();
+    if (showFreeThrowScript) {
+      setShowFreeThrowScript(false);
+      if (foulCoach) {
+        foulDraftRef.current = null;
+        setFoulThrowCount(null);
+        setBoardNote(t('trke_foul_hint_shooter', 'Choose the free-throw shooter'));
+        return;
+      }
+      setFoulThrowCount(null);
+      setShowFoulThrowCount(true);
+      setBoardNote(t('trke_made_ft_count', 'How many free throws?'));
+      return;
+    }
+    if (showFoulThrowCount) {
+      setShowFoulThrowCount(false);
+      setFoulThrowCount(null);
+      foulDraftRef.current = null;
+      setBoardNote(foulKind ? otherPrompt(foulKind) : t('trke_foul_hint_victim', 'Choose who was fouled'));
+      return;
+    }
+    if (foulStep === 'court' || !foulStep) {
+      cancelFoul();
+      return;
+    }
+    if (foulStep === 'player') {
+      setFoulStep('court');
+      setTapCoordinates(null);
+      setFoulOffenderId(null);
+      setBoardNote(t('trke_foul_hint_court', 'Tap where the foul happened'));
+      return;
+    }
+    if (foulStep === 'type') {
+      setFoulStep('player');
+      setFoulOffenderId(null);
+      setFoulKind(null);
+      setBoardNote(t('trke_foul_hint_player', 'Choose who committed the foul'));
+      return;
+    }
+    if (foulCoach) {
+      cancelFoul();
+      return;
+    }
+    setFoulStep('type');
+    setFoulKind(null);
+    setFoulContext(null);
+    setBoardNote(t('trke_foul_hint_type', 'Choose the foul'));
+  }
+
   function foulErrorText(code: string) {
     if (code === 'foul_possession') return t('trke_foul_hint_possession', 'Set possession before the foul');
     if (code === 'foul_eliminated') return t('trke_foul_hint_eliminated', 'That player is already eliminated');
     if (code === 'foul_player') return t('trke_foul_hint_player', 'Choose who committed the foul');
     if (code === 'foul_victim') return t('trke_foul_hint_victim', 'Choose who was fouled');
     return t('trke_foul_hint_error', 'Could not save the foul');
-  }
-
-  function shotPointsFor(side: CaptureSide): 2 | 3 {
-    const point = tapCoordinates ?? { x: 0.5, y: 0.5 };
-    return shotValueFromWorld(
-      point.x,
-      point.y,
-      offenseAttacksRight(otherCaptureSide(side), currentPeriod, attackRightFirst),
-    );
   }
 
   async function saveFoul(draft: {
@@ -1136,13 +1856,16 @@ export default function GameCapturePage() {
       setBoardNote(t('trke_foul_hint_error', 'Could not save the foul'));
       return;
     }
+    const wasRunning = clockRunningRef.current;
+    const clockAtPlay = clockNow();
+    holdClock(false, clockAtPlay);
     foulSavingRef.current = true;
     try {
       const result = await commitCapturePlay({
         play: 'foul',
         gameId,
         periodNumber: currentPeriod,
-        clockRemainingMs: Math.max(0, Math.round(clockRemainingRef.current)),
+        clockRemainingMs: clockAtPlay,
         side: draft.side,
         coordX: draft.coach || !tapCoordinates ? null : tapCoordinates.x,
         coordY: draft.coach || !tapCoordinates ? null : tapCoordinates.y,
@@ -1155,6 +1878,7 @@ export default function GameCapturePage() {
       });
       if ('error' in result) {
         setBoardNote(foulErrorText(result.error));
+        if (wasRunning) holdClock(true, clockAtPlay);
         return;
       }
       if (result.groupId) {
@@ -1180,8 +1904,6 @@ export default function GameCapturePage() {
       }
       if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
       if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
-      setClockRunning(false);
-      clockRunningRef.current = false;
       const ejected = foulEjects(draft.kind)
         || (!draft.coach && !!draft.offenderId && personalFoulCount(draft.offenderId, draft.side) + 1 >= 5);
       const outcome = !result.possessionChanged
@@ -1193,21 +1915,28 @@ export default function GameCapturePage() {
       clearFoulUi();
     } catch {
       setBoardNote(t('trke_foul_hint_error', 'Could not save the foul'));
+      if (wasRunning) holdClock(true, clockAtPlay);
     } finally {
       foulSavingRef.current = false;
     }
   }
 
   function armFoul(side: CaptureSide) {
-    if (clockViolationRef.current || foulSavingRef.current) return;
+    if (shotStep || miss || clockViolationRef.current || foulSavingRef.current) return;
     if (possession !== 'home' && possession !== 'away') {
       setBoardNote(t('trke_foul_hint_possession', 'Set possession before the foul'));
       return;
     }
     if (courtRoster(side).length === 0) {
-      setBoardNote(t('trke_foul_hint_player', 'Choose who committed the foul'));
+      setBoardNote(t('trke_foul_hint_roster', 'Put players on the court before the foul'));
       return;
     }
+    const clockAtWhistle = clockNow();
+    holdClock(false, clockAtWhistle);
+    void updateGameState({
+      clock_running: false,
+      clock_remaining_ms: clockAtWhistle,
+    });
     clearFoulTimer();
     setFoulSide(side);
     setFoulStep('court');
@@ -1220,7 +1949,7 @@ export default function GameCapturePage() {
   }
 
   function armCoachTechnical(side: CaptureSide) {
-    if (turnoverStep || foulStep || foulSavingRef.current) return;
+    if (shotStep || miss || turnoverStep || foulStep || subSide || foulSavingRef.current) return;
     if (possession !== 'home' && possession !== 'away') {
       setBoardNote(t('trke_foul_hint_possession', 'Set possession before the foul'));
       return;
@@ -1284,30 +2013,12 @@ export default function GameCapturePage() {
     }
     if (foulStep === 'player' && side === foulSide) {
       setFoulOffenderId(playerId);
-      if (possession === foulSide) {
-        void saveFoul({
-          side: foulSide,
-          kind: 'personal',
-          context: 'offensive',
-          offenderId: playerId,
-          otherId: null,
-          coach: false,
-          throws: [],
-        });
-        return;
-      }
+      setFoulOffense(possession === foulSide);
       setFoulStep('type');
       setBoardNote(t('trke_foul_hint_type', 'Choose the foul'));
       return;
     }
     if (foulStep === 'other' && side === otherCaptureSide(foulSide) && foulKind && foulContext) {
-      const value = foulContext === 'shot_made' || foulContext === 'shot_missed' ? shotPointsFor(foulSide) : null;
-      const count = foulFreeThrowCount({
-        kind: foulKind,
-        context: foulContext,
-        shotValue: value,
-        teamFoulsBefore: teamFoulsBefore(foulSide),
-      });
       const draft = {
         side: foulSide,
         kind: foulKind,
@@ -1317,13 +2028,25 @@ export default function GameCapturePage() {
         coach: foulCoach,
         throws: [] as FreeThrowMark[],
       };
-      if (count > 0) {
-        foulDraftRef.current = draft;
-        setFoulThrowCount(count as 1 | 2 | 3);
-        setShowFreeThrowScript(true);
+      const allowance = foulThrowAllowance({
+        kind: foulKind,
+        context: foulContext,
+        teamFoulsBefore: teamFoulsBefore(foulSide),
+      });
+      if (allowance === 0) {
+        void saveFoul(draft);
         return;
       }
-      void saveFoul(draft);
+      foulDraftRef.current = draft;
+      if (foulCoach) {
+        setFoulThrowCount(1);
+        setShowFreeThrowScript(true);
+        setBoardNote(t('trke_made_hint_ft', 'Mark the free throw'));
+        return;
+      }
+      setFoulThrowCount(null);
+      setShowFoulThrowCount(true);
+      setBoardNote(t('trke_made_ft_count', 'How many free throws?'));
     }
   }
 
@@ -1342,6 +2065,18 @@ export default function GameCapturePage() {
   function chooseFoulKind(kind: FoulKind) {
     if (!foulSide || !foulOffenderId) return;
     queueFoulChoice(kind, () => {
+      if (kind === 'personal' && foulOffense) {
+        void saveFoul({
+          side: foulSide,
+          kind: 'personal',
+          context: 'offensive',
+          offenderId: foulOffenderId,
+          otherId: null,
+          coach: false,
+          throws: [],
+        });
+        return;
+      }
       if (kind === 'technical' || kind === 'double') {
         advanceFoul({
           side: foulSide,
@@ -1352,24 +2087,61 @@ export default function GameCapturePage() {
         });
         return;
       }
-      setFoulKind(kind);
-      setFoulStep('situation');
-      setBoardNote(t('trke_foul_hint_situation', 'Was there a shot?'));
-    });
-  }
-
-  function chooseFoulSituation(context: 'no_shot' | 'shot_made' | 'shot_missed') {
-    if (!foulSide || !foulKind || !foulOffenderId) return;
-    queueFoulChoice(context, () => {
-      setFoulContext(context);
       advanceFoul({
         side: foulSide,
-        kind: foulKind,
-        context,
+        kind,
+        context: 'no_shot',
         offenderId: foulOffenderId,
         coach: false,
       });
     });
+  }
+
+  function rememberTipWinner(side: 'home' | 'away') {
+    if (openingTipWinnerRef.current) return;
+    const parsed = openingTipWinnerSchema.safeParse(side);
+    if (!parsed.success) return;
+    openingTipWinnerRef.current = parsed.data;
+    setOpeningTipWinner(parsed.data);
+    void updateGameState({ opening_tip_winner: parsed.data });
+  }
+
+  async function writePossession(side: 'home' | 'away') {
+    const parsed = openingTipWinnerSchema.safeParse(side);
+    if (!parsed.success) return false;
+    setPossession(parsed.data);
+    setGame((prev) => (prev ? { ...prev, possession: parsed.data } : prev));
+    return updateGameState({ possession: parsed.data });
+  }
+
+  function proposedInboundSide() {
+    const winner = openingTipWinnerRef.current;
+    if (!winner) return null;
+    return periodInbound(currentPeriodRef.current, winner);
+  }
+
+  async function keepProposedInbound() {
+    const side = proposedInboundSide();
+    if (!side) return;
+    const saved = await writePossession(side);
+    if (!saved) return;
+    inboundAnsweredPeriodRef.current = currentPeriodRef.current;
+    setInboundFlipped(null);
+    setShowInbound(false);
+  }
+
+  async function acceptHeldBall() {
+    const proposed = proposedInboundSide();
+    if (!proposed) return;
+    const saved = await writePossession(otherCaptureSide(proposed));
+    if (!saved) return;
+    setInboundFlipped(otherCaptureSide(proposed));
+  }
+
+  function acknowledgeInboundFlip() {
+    inboundAnsweredPeriodRef.current = currentPeriodRef.current;
+    setInboundFlipped(null);
+    setShowInbound(false);
   }
 
   function handleJumpBallConfirm(result: JumpBallResult) {
@@ -1377,18 +2149,33 @@ export default function GameCapturePage() {
     setShowJumpBall(false);
     setPossession(result.winner);
     void updateGameState({ possession: result.winner });
+    rememberTipWinner(result.winner);
+  }
+
+  function countsAsPlayerFoul(event: GameEvent, id: string, side: 'home' | 'away') {
+    if (event.coach_technical_side) return false;
+    const charged = side === 'home' ? event.player_id === id : event.opponent_player_id === id;
+    if (!charged) return false;
+    if (event.event_type === 'foul' && foulCountsForPlayer(event.foul_type)) return true;
+    return event.event_type === 'turnover'
+      && (event.turnover_type === 'offensive_foul' || event.turnover_type === 'technical')
+      && event.turnover_side === side;
   }
 
   function personalFoulCount(id: string, side: 'home' | 'away') {
-    return events.filter((event) => {
-      if (event.coach_technical_side) return false;
-      const charged = side === 'home' ? event.player_id === id : event.opponent_player_id === id;
-      if (!charged) return false;
-      if (event.event_type === 'foul' && foulCountsForPlayer(event.foul_type)) return true;
-      return event.event_type === 'turnover'
-        && (event.turnover_type === 'offensive_foul' || event.turnover_type === 'technical')
-        && event.turnover_side === side;
-    }).length;
+    return events.filter((event) => countsAsPlayerFoul(event, id, side)).length;
+  }
+
+  /** Which personal foul this row is for that player: 1 on the first, 5 on the one that fouls them out. */
+  function playerFoulNumber(event: GameEvent) {
+    if (event.coach_technical_side || event.event_type !== 'foul') return 0;
+    const side = event.foul_side
+      ?? (event.player_id ? 'home' : event.opponent_player_id ? 'away' : null);
+    const id = side === 'home' ? event.player_id : side === 'away' ? event.opponent_player_id : null;
+    if (!side || !id || !foulCountsForPlayer(event.foul_type)) return 0;
+    return events.filter((item) => (
+      countsAsPlayerFoul(item, id, side) && newerCaptureEvent(item, event) >= 0
+    )).length;
   }
 
   function playerIsOut(id: string, side: 'home' | 'away') {
@@ -1413,8 +2200,12 @@ export default function GameCapturePage() {
         }
       }
       return event.event_type === 'turnover'
-        && (event.turnover_type === 'offensive_foul' || event.turnover_type === 'technical')
-        && event.turnover_side === side;
+        && event.turnover_side === side
+        && (
+          event.turnover_type === 'offensive_foul'
+          || event.turnover_type === 'technical'
+          || clockViolationCountsAsTeamFoul(event)
+        );
     }).length;
   }
 
@@ -1465,12 +2256,7 @@ export default function GameCapturePage() {
   }
 
   function suggestedStarterIds(side: 'home' | 'away') {
-    const saved = idsForPeriod(currentPeriod, side).filter((id) => !playerIsOut(id, side));
-    if (saved.length > 0 || currentPeriod === 1) return saved;
-    const previous = side === 'home'
-      ? deriveOnCourtPlayers(idsForPeriod(currentPeriod - 1, 'home'), events, currentPeriod - 1)
-      : idsForPeriod(currentPeriod - 1, 'away');
-    return previous.filter((id) => !playerIsOut(id, side));
+    return idsForPeriod(currentPeriod, side).filter((id) => !playerIsOut(id, side));
   }
 
   function eliminatedCount(side: 'home' | 'away') {
@@ -1498,6 +2284,10 @@ export default function GameCapturePage() {
       setBoardNote(t('trke_lineup_start_blocked', 'Set both lineups before starting the period'));
       return true;
     }
+    if (currentPeriod > 1 && openingTipWinnerRef.current && inboundAnsweredPeriodRef.current !== currentPeriod) {
+      setShowInbound(true);
+      return true;
+    }
     return false;
   }
 
@@ -1515,7 +2305,7 @@ export default function GameCapturePage() {
     if (message === 'invalid color') {
       return t('trke_opponent_color', 'Opponent color');
     }
-    return t('trke_opponent_roster_hint', 'Enter up to 12 jerseys. Add the coach with the button. The coach has no jersey.');
+    return t('trke_opponent_roster_hint', 'Fill in the jerseys you see. Leave the rest blank. The coach has no jersey.');
   }
 
   function rosterDbMessage(error: { message: string; code?: string }) {
@@ -1552,7 +2342,7 @@ export default function GameCapturePage() {
     if (!parsed.success) return rosterSchemaMessage(parsed.error);
 
     const draft = parsed.data.players.map((player) => ({ ...player }));
-    const locked = events.length > 0 || clockRemaining < 600000;
+    const locked = events.length > 0 || clockRunning || clockRemaining < 600000;
     const { data: currentRows, error: currentError } = await supabase
       .from('game_opponent_players')
       .select('id, jersey_number, is_coach')
@@ -1633,13 +2423,35 @@ export default function GameCapturePage() {
         const created = player.is_coach
           ? inserted.find((row) => row.is_coach)
           : inserted.find((row) => row.jersey_number === player.jersey_number);
-        if (!created) return t('trke_opponent_roster_hint', 'Enter up to 12 jerseys. Add the coach with the button. The coach has no jersey.');
+        if (!created) return t('trke_opponent_roster_hint', 'Fill in the jerseys you see. Leave the rest blank. The coach has no jersey.');
         player.id = created.id;
       }
     }
 
     await reloadOpponentRoster();
     setShowOpponentRoster(false);
+    return null;
+  }
+
+  async function addOpponentBenchPlayer(jerseyNumber: number, name: string): Promise<string | null> {
+    const existing = opponentPlaying.flatMap((player) => (
+      player.jersey_number == null ? [] : [player.jersey_number]
+    ));
+    const parsed = opponentBenchAddSchema.safeParse({
+      game_id: gameId,
+      jersey_number: jerseyNumber,
+      name,
+      existing_jerseys: existing,
+    });
+    if (!parsed.success) return rosterSchemaMessage(parsed.error);
+    const { error } = await supabase.from('game_opponent_players').insert({
+      game_id: parsed.data.game_id,
+      jersey_number: parsed.data.jersey_number,
+      name: parsed.data.name,
+      is_coach: false,
+    });
+    if (error) return rosterDbMessage(error);
+    await reloadOpponentRoster();
     return null;
   }
 
@@ -1804,24 +2616,23 @@ export default function GameCapturePage() {
   }
 
   async function startClock() {
-    if (clockRunning) return;
+    if (clockRunningRef.current || subSide) return;
     if (blockUntilReady()) return;
     if (currentPeriod === 1 && !sideChosen) {
       setShowChooseSide(true);
       return;
     }
-    clockRunningRef.current = true;
-    clockRemainingRef.current = clockRemaining;
-    setClockRunning(true);
+    const remaining = clockNow();
+    holdClock(true, remaining);
     await updateGameState({
       clock_running: true,
-      clock_remaining_ms: clockRemaining,
+      clock_remaining_ms: remaining,
     });
   }
 
   async function toggleClock() {
-    if (turnoverStep || foulStep) return;
-    if (!clockRunning && currentPeriod === 1 && !periodAlreadyStarted(1)) {
+    if (shotStep || miss || turnoverStep || foulStep || subSide) return;
+    if (!clockRunningRef.current && currentPeriod === 1 && !periodAlreadyStarted(1)) {
       if (blockUntilReady()) return;
       if (!sideChosen) {
         setShowChooseSide(true);
@@ -1830,77 +2641,37 @@ export default function GameCapturePage() {
       setShowJumpBall(true);
       return;
     }
-    if (!clockRunning && blockUntilReady()) return;
+    if (!clockRunningRef.current && blockUntilReady()) return;
     
-    const newState = !clockRunning;
-    clockRunningRef.current = newState;
-    clockRemainingRef.current = clockRemaining;
-    setClockRunning(newState);
+    const remaining = clockNow();
+    const newState = !clockRunningRef.current;
+    holdClock(newState, remaining);
     await updateGameState({
       clock_running: newState,
-      clock_remaining_ms: clockRemaining,
+      clock_remaining_ms: remaining,
     });
   }
 
   async function adjustClock(unit: 'minute' | 'second' | 'tenth', delta: number) {
-    if (turnoverStep || foulStep) return;
+    if (shotStep || miss || turnoverStep || foulStep) return;
     if (blockUntilReady()) return;
     const step = unit === 'minute' ? 60000 : unit === 'second' ? 1000 : 100;
     const max = getPeriodLengthMs(currentPeriod);
-    const next = Math.max(0, Math.min(max, clockRemainingRef.current + delta * step));
-    clockRemainingRef.current = next;
-    setClockRemaining(next);
+    const next = Math.max(0, Math.min(max, clockNow() + delta * step));
+    holdClock(clockRunningRef.current, next);
     await updateGameState({ clock_remaining_ms: next });
   }
 
-  async function nextPeriod() {
-    if (turnoverStep || foulStep) return;
-    if (blockUntilReady()) return;
-    
-    // Check if game should auto-close (end of Q4 or OT with score not tied)
-    if (currentPeriod >= 4) {
-      const isTied = teamScore === opponentScore;
-      
-      if (!isTied) {
-        // Game finished - set status to 'final', stop clock
-        await updateGameState({
-          status: 'final',
-          clock_running: false,
-          clock_remaining_ms: 0,
-        });
-        
-        // Record final period end time
-        await supabase.from('game_periods').upsert({
-          game_id: gameId,
-          period_number: currentPeriod,
-          clock_remaining_ms: 0,
-          duration_ms: getPeriodLengthMs(currentPeriod),
-          is_overtime: currentPeriod > 4,
-        }, {
-          onConflict: 'game_id,period_number'
-        });
-        
-        setClockRunning(false);
-        setClockRemaining(0);
-        
-        // Show game finished overlay (alert for now, could be a modal)
-        alert(`Game Finished!\n\n${game?.teams?.name || 'Team'}: ${teamScore}\n${game?.opponent_name || 'Opponent'}: ${opponentScore}`);
-        return;
-      }
-      
-      // If tied after Q4 or OT, continue to next OT
-      // OT periods are 5 minutes (300,000 ms)
-    }
-    
-    // Record period end time in game_periods table
+  async function advancePeriod() {
+    const period = currentPeriodRef.current;
     const { error: periodError } = await supabase
       .from('game_periods')
       .upsert({
         game_id: gameId,
-        period_number: currentPeriod,
-        clock_remaining_ms: clockRemaining,
-        duration_ms: getPeriodLengthMs(currentPeriod),
-        is_overtime: currentPeriod > 4,
+        period_number: period,
+        clock_remaining_ms: clockNow(),
+        duration_ms: getPeriodLengthMs(period),
+        is_overtime: period > 4,
       }, {
         onConflict: 'game_id,period_number'
       });
@@ -1908,24 +2679,120 @@ export default function GameCapturePage() {
     if (periodError) {
       console.error('Failed to record period end time:', periodError);
       alert(`Error recording period end time: ${periodError.message}`);
-      return;
+      return false;
     }
 
-    const newPeriod = currentPeriod + 1;
+    const newPeriod = period + 1;
     const newPeriodLength = getPeriodLengthMs(newPeriod);
-    setCurrentPeriod(newPeriod);
-    setClockRemaining(newPeriodLength);
-    setClockRunning(false);
+    holdClock(false, newPeriodLength, newPeriod);
     await updateGameState({
       current_period: newPeriod,
       clock_remaining_ms: newPeriodLength,
       clock_running: false,
     });
-    setShowPeriodLineup(true);
+    setShowInbound(false);
+    setInboundFlipped(null);
+    return true;
+  }
+
+  async function finishGame() {
+    const period = currentPeriodRef.current;
+    gameStatusRef.current = 'final';
+    holdClock(false, 0);
+    const saved = await updateGameState({
+      status: 'final',
+      clock_running: false,
+      clock_remaining_ms: 0,
+    });
+    if (!saved) {
+      gameStatusRef.current = game?.status ?? '';
+      return false;
+    }
+    const { error: periodError } = await supabase.from('game_periods').upsert({
+      game_id: gameId,
+      period_number: period,
+      clock_remaining_ms: 0,
+      duration_ms: getPeriodLengthMs(period),
+      is_overtime: period > 4,
+    }, {
+      onConflict: 'game_id,period_number'
+    });
+    if (periodError) {
+      console.error('Failed to record period end time:', periodError);
+      return false;
+    }
+    setGame((prev) => (prev ? { ...prev, status: 'final' } : prev));
+    return true;
+  }
+
+  function requestPeriodEnd(source: 'clock' | 'next') {
+    if (noticeOpenRef.current || periodEndBusyRef.current) return;
+    if (gameStatusRef.current === 'final') return;
+    if (source === 'next') {
+      if (shotStep || miss || turnoverStep || foulStep) return;
+      if (blockUntilReady()) return;
+    }
+    const period = currentPeriodRef.current;
+    if (source === 'clock' && shotStep) cancelShot(false);
+    if (source === 'clock' && miss) cancelMiss(false);
+    if (source === 'clock' && period < 4) {
+      openCaptureNotice({ kind: 'period_ended' });
+      return;
+    }
+    const outcome = periodOutcome(period, teamScoreRef.current, opponentScoreRef.current);
+    if (outcome === 'next') {
+      periodEndBusyRef.current = true;
+      void advancePeriod().then((saved) => {
+        if (saved) offerAttackChange();
+      }).finally(() => {
+        periodEndBusyRef.current = false;
+      });
+      return;
+    }
+    const remaining = clockNow();
+    holdClock(false, remaining);
+    void updateGameState({ clock_running: false, clock_remaining_ms: remaining });
+    openCaptureNotice({ kind: outcome });
+  }
+
+  requestPeriodEndRef.current = requestPeriodEnd;
+
+  function offerAttackChange() {
+    if (currentPeriodRef.current === 3) {
+      openCaptureNotice({ kind: 'attack_change' });
+    }
+  }
+
+  async function confirmCaptureNotice() {
+    const notice = captureNotice;
+    if (!notice) return;
+    if (notice.kind === 'timeout_cap' || notice.kind === 'attack_change') {
+      closeCaptureNotice();
+      return;
+    }
+    if (periodEndBusyRef.current) return;
+    periodEndBusyRef.current = true;
+    try {
+      cancelTurnover();
+      if (!foulSavingRef.current) cancelFoul();
+      cancelShot(false);
+      cancelSub();
+      const saved = notice.kind === 'final' ? await finishGame() : await advancePeriod();
+      if (saved) {
+        closeCaptureNotice();
+        if (notice.kind !== 'final') offerAttackChange();
+      }
+    } finally {
+      periodEndBusyRef.current = false;
+    }
+  }
+
+  function nextPeriod() {
+    requestPeriodEnd('next');
   }
 
   async function assignPossession(side: 'home' | 'away') {
-    if (turnoverStep || foulStep) return;
+    if (shotStep || miss || turnoverStep || foulStep) return;
     if (possession === side) return;
     setPossession(side);
     await updateGameState({ possession: side });
@@ -1939,7 +2806,8 @@ export default function GameCapturePage() {
   }
 
   async function flipCourt() {
-    if (turnoverStep || foulStep) return;
+    if (shotStep || miss || turnoverStep || foulStep) return;
+    if (periodAlreadyStarted(currentPeriodRef.current)) return;
     const newDirection = !attackRightFirst;
     setAttackRightFirst(newDirection);
     await updateGameState({ attack_right_first: newDirection });
@@ -1949,8 +2817,13 @@ export default function GameCapturePage() {
     router.push(`/team-manager/games/${gameId}`);
   }
 
+  function openGameEditor() {
+    const returnTo = encodeURIComponent(`/team-manager/games/${gameId}/capture`);
+    router.push(`/admin/games/${gameId}?returnTo=${returnTo}`);
+  }
+
   async function handleUndo() {
-    if (turnoverStep || foulStep || events.length === 0) return;
+    if (shotStep || miss || turnoverStep || foulStep || subSide || events.length === 0) return;
 
     const lastEvent = events[0];
     const group = lastEvent.play_group_id
@@ -1971,16 +2844,16 @@ export default function GameCapturePage() {
       if (event.player_id) homePoints += event.points;
       else if (event.opponent_player_id) awayPoints += event.points;
     });
-    const foul = group.find((event) => event.event_type === 'foul');
+    const priorPossession = group.find((event) => event.possession_before)?.possession_before;
     const nextTeam = Math.max(0, teamScore - homePoints);
     const nextOpponent = Math.max(0, opponentScore - awayPoints);
     const updates: Partial<Game> = {};
     if (homePoints) updates.team_score = nextTeam;
     if (awayPoints) updates.opponent_score = nextOpponent;
-    if (foul?.possession_before) updates.possession = foul.possession_before;
+    if (priorPossession) updates.possession = priorPossession;
     if (homePoints) setTeamScore(nextTeam);
     if (awayPoints) setOpponentScore(nextOpponent);
-    if (foul?.possession_before) setPossession(foul.possession_before);
+    if (priorPossession) setPossession(priorPossession);
     if (Object.keys(updates).length) await updateGameState(updates);
 
     const removeIds = new Set(group.map((event) => event.id));
@@ -1992,12 +2865,27 @@ export default function GameCapturePage() {
       alert(`Error: ${error.message}`);
     } else {
       setEvents((prev) => prev.filter((event) => !removeIds.has(event.id)));
-      if (!foul && lastEvent.event_type === 'turnover' && lastEvent.turnover_side) {
+      if (!priorPossession && lastEvent.event_type === 'turnover' && lastEvent.turnover_side) {
         setPossession(lastEvent.turnover_side);
         await updateGameState({ possession: lastEvent.turnover_side });
       }
     }
   }
+
+  const homeStarterCount = periodLineups.filter((row) => row.period_number === currentPeriod && row.side === 'home').length;
+  const awayStarterCount = periodLineups.filter((row) => row.period_number === currentPeriod && row.side === 'away').length;
+  const inboundLineupReady = !loading
+    && !showPeriodLineup
+    && currentPeriod > 1
+    && openingTipWinner != null
+    && captureNotice?.kind !== 'attack_change'
+    && !periodAlreadyStarted(currentPeriod)
+    && canStartPeriod(homeStarterCount, awayStarterCount, eliminatedCount('home'), eliminatedCount('away'));
+
+  useEffect(() => {
+    if (inboundAnsweredPeriodRef.current === currentPeriod) return;
+    setShowInbound(inboundLineupReady);
+  }, [currentPeriod, inboundLineupReady]);
 
   if (loading) {
     return <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white">Loading...</div>;
@@ -2036,18 +2924,30 @@ export default function GameCapturePage() {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Get shot markers for court (transform normalized coords to world coords for display)
-  // Include both field shots and free throws
+  const shotMarkerLabel = (event: GameEvent) => {
+    if (event.player) return String(event.player.jersey_number);
+    if (event.player_id) {
+      const player = players.find((item) => item.id === event.player_id);
+      if (player) return String(player.jersey_number);
+    }
+    if (event.opponent_player_id) {
+      const player = opponentPlayers.find((item) => item.id === event.opponent_player_id);
+      if (player) return String(opponentShirt(player));
+    }
+    return String(event.points || 0);
+  };
+
   const shotMarkers = events
-    .filter(e => (e.event_type === 'shot' || e.event_type === 'free_throw') && e.coord_x != null && e.coord_y != null)
-    .map(e => {
-      const world = normalizedToWorld(e.coord_x!, e.coord_y!);
+    .filter((event) => event.event_type === 'shot' && event.coord_x != null && event.coord_y != null)
+    .map((event) => {
+      const world = normalizedToWorld(event.coord_x!, event.coord_y!);
       return {
-        id: e.id,
+        id: event.id,
         x: world.x,
         y: world.y,
-        made: e.made ?? false,
-        points: e.points || 0,
+        made: event.made ?? false,
+        points: event.points || 0,
+        label: shotMarkerLabel(event),
       };
     });
 
@@ -2056,12 +2956,7 @@ export default function GameCapturePage() {
 
   const attacking = isAttackingRight();
   const isOffense = possession === 'home';
-  
-  // Possession highlight: show which half has possession (not which we're attacking)
-  // When we have possession (offense), highlight our attacking half
-  // When opponent has possession, highlight their attacking half (opposite of ours)
 
-  const boardClock = scoreboardClock(clockRemaining);
   const matchStarted = currentPeriod > 1
     || events.length > 0
     || clockRunning
@@ -2072,15 +2967,140 @@ export default function GameCapturePage() {
   const lineupReady = onCourtPlayers.length > 0;
   const homePersonalFouls = teamFoulsBefore('home');
   const awayPersonalFouls = teamFoulsBefore('away');
+  function playingIds(side: CaptureSide) {
+    return side === 'home' ? onCourtPlayerIds : awayOnCourtIds;
+  }
+
+  function cancelSub() {
+    if (subSavingRef.current) return;
+    setSubSide(null);
+    setSubError(null);
+  }
+
+  function armSub(side: CaptureSide) {
+    if (subSavingRef.current || shotStep || miss || foulStep || turnoverStep || clockRunningRef.current) return;
+    if (subSide === side) {
+      cancelSub();
+      return;
+    }
+    if (playingIds(side).length === 0) {
+      setBoardNote(t('trke_sub_hint_lineup', 'Pon el quinteto antes de un cambio'));
+      return;
+    }
+    setSubError(null);
+    setSubSide(side);
+    setPendingAction(null);
+    setBoardNote(null);
+  }
+
+  function subChoices(side: CaptureSide): SubstitutionChoice[] {
+    if (side === 'home') {
+      const order = new Map(onCourtPlayerIds.map((id, index) => [id, index]));
+      return dressedPlayers()
+        .map((player) => ({
+          id: player.id,
+          jersey: player.jersey_number,
+          name: player.full_name,
+          avatarUrl: player.avatar_url,
+          onCourt: onCourtPlayerIds.includes(player.id),
+          eliminated: playerIsOut(player.id, 'home'),
+        }))
+        .sort((a, b) => (order.get(a.id) ?? 99) - (order.get(b.id) ?? 99) || a.jersey - b.jersey);
+    }
+    const order = new Map(awayOnCourtIds.map((id, index) => [id, index]));
+    return opponentPlaying
+      .map((player) => ({
+        id: player.id,
+        jersey: opponentShirt(player),
+        name: player.name?.trim() || game?.opponent_name || 'Away',
+        avatarUrl: null,
+        onCourt: awayOnCourtIds.includes(player.id),
+        eliminated: playerIsOut(player.id, 'away'),
+      }))
+      .sort((a, b) => (order.get(a.id) ?? 99) - (order.get(b.id) ?? 99) || a.jersey - b.jersey);
+  }
+
+  function subErrorText(code: string) {
+    if (code === 'substitution_eliminated') return t('trke_sub_hint_eliminated', 'Ese jugador ya está eliminado');
+    if (code === 'substitution_out') return t('trke_sub_hint_out', 'Toca quién sale');
+    if (code === 'substitution_in') return t('trke_sub_hint_in', 'Toca quién entra del banquillo');
+    if (code === 'substitution_period' || code === 'substitution_lineup') {
+      return t('trke_sub_hint_lineup', 'Pon el quinteto antes de un cambio');
+    }
+    return t('trke_sub_hint_error', 'No se ha podido guardar el cambio');
+  }
+
+  async function saveSubstitution(side: CaptureSide, swaps: SubstitutionSwap[]) {
+    if (subSavingRef.current || swaps.length === 0 || clockRunningRef.current) return;
+    subSavingRef.current = true;
+    setSubSaving(true);
+    setSubError(null);
+    try {
+      const result = await commitCapturePlay({
+        play: 'substitution',
+        gameId,
+        periodNumber: currentPeriod,
+        clockRemainingMs: clockNow(),
+        side,
+        swaps,
+      });
+      if ('error' in result) {
+        setSubError(subErrorText(result.error));
+        return;
+      }
+      const query = supabase
+        .from('game_events')
+        .select(`
+          *,
+          player:players!game_events_player_id_fkey(full_name, jersey_number, avatar_url),
+          player_out:players!game_events_player_out_id_fkey(full_name, jersey_number, avatar_url)
+        `);
+      const { data } = result.groupId
+        ? await query.eq('play_group_id', result.groupId)
+        : await query.eq('id', result.id);
+      if (data) {
+        setEvents((prev) => {
+          const ids = new Set(prev.map((event) => event.id));
+          const added = data.filter((event) => !ids.has(event.id));
+          return added.length ? [...added, ...prev] : prev;
+        });
+      }
+      setSubSide(null);
+      setSubError(null);
+      setBoardNote(t('trke_sub_hint_saved', 'Cambio guardado'));
+    } catch {
+      setSubError(t('trke_sub_hint_error', 'No se ha podido guardar el cambio'));
+    } finally {
+      subSavingRef.current = false;
+      setSubSaving(false);
+    }
+  }
+
   function handleBoardAction(side: 'home' | 'away', action: CaptureBoardAction) {
-    if (action === 'made' || action === 'miss') return;
-    if (turnoverSavingRef.current || foulSavingRef.current) return;
+    if (shotSavingRef.current || missSavingRef.current || turnoverSavingRef.current || foulSavingRef.current || subSavingRef.current) return;
+    if (subSide) return;
+    if (miss) {
+      if (side === miss.side && action === pendingAction) cancelMiss();
+      return;
+    }
+    if (shotStep) {
+      if (side === shotSide && action === pendingAction) cancelShot();
+      return;
+    }
     if (foulStep) {
       if (action === 'foul' && side === foulSide) cancelFoul();
       return;
     }
     if (turnoverStep) {
       if (action === 'turnover' && side === turnoverSide) cancelTurnover();
+      return;
+    }
+    if (action === 'miss' || action === 'miss_personal') {
+      armMiss(side, action === 'miss_personal');
+      return;
+    }
+    if (action === 'made' || action === 'made_personal') {
+      armMade(side, action === 'made_personal');
       return;
     }
     if (action === 'turnover') {
@@ -2102,7 +3122,25 @@ export default function GameCapturePage() {
       ? t('trke_turnover_hint_court', 'Tap the court where the ball was lost')
       : '');
 
-  const logItems = events.slice(0, 40).map((event) => {
+  const scoreAtShot = scoreAfterMadeShots(events);
+  const seenSubGroups = new Set<string>();
+  const seenFreeThrowGroups = new Set<string>();
+  const logEvents: GameEvent[] = [];
+  for (const event of [...events].sort(newerCaptureEvent)) {
+    if (logEvents.length >= 40) break;
+    if (event.event_type === 'assist') continue;
+    if (event.event_type === 'substitution' && event.play_group_id) {
+      if (seenSubGroups.has(event.play_group_id)) continue;
+      seenSubGroups.add(event.play_group_id);
+    }
+    if (event.event_type === 'free_throw' && event.play_group_id) {
+      if (seenFreeThrowGroups.has(event.play_group_id)) continue;
+      seenFreeThrowGroups.add(event.play_group_id);
+    }
+    logEvents.push(event);
+  }
+
+  const logItems = logEvents.map((event) => {
     const opponent = event.opponent_player_id
       ? opponentPlayers.find((player) => player.id === event.opponent_player_id)
       : null;
@@ -2114,23 +3152,66 @@ export default function GameCapturePage() {
     let title = event.event_type.replaceAll('_', ' ').toUpperCase();
     let detail = who;
     if (event.event_type === 'shot') {
-      title = event.made ? 'SHOT MADE' : 'SHOT MISSED';
-      detail = `${who} · ${event.points ?? 0}P`;
+      const score = event.made ? scoreAtShot.get(event.id) : null;
+      title = event.made ? `Shot made${score ? ` · ${score}` : ''}` : 'SHOT MISSED';
+      const assist = event.play_group_id
+        ? events.find((item) => item.event_type === 'assist' && item.play_group_id === event.play_group_id)
+        : null;
+      const assistWho = assist?.player
+        ? `#${assist.player.jersey_number}`
+        : (() => {
+          const mate = assist?.opponent_player_id
+            ? opponentPlayers.find((player) => player.id === assist.opponent_player_id)
+            : null;
+          return mate ? `#${opponentShirt(mate)}` : '';
+        })();
+      detail = assistWho
+        ? `${who} · ${event.points ?? 0}P · ${t('trke_made_log_assist', 'assist')} ${assistWho}`
+        : `${who} · ${event.points ?? 0}P`;
+    } else if (event.event_type === 'rebound') {
+      title = event.is_offensive
+        ? t('trke_offensive_rebound', 'Offensive Rebound')
+        : t('trke_defensive_rebound', 'Defensive Rebound');
+      detail = who;
     } else if (event.event_type === 'free_throw') {
-      title = 'FREE THROW';
-      detail = `${who} · ${event.made ? 'made' : 'missed'}`;
+      const group = event.play_group_id
+        ? events.filter((item) => item.event_type === 'free_throw' && item.play_group_id === event.play_group_id)
+        : [event];
+      const ordered = [...group].sort((a, b) => {
+        if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      });
+      const lastMade = [...ordered].reverse().find((item) => item.made);
+      const score = lastMade ? scoreAtShot.get(lastMade.id) : null;
+      const label = ordered.length === 1
+        ? t('trke_ft_log_one', 'Free throw')
+        : t('trke_ft_log_many', 'Free throws');
+      title = score ? `${label} · ${score}` : label;
+      const marks = ordered.map((item) => (
+        item.made
+          ? t('trke_ft_sequence_made', 'Made')
+          : t('trke_ft_sequence_miss', 'Miss')
+      ));
+      detail = [who, ...marks].join('\n');
     } else if (event.event_type === 'foul') {
-      title = event.coach_technical_side ? 'TECHNICAL' : 'FOUL';
       const coachName = event.coach_technical_side === 'home'
         ? (homeCoachName || 'Coach')
         : event.coach_technical_side === 'away'
           ? (awayCoachName || 'Coach')
           : null;
-      detail = coachName
-        ? coachName
-        : event.foul_type && event.foul_type in foulKindKey
-          ? `${who} · ${t(foulKindKey[event.foul_type as FoulKind], foulKindFallback[event.foul_type as FoulKind])}`
-          : event.foul_type ? `${who} · ${event.foul_type}` : who;
+      const ordinal = foulOrdinalCopy(playerFoulNumber(event));
+      const place = ordinal ? t(ordinal.key, ordinal.fallback) : '';
+      const label = event.coach_technical_side
+        ? 'TECHNICAL'
+        : event.foul_context === 'offensive'
+          ? t('trke_foul_log_attack', 'Attack foul')
+          : event.foul_type === 'personal' || !event.foul_type
+            ? t('trke_foul_log_defensive', 'Defensive foul')
+            : event.foul_type in foulKindKey
+              ? t(foulKindKey[event.foul_type as FoulKind], foulKindFallback[event.foul_type as FoulKind])
+              : t('trke_foul', 'Foul');
+      title = place && !event.coach_technical_side ? `${label} · ${place}` : label;
+      detail = coachName ?? who;
     } else if (
       event.event_type === 'turnover'
       && (
@@ -2139,11 +3220,12 @@ export default function GameCapturePage() {
         || (event.turnover_type === 'five_seconds' && !event.player_id && !event.opponent_player_id)
       )
     ) {
-      title = event.turnover_type === 'shot_clock'
-        ? t('trke_shot_clock_log', '24s')
+      const violation = event.turnover_type === 'shot_clock'
+        ? t('trke_shot_clock_log', '24-second possession violation')
         : event.turnover_type === 'eight_seconds'
-          ? t('trke_eight_seconds_log', '8s')
-          : t('trke_five_seconds_log', '5s');
+          ? t('trke_eight_seconds_log', 'Did not cross half court in 8 seconds')
+          : t('trke_five_seconds_log', 'Did not inbound in 5 seconds');
+      title = `${t('trke_turnover_log', 'Pérdida')} ${t('trke_game_team', 'Equipo').toLocaleLowerCase()} · ${violation}`;
       detail = event.turnover_side === 'away'
         ? (game.opponent_name || 'Away')
         : (game.teams?.name || 'Home');
@@ -2166,9 +3248,41 @@ export default function GameCapturePage() {
       if (event.turnover_type === 'technical') {
         detail = `${detail} · ${t('trke_turnover_one_free_throw', '1 free throw')}`;
       }
+    } else if (event.event_type === 'timeout') {
+      title = t('trke_timeout_log', 'Timeout');
+      detail = event.timeout_side === 'away'
+        ? (game.opponent_name || 'Away')
+        : (game.teams?.name || 'Home');
     } else if (event.event_type === 'substitution') {
-      title = 'SUBSTITUTION';
-      detail = `IN #${event.player?.jersey_number ?? '–'} ${event.player?.full_name ?? ''} / OUT #${event.player_out?.jersey_number ?? '–'} ${event.player_out?.full_name ?? ''}`;
+      const group = event.play_group_id
+        ? events.filter((item) => item.event_type === 'substitution' && item.play_group_id === event.play_group_id)
+        : [event];
+      const ordered = [...group].sort((a, b) => (
+        a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
+      ));
+      const pairs = ordered.flatMap((item) => {
+        const leaves = item.player_out
+          ? `#${item.player_out.jersey_number}`
+          : (() => {
+            const leaving = item.opponent_player_out_id
+              ? opponentPlayers.find((player) => player.id === item.opponent_player_out_id)
+              : null;
+            return leaving ? `#${opponentShirt(leaving)}` : '';
+          })();
+        const enters = item.player
+          ? `#${item.player.jersey_number}`
+          : (() => {
+            const arriving = item.opponent_player_id
+              ? opponentPlayers.find((player) => player.id === item.opponent_player_id)
+              : null;
+            return arriving ? `#${opponentShirt(arriving)}` : '';
+          })();
+        return leaves && enters
+          ? [`${t('trke_out', 'Sale')} ${leaves} → ${t('trke_in', 'Entra')} ${enters}`]
+          : [];
+      });
+      title = t('trke_cambio', 'Cambio');
+      detail = pairs.join('\n');
     }
     return {
       id: event.id,
@@ -2176,11 +3290,75 @@ export default function GameCapturePage() {
       clock: formatTime(event.clock_remaining_ms),
       title,
       detail,
+      period: event.period_number,
+      clockMs: event.clock_remaining_ms,
+      at: event.created_at ?? '',
+      step: playStep(event.event_type),
     };
   });
 
+  const enteredAtTip = [...new Set(periodLineups.map((row) => row.period_number))]
+    .sort((a, b) => b - a)
+    .flatMap((period) => (['home', 'away'] as const).flatMap((side) => {
+      const names = idsForPeriod(period, side).flatMap((id) => {
+        const name = side === 'home'
+          ? (() => {
+            const player = players.find((item) => item.id === id);
+            return player ? `#${player.jersey_number} ${player.full_name}` : '';
+          })()
+          : (() => {
+            const player = opponentPlayers.find((item) => item.id === id);
+            return player
+              ? `#${opponentShirt(player)} ${player.name?.trim() || game.opponent_name || 'Away'}`
+              : '';
+          })();
+        return name ? [name] : [];
+      });
+      if (names.length === 0) return [];
+      const team = side === 'home'
+        ? (game.teams?.name || 'Home')
+        : (game.opponent_name || 'Away');
+      return [{
+        id: `enter-${period}-${side}`,
+        periodLabel: getPeriodLabel(period),
+        clock: formatTime(getPeriodLengthMs(period)),
+        title: `${t('trke_sub_in', 'Entra')} · ${team}`,
+        detail: names.join('\n'),
+        period,
+        clockMs: getPeriodLengthMs(period),
+        at: '',
+        step: -1,
+      }];
+    }));
+
+  const visibleLog = [...logItems, ...enteredAtTip]
+    .sort((a, b) => {
+      if (a.period !== b.period) return b.period - a.period;
+      if (a.clockMs !== b.clockMs) return a.clockMs - b.clockMs;
+      if (a.at !== b.at) return a.at < b.at ? 1 : -1;
+      return b.step - a.step;
+    })
+    .slice(0, 40)
+    .map((row) => ({
+      id: row.id,
+      periodLabel: row.periodLabel,
+      clock: row.clock,
+      title: row.title,
+      detail: row.detail,
+    }));
+
+  const teamLabel = (side: 'home' | 'away') => (
+    side === 'home' ? (game.teams?.name || 'Home') : (game.opponent_name || 'Away')
+  );
+
+  const withTeam = (key: string, fallback: string, side: 'home' | 'away') => (
+    t(key, fallback).split('{team}').join(teamLabel(side))
+  );
+
+  const proposedSide = openingTipWinner ? periodInbound(currentPeriod, openingTipWinner) : null;
+
   const homePlayingIds = onCourtPlayerIds.length > 0 ? onCourtPlayerIds : suggestedStarterIds('home');
-  const awayPlayingIds = awayLineupIds.length > 0 ? awayLineupIds : suggestedStarterIds('away');
+  const awayPlayingIds = awayOnCourtIds.length > 0 ? awayOnCourtIds : suggestedStarterIds('away');
 
   return (
     <div className="fixed inset-0 bg-gray-900 text-white flex flex-col overflow-hidden">
@@ -2192,9 +3370,8 @@ export default function GameCapturePage() {
           awayScore={opponentScore}
           possession={possession}
           periodLabel={boardPeriodLabel}
-          clockLeft={boardClock.left}
-          clockRight={boardClock.right}
-          lastMinute={boardClock.lastMinute}
+          subscribeClock={subscribeClock}
+          getClockFace={getClockFace}
           clockRunning={clockRunning}
           canControlClock
           idleClockLabel={
@@ -2214,6 +3391,7 @@ export default function GameCapturePage() {
               name: player.full_name,
               avatarUrl: player.avatar_url,
               onCourt: true,
+              eliminated: playerIsOut(player.id, 'home'),
             }];
           })}
           awayPlayers={awayPlayingIds.flatMap((id) => {
@@ -2224,6 +3402,7 @@ export default function GameCapturePage() {
               jersey: opponentShirt(player),
               fouls: personalFoulCount(player.id, 'away'),
               name: player.name?.trim() || game.opponent_name || 'Away',
+              eliminated: playerIsOut(player.id, 'away'),
             }];
           })}
           homeBench={[...dressedPlayers()]
@@ -2235,6 +3414,7 @@ export default function GameCapturePage() {
               name: player.full_name,
               avatarUrl: player.avatar_url,
               onCourt: homePlayingIds.includes(player.id),
+              eliminated: playerIsOut(player.id, 'home'),
             }))}
           awayBench={opponentPlaying.map((player) => ({
             id: player.id,
@@ -2242,57 +3422,113 @@ export default function GameCapturePage() {
             fouls: personalFoulCount(player.id, 'away'),
             name: player.name?.trim() || game.opponent_name || 'Away',
             onCourt: awayPlayingIds.includes(player.id),
+            eliminated: playerIsOut(player.id, 'away'),
           }))}
           homePersonalFouls={homePersonalFouls}
           awayPersonalFouls={awayPersonalFouls}
-          timeoutsUsed={0}
-          timeoutMax={currentPeriod <= 2 ? 2 : 3}
+          homeTimeoutsUsed={countTimeouts(events, 'home', currentPeriod)}
+          awayTimeoutsUsed={countTimeouts(events, 'away', currentPeriod)}
+          timeoutMax={timeoutWindow(currentPeriod).max}
           cambioLabel={t('trke_cambio', 'Change')}
           stepBackLabel={t('trke_step_back', 'Step back')}
           cancelDeleteLabel={t('trke_cancel_delete', 'Cancel and delete')}
           timeoutLabel={t('trke_timeout_short', 'TO')}
           foulsLabel={t('trke_period_fouls', 'Fouls')}
-          clockViolationsEnabled={!turnoverStep && !foulStep}
+          clockViolationsEnabled={!shotStep && !miss && !turnoverStep && !foulStep && !subSide}
           onShotClock={(side) => { void recordClockViolation('shot_clock', side); }}
           onEightSeconds={(side) => { void recordClockViolation('eight_seconds', side); }}
           onFiveSeconds={(side) => { void recordClockViolation('five_seconds', side); }}
-          activeAction={foulStep ? 'foul' : pendingAction}
-          activeSide={foulStep ? foulSide : turnoverSide}
+          onTimeout={(side) => { void recordTimeout(side); }}
+          timeoutTickSide={timeoutTickSide}
+          activeAction={
+            miss ? (miss.personal ? 'miss_personal' : 'miss')
+              : shotStep ? (shotPersonal ? 'made_personal' : 'made')
+                : foulStep ? 'foul'
+                  : pendingAction
+          }
+          madePersonalLabel={t('trke_made_and_personal', 'Made and a personal foul')}
+          missPersonalLabel={t('trke_miss_and_personal', 'Miss and a personal foul')}
+          activeSide={miss ? miss.side : shotStep ? shotSide : foulStep ? foulSide : turnoverSide}
           onAction={handleBoardAction}
           homeActionsEnabled={{
-            made: lineupReady,
-            miss: lineupReady,
+            made: lineupReady && possession === 'home',
+            made_personal: lineupReady && possession === 'home',
+            miss: lineupReady && possession === 'home',
+            miss_personal: lineupReady && possession === 'home',
             foul: lineupReady,
             turnover: possession === 'home' && onCourtPlayers.length > 0,
           }}
           awayTurnoverEnabled={possession === 'away' && courtRoster('away').length > 0}
           courtPickSide={
-            foulStep === 'player'
-              ? foulSide
-              : foulStep === 'other' && foulSide
-                ? otherCaptureSide(foulSide)
-                : turnoverStep === 'player'
-                  ? turnoverSide
-                  : null
+            miss?.step === 'rebound'
+              ? 'both'
+              : miss?.step === 'shooter'
+                ? miss.side
+                : miss?.step === 'fouler'
+                  ? otherCaptureSide(miss.side)
+                  : shotStep === 'shooter'
+                    ? shotSide
+                    : shotStep === 'fouler' && shotSide
+                      ? otherCaptureSide(shotSide)
+                      : foulStep === 'player'
+                        ? foulSide
+                        : foulStep === 'other' && foulSide
+                          ? otherCaptureSide(foulSide)
+                          : turnoverStep === 'player'
+                            ? turnoverSide
+                            : null
           }
-          onCourtPlayer={foulStep ? selectFoulCourtPlayer : selectTurnoverCourtPlayer}
+          onCourtPlayer={
+            miss && (miss.step === 'shooter' || miss.step === 'rebound' || miss.step === 'fouler')
+              ? selectMissPlayer
+              : shotStep === 'shooter' || shotStep === 'fouler'
+                ? selectShotCourtPlayer
+                : foulStep
+                  ? selectFoulCourtPlayer
+                  : selectTurnoverCourtPlayer
+          }
+          cambioSide={subSide}
+          onCambio={armSub}
+          benchPickSide={null}
+          onBenchPlayer={() => undefined}
+          selectedCourtId={null}
           homeColor={normalizeHexColor(
             game.kit_color === 'secondary' ? game.teams?.clubs?.secondary_color : game.teams?.clubs?.primary_color,
             '#171717',
           )}
           awayColor={normalizeHexColor(game.opponent_color)}
           hint={actionHint}
-          logItems={logItems}
+          onStepBack={miss ? stepMissBack : shotStep ? stepShotBack : foulStep ? stepFoulBack : undefined}
+          onCancelDelete={miss ? () => cancelMiss() : shotStep ? () => cancelShot() : foulStep ? () => cancelFoul() : undefined}
+          logItems={visibleLog}
           onUndo={() => { void handleUndo(); }}
           canUndo={events.length > 0}
           nextLabel="Next"
           onNextPeriod={() => { void nextPeriod(); }}
-          onFlipCourt={() => { void flipCourt(); }}
+          quintetoLabel={t('trke_quinteto', 'Quinteto')}
+          onQuinteto={
+            game.status !== 'final' && currentPeriod > 1 && !periodAlreadyStarted(currentPeriod)
+              ? () => setShowPeriodLineup(true)
+              : undefined
+          }
+          onFlipCourt={
+            game.status !== 'final' && !periodAlreadyStarted(currentPeriod)
+              ? () => { void flipCourt(); }
+              : undefined
+          }
+          onEditGame={canEditGame ? openGameEditor : undefined}
+          editLabel={t('trke_game_edit', 'Edit game')}
           onBack={leaveCapture}
           homeCoach={homeCoachName ? { name: homeCoachName } : null}
           awayCoach={awayCoachName ? { name: awayCoachName } : null}
           onHomeCoach={homeCoachName ? () => { armCoachTechnical('home'); } : undefined}
           onAwayCoach={awayCoachName ? () => { armCoachTechnical('away'); } : undefined}
+          onEditAwayBench={
+            game.status !== 'final' && opponentPlaying.length < 12
+              ? () => setShowOpponentBenchAdd(true)
+              : undefined
+          }
+          editBenchLabel={t('trke_opponent_bench_edit', 'Edit bench')}
           canSetPossession
           onSetPossession={(side) => { void assignPossession(side); }}
           homeAttacksRight={attacking}
@@ -2300,9 +3536,10 @@ export default function GameCapturePage() {
             <BasketballCourt
               onCourtTap={handleCourtTap}
               shotMarkers={shotMarkers}
-              placement={(turnoverStep || foulStep) && tapCoordinates ? tapCoordinates : null}
+              placement={(turnoverStep || foulStep || (shotStep && shotStep !== 'court') || (miss && miss.step !== 'court')) && tapCoordinates ? tapCoordinates : null}
               attackingRight={attacking}
               isOffense={isOffense}
+              showAttackBar={clockRunning && (possession === 'home' || possession === 'away')}
               opponentCode={opponentMark(game.opponent_name || '')}
               opponentColor={normalizeHexColor(game.opponent_color)}
               teamLogoUrl={game.teams?.clubs?.logo_url || null}
@@ -2314,7 +3551,67 @@ export default function GameCapturePage() {
         />
       </div>
 
+      {captureNotice && game ? (
+        <CaptureNoticeModal
+          title={captureNotice.kind === 'final' ? t('trke_game_finished_notice', 'Game finished') : undefined}
+          body={
+            captureNotice.kind === 'timeout_cap'
+              ? captureNotice.body
+              : captureNotice.kind === 'period_ended'
+                ? t('trke_period_ended_notice', 'Period ended')
+                : captureNotice.kind === 'attack_change'
+                  ? t('trke_attack_change_notice', 'Change the attacking basket.')
+                  : captureNotice.kind === 'overtime'
+                  ? t('trke_overtime_notice', 'The score is tied. Overtime starts.')
+                  : `${game.teams?.name || 'Home'} ${teamScore}\n${game.opponent_name || 'Away'} ${opponentScore}`
+          }
+          confirmLabel={t('trke_notice_ok', 'OK')}
+          onConfirm={() => { void confirmCaptureNotice(); }}
+        />
+      ) : null}
+
+      {showInbound && proposedSide ? (
+        <PeriodInboundModal
+          proposal={withTeam('trke_inbound_proposal', '{team} will inbound.', proposedSide)}
+          question={t('trke_held_ball_question', 'Was there a held ball?')}
+          yesLabel={t('trke_held_ball_yes', 'Yes')}
+          noLabel={t('trke_held_ball_no', 'No')}
+          flipped={inboundFlipped
+            ? withTeam('trke_inbound_flipped', 'Possession changes to {team}.', inboundFlipped)
+            : null}
+          okLabel={t('trke_notice_ok', 'OK')}
+          onNo={() => { void keepProposedInbound(); }}
+          onYes={() => { void acceptHeldBall(); }}
+          onAck={acknowledgeInboundFlip}
+        />
+      ) : null}
+
       {/* Modals */}
+      {subSide && (
+        <SubstitutionPopup
+          t={t}
+          teamName={subSide === 'home' ? (game.teams?.name || 'Home') : (game.opponent_name || 'Away')}
+          color={subSide === 'home'
+            ? normalizeHexColor(
+              game.kit_color === 'secondary' ? game.teams?.clubs?.secondary_color : game.teams?.clubs?.primary_color,
+              '#171717',
+            )
+            : normalizeHexColor(game.opponent_color)}
+          players={subChoices(subSide)}
+          saving={subSaving}
+          error={subError}
+          addFirstNote={
+            subSide === 'away' && !opponentPlaying.some((player) => (
+              !awayOnCourtIds.includes(player.id) && !playerIsOut(player.id, 'away')
+            ))
+              ? t('trke_sub_add_player_first', 'Add the player with the pencil on the bench, then substitute.')
+              : null
+          }
+          onConfirm={(swaps) => { void saveSubstitution(subSide, swaps); }}
+          onClose={cancelSub}
+        />
+      )}
+
       {showChooseSide && (
         <ChooseSideModal onChoose={handleChooseSide} />
       )}
@@ -2333,12 +3630,117 @@ export default function GameCapturePage() {
         />
       )}
 
-      {showFreeThrowScript && (
+      {showFoulThrowCount && (
+        <MadeFreeThrowCountPopup
+          t={t}
+          saving={false}
+          stepBackLabel={t('trke_step_back', 'Step back')}
+          cancelDeleteLabel={t('trke_cancel_delete', 'Cancel and delete')}
+          onPick={(count) => {
+            setFoulThrowCount(count);
+            setShowFoulThrowCount(false);
+            setShowFreeThrowScript(true);
+            setBoardNote(t('trke_made_hint_ft', 'Mark the free throw'));
+          }}
+          onStepBack={stepFoulBack}
+          onCancel={() => cancelFoul()}
+        />
+      )}
+
+      {showFreeThrowScript && foulThrowCount ? (
         <FreeThrowSequencePopup
           t={t}
           count={foulThrowCount}
           onConfirm={handleFreeThrowScriptConfirm}
-          onClose={cancelFoul}
+          onClose={stepFoulBack}
+        />
+      ) : null}
+
+      {shotStep === 'assist' && shotSide && shotShooterId && shotPoints ? (
+        <MadeAssistPopup
+          t={t}
+          players={courtRoster(shotSide)
+            .filter((player) => player.id !== shotShooterId && !playerIsOut(player.id, shotSide))
+            .map((player) => ({
+              id: player.id,
+              jersey: player.jersey_number,
+              name: player.full_name,
+            }))}
+          allowNone={!madeAssistRequired(
+            shotPoints,
+            shotPaint,
+            courtRoster(shotSide).filter((player) => player.id !== shotShooterId && !playerIsOut(player.id, shotSide)).length,
+          )}
+          saving={shotSaving}
+          stepBackLabel={t('trke_step_back', 'Step back')}
+          cancelDeleteLabel={t('trke_cancel_delete', 'Cancel and delete')}
+          onPick={(playerId) => chooseMadeAssist(playerId)}
+          onNone={() => chooseMadeAssist(null)}
+          onStepBack={stepShotBack}
+          onCancel={() => cancelShot()}
+        />
+      ) : null}
+
+      {shotStep === 'ft' && shotFoulerId && !shotThrowCount ? (
+        <MadeFreeThrowCountPopup
+          t={t}
+          saving={shotSaving}
+          stepBackLabel={t('trke_step_back', 'Step back')}
+          cancelDeleteLabel={t('trke_cancel_delete', 'Cancel and delete')}
+          onPick={(count) => {
+            setShotThrowCount(count);
+            setBoardNote(t('trke_made_hint_ft', 'Mark the free throw'));
+          }}
+          onStepBack={stepShotBack}
+          onCancel={() => cancelShot()}
+        />
+      ) : null}
+
+      {shotStep === 'ft' && shotFoulerId && shotThrowCount ? (
+        <FreeThrowSequencePopup
+          t={t}
+          count={shotThrowCount}
+          onConfirm={(result) => { void saveMade({ foulerId: shotFoulerId, throws: result.shots }); }}
+          onClose={stepShotBack}
+        />
+      ) : null}
+
+      {miss?.step === 'ft' && miss.foulerId && !miss.throwCount ? (
+        <MadeFreeThrowCountPopup
+          t={t}
+          saving={missSaving}
+          stepBackLabel={t('trke_step_back', 'Step back')}
+          cancelDeleteLabel={t('trke_cancel_delete', 'Cancel and delete')}
+          onPick={(count) => {
+            const next = missChooseThrowCount(miss, count);
+            if (!next) return;
+            setMiss(next);
+            setBoardNote(t('trke_made_hint_ft', 'Mark the free throw'));
+          }}
+          onStepBack={stepMissBack}
+          onCancel={() => cancelMiss()}
+        />
+      ) : null}
+
+      {miss?.step === 'ft' && miss.foulerId && miss.throwCount ? (
+        <FreeThrowSequencePopup
+          t={t}
+          count={miss.throwCount}
+          onConfirm={(result) => { void saveMiss(miss, result.shots); }}
+          onClose={stepMissBack}
+        />
+      ) : null}
+
+      {showOpponentBenchAdd && (
+        <OpponentBenchAddModal
+          t={t}
+          players={opponentPlaying.map((player) => ({
+            id: player.id,
+            jerseyNumber: opponentShirt(player),
+            name: player.name?.trim() || '',
+          }))}
+          onAdd={addOpponentBenchPlayer}
+          onClose={() => setShowOpponentBenchAdd(false)}
         />
       )}
 
@@ -2420,7 +3822,7 @@ export default function GameCapturePage() {
               name: player.full_name,
               avatarUrl: player.avatar_url,
             }))}
-          awayPlayers={awayLineupIds.flatMap((id) => {
+          awayPlayers={awayOnCourtIds.flatMap((id) => {
             const player = opponentPlayers.find((item) => item.id === id);
             if (!player) return [];
             return [{
@@ -2437,24 +3839,21 @@ export default function GameCapturePage() {
         />
       )}
 
-      {(foulStep === 'type' || foulStep === 'situation') && foulSide && (
+      {foulStep === 'type' && foulSide && (
         <FoulSituationModal
-          choices={
-            foulStep === 'type'
-              ? foulKinds.map((id) => ({ id, label: t(foulKindKey[id], foulKindFallback[id]) }))
-              : [
-                { id: 'no_shot' as const, label: t('trke_foul_no_shot', 'No shot') },
-                { id: 'shot_made' as const, label: `${t('trke_foul_shot_made', 'Basket made')} · ${shotPointsFor(foulSide)}` },
-                { id: 'shot_missed' as const, label: `${t('trke_foul_shot_missed', 'Shot missed')} · ${shotPointsFor(foulSide)}` },
-              ]
-          }
-          cancelLabel={t('trke_foul_cancel', 'Cancel')}
+          hint={t('trke_foul_hint_type', 'Choose the foul')}
+          choices={foulKinds.map((id) => ({
+            id,
+            label: id === 'personal' && foulOffense
+              ? t('trke_foul_offensive', 'Offensive foul')
+              : t(foulKindKey[id], foulKindFallback[id]),
+          }))}
+          stepBackLabel={t('trke_step_back', 'Step back')}
+          cancelLabel={t('trke_cancel_delete', 'Cancel and delete')}
           disabled={foulPick !== null}
           selectedId={foulPick}
-          onSelect={(id) => {
-            if (foulStep === 'type') chooseFoulKind(id as FoulKind);
-            else chooseFoulSituation(id as 'no_shot' | 'shot_made' | 'shot_missed');
-          }}
+          onSelect={(id) => chooseFoulKind(id as FoulKind)}
+          onStepBack={stepFoulBack}
           onClose={cancelFoul}
         />
       )}

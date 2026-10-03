@@ -10,6 +10,7 @@ interface BasketballCourtProps {
     y: number;
     made: boolean;
     points: number;
+    label?: string;
   }>;
   /** Live tap while recording a turnover. Not drawn from saved events. */
   placement?: { x: number; y: number } | null;
@@ -22,6 +23,8 @@ interface BasketballCourtProps {
   tableOnBottom?: boolean;
   tableLabel?: string;
   logoInverted?: boolean;
+  /** Pulsing wood strip on the attacking half. Visual only; taps pass through. */
+  showAttackBar?: boolean;
 }
 
 /**
@@ -43,6 +46,9 @@ const ATTACK_MARK_TRI_W = 42;
 const ATTACK_MARK_OVERLAP = 14;
 const ATTACK_MARK_W = ATTACK_MARK_R * 2 + ATTACK_MARK_TRI_W - ATTACK_MARK_OVERLAP;
 const ATTACK_MARK_H = ATTACK_MARK_R * 2;
+/** Short of the corner three, which starts 90cm from the sideline. */
+const ATTACK_BAR_H = 64;
+const ATTACK_BAR_FILL = '#c4894a';
 
 /** Round mark with a triangular pointer tucked into one side. */
 function attackMarkLayout(x: number, y: number, pointRight: boolean) {
@@ -73,6 +79,7 @@ export function BasketballCourt({
   tableOnBottom = true,
   tableLabel = "Scorer's table",
   logoInverted = false,
+  showAttackBar = false,
 }: BasketballCourtProps) {
   const handleClick = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!onCourtTap) return;
@@ -221,6 +228,18 @@ export function BasketballCourt({
       {highlightRight && (
         <rect x={COURT_LENGTH / 2} y="0" width={COURT_LENGTH / 2} height={COURT_WIDTH} fill="url(#activeHighlight)" />
       )}
+
+      {showAttackBar ? (
+        <rect
+          x={highlightRight ? COURT_LENGTH / 2 : 0}
+          y={0}
+          width={COURT_LENGTH / 2}
+          height={ATTACK_BAR_H}
+          fill={ATTACK_BAR_FILL}
+          className="pointer-events-none animate-pulse"
+          aria-hidden="true"
+        />
+      ) : null}
       
       {/* Court outline - white */}
       <rect x="0" y="0" width={COURT_LENGTH} height={COURT_WIDTH} fill="none" stroke="#ffffff" strokeWidth="5" />
@@ -233,7 +252,7 @@ export function BasketballCourt({
       
       {/* Logo in center circle - painted on parquet, above center line */}
       <image
-        href="/images/seasonmath-logo.png"
+        href="/images/seasonmath-logo-light.png"
         x={COURT_LENGTH / 2 - 150}
         y={COURT_WIDTH / 2 - 150}
         width="300"
@@ -548,6 +567,7 @@ export function BasketballCourt({
         const markerX = marker.x * COURT_LENGTH;
         const markerY = marker.y * COURT_WIDTH;
         const color = marker.made ? '#10b981' : '#ef4444';
+        const label = marker.label ?? String(marker.points);
         
         return (
           <g key={marker.id}>
@@ -559,11 +579,11 @@ export function BasketballCourt({
               textAnchor="middle"
               dominantBaseline="middle"
               fill="#fff"
-              fontSize="28"
+              fontSize={label.length > 1 ? 22 : 28}
               fontWeight="bold"
               style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}
             >
-              {marker.points}
+              {label}
             </text>
           </g>
         );

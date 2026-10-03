@@ -108,6 +108,21 @@ export const opponentRosterSchema = z.object({
   path: ['players'],
 });
 
+export const opponentBenchAddSchema = z.object({
+  game_id: z.string().uuid(),
+  jersey_number: z.number().int().min(0).max(99),
+  name: z.preprocess(blankToNull, z.string().trim().max(80, 'name too long').nullable()),
+  existing_jerseys: z.array(z.number().int().min(0).max(99)),
+}).superRefine((value, ctx) => {
+  if (value.existing_jerseys.length >= 12) {
+    ctx.addIssue({ code: 'custom', message: 'at most 12 opponent players', path: ['jersey_number'] });
+    return;
+  }
+  if (value.existing_jerseys.includes(value.jersey_number)) {
+    ctx.addIssue({ code: 'custom', message: 'duplicate jersey', path: ['jersey_number'] });
+  }
+});
+
 const uniqueIds = (ids: string[]) => new Set(ids).size === ids.length;
 
 export const gameSquadSchema = z.object({
@@ -136,6 +151,8 @@ export const incorporatePlayerSchema = z.object({
   message: 'at most 12 players',
   path: ['dressed_ids'],
 });
+
+export const openingTipWinnerSchema = z.enum(['home', 'away']);
 
 export const periodLineupSchema = z.object({
   game_id: z.string().uuid(),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { incorporatePlayerSchema, opponentRosterSchema, teamSchema } from './form-schemas';
+import { incorporatePlayerSchema, opponentBenchAddSchema, opponentRosterSchema, teamSchema } from './form-schemas';
 
 const validTeam = {
   name: 'Senior A',
@@ -142,6 +142,55 @@ describe('opponentRosterSchema', () => {
       color: 'blue',
       players: [opponentPlayer(4)],
     }).success).toBe(false);
+  });
+});
+
+describe('opponentBenchAddSchema', () => {
+  it('stores a blank name as null', () => {
+    const parsed = opponentBenchAddSchema.parse({
+      game_id: gameId,
+      jersey_number: 0,
+      name: '  ',
+      existing_jerseys: [4, 5],
+    });
+    expect(parsed.jersey_number).toBe(0);
+    expect(parsed.name).toBeNull();
+  });
+
+  it('rejects a duplicate jersey', () => {
+    const parsed = opponentBenchAddSchema.safeParse({
+      game_id: gameId,
+      jersey_number: 4,
+      name: 'Sol',
+      existing_jerseys: [4, 5],
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.issues[0]?.message).toBe('duplicate jersey');
+  });
+
+  it('rejects a 13th player and a long name', () => {
+    const full = opponentBenchAddSchema.safeParse({
+      game_id: gameId,
+      jersey_number: 20,
+      name: null,
+      existing_jerseys: Array.from({ length: 12 }, (_, index) => index),
+    });
+    const name = opponentBenchAddSchema.safeParse({
+      game_id: gameId,
+      jersey_number: 8,
+      name: 'a'.repeat(81),
+      existing_jerseys: [4],
+    });
+    const jersey = opponentBenchAddSchema.safeParse({
+      game_id: gameId,
+      jersey_number: 100,
+      name: null,
+      existing_jerseys: [],
+    });
+    expect(full.success).toBe(false);
+    if (!full.success) expect(full.error.issues[0]?.message).toBe('at most 12 opponent players');
+    expect(name.success).toBe(false);
+    expect(jersey.success).toBe(false);
   });
 });
 

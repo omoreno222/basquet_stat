@@ -67,6 +67,23 @@ export function turnoverErrorCode(message: string): TurnoverErrorCode {
   return turnoverErrorCodes.find((code) => message.includes(code)) ?? 'turnover_invalid';
 }
 
+export const timeoutErrorCodes = [
+  'timeout_invalid',
+  'timeout_slot',
+  'timeout_period',
+  'timeout_clock',
+  'timeout_cap',
+  'timeout_final',
+  'timeout_shape',
+] as const;
+
+export type TimeoutErrorCode = (typeof timeoutErrorCodes)[number];
+
+export function timeoutErrorCode(message: string): TimeoutErrorCode {
+  if (message.toLowerCase().includes('finished game')) return 'timeout_final';
+  return timeoutErrorCodes.find((code) => message.includes(code)) ?? 'timeout_invalid';
+}
+
 export function otherCaptureSide(side: CaptureSide): CaptureSide {
   return side === 'home' ? 'away' : 'home';
 }
@@ -132,6 +149,35 @@ export function foulCountsForPlayer(foulType: string | null | undefined) {
   return !!foulType && PLAYER_FOUL_TYPES.has(foulType);
 }
 
+const FOUL_ORDINAL_KEYS = [
+  'trke_foul_ord_1',
+  'trke_foul_ord_2',
+  'trke_foul_ord_3',
+  'trke_foul_ord_4',
+  'trke_foul_ord_5',
+] as const;
+
+const FOUL_ORDINAL_FALLBACK = ['1st', '2nd', '3rd', '4th', '5th (Out)'] as const;
+
+/** 1st through 4th, then 5th (Out). Later fouls stay on the fifth. */
+export function foulOrdinalCopy(count: number): { key: string; fallback: string } | null {
+  if (count < 1) return null;
+  const slot = Math.min(count, 5) - 1;
+  return { key: FOUL_ORDINAL_KEYS[slot], fallback: FOUL_ORDINAL_FALLBACK[slot] };
+}
+
+/** Team 24s, 8s, and inbound 5s count as a period team foul. A player 5s does not. */
+export function clockViolationCountsAsTeamFoul(event: {
+  turnover_type?: string | null;
+  player_id?: string | null;
+  opponent_player_id?: string | null;
+}) {
+  if (event.turnover_type === 'shot_clock' || event.turnover_type === 'eight_seconds') return true;
+  return event.turnover_type === 'five_seconds'
+    && !event.player_id
+    && !event.opponent_player_id;
+}
+
 export function foulEjects(kind: FoulKind) {
   return kind === 'flagrant' || kind === 'disqualifying';
 }
@@ -142,6 +188,8 @@ const RIM_FROM_BASELINE_M = 1.575;
 const RIM_Y_M = 7.5;
 const THREE_RADIUS_M = 6.75;
 const CORNER_M = 0.9;
+const KEY_WIDTH_M = 4.9;
+const KEY_LENGTH_M = 5.8;
 const THREE_MEET_M = RIM_FROM_BASELINE_M + Math.sqrt(
   THREE_RADIUS_M * THREE_RADIUS_M - (RIM_Y_M - CORNER_M) * (RIM_Y_M - CORNER_M),
 );
@@ -165,6 +213,32 @@ export function shotValueFromWorld(worldX: number, worldY: number, attacksRight:
   return dist >= THREE_RADIUS_M ? 3 : 2;
 }
 
+/** The midcourt line belongs to neither attack. The baseline of the attack is included. */
+export function shotOnAttackingHalf(worldX: number, attacksRight: boolean): boolean {
+  if (worldX < 0 || worldX > 1) return false;
+  return attacksRight ? worldX > 0.5 : worldX < 0.5;
+}
+
+/** The paint line counts as inside the key. */
+export function shotInPaint(worldX: number, worldY: number, attacksRight: boolean): boolean {
+  const x = worldX * COURT_LENGTH_M;
+  const y = worldY * COURT_WIDTH_M;
+  const half = KEY_WIDTH_M / 2;
+  if (y < RIM_Y_M - half || y > RIM_Y_M + half) return false;
+  if (attacksRight) return x >= COURT_LENGTH_M - KEY_LENGTH_M;
+  return x <= KEY_LENGTH_M;
+}
+
+/** A 2 inside the key needs an assist when a teammate is on the court. A 3 never does. */
+export function madeAssistRequired(points: 2 | 3, inPaint: boolean, teammatesOnCourt: number): boolean {
+  return points === 2 && inPaint && teammatesOnCourt > 0;
+}
+
+/** A personal on the basket stops the clock. A clean make leaves it running. */
+export function madeStopsClock(personal: boolean): boolean {
+  return personal;
+}
+
 export function storedCourtPoint(worldX: number, worldY: number, attackingRight: boolean) {
   return {
     x: attackingRight ? worldX : 1 - worldX,
@@ -177,22 +251,16 @@ export function offenseAttacksRight(shootingSide: CaptureSide, periodNumber: num
   return shootingSide === 'home' ? homeRight : !homeRight;
 }
 
-/** The 5th team foul of the period is already in the bonus, so 4 already charged means this one pays. */
-export function foulFreeThrowCount(input: {
+/** A non-shooting foul either awards nothing, or the operator chooses 1, 2, or 3. */
+export function foulThrowAllowance(input: {
   kind: FoulKind;
   context: FoulContext;
-  shotValue: 2 | 3 | null;
   teamFoulsBefore: number;
-}): number {
-  const { kind, context, shotValue, teamFoulsBefore } = input;
+}): 0 | 'choose' {
+  const { kind, context, teamFoulsBefore } = input;
   if (kind === 'double' || context === 'double' || context === 'offensive') return 0;
-  if (kind === 'technical' || context === 'technical') return 1;
-  if (context === 'no_shot') {
-    if (kind === 'personal') return teamFoulsBefore >= 4 ? 2 : 0;
-    return 2;
-  }
-  if (context === 'shot_made') return 1;
-  if (context === 'shot_missed') return shotValue === 3 ? 3 : 2;
+  if (kind === 'personal' && context === 'no_shot') return teamFoulsBefore >= 4 ? 'choose' : 0;
+  if (context === 'no_shot' || kind === 'technical' || context === 'technical') return 'choose';
   return 0;
 }
 
@@ -203,7 +271,6 @@ export function foulNeedsOther(input: {
 }) {
   if (input.kind === 'double' || input.kind === 'technical') return true;
   if (input.kind === 'disruptive' || input.kind === 'flagrant' || input.kind === 'disqualifying') return true;
-  if (input.context === 'shot_made' || input.context === 'shot_missed') return true;
   return input.kind === 'personal' && input.context === 'no_shot' && input.teamFoulsBefore >= 4;
 }
 
@@ -222,6 +289,43 @@ export type FoulErrorCode = (typeof foulErrorCodes)[number];
 
 export function foulErrorCode(message: string): FoulErrorCode {
   return foulErrorCodes.find((code) => message.includes(code)) ?? 'foul_invalid';
+}
+
+export const madeErrorCodes = [
+  'made_invalid',
+  'made_slot',
+  'made_possession',
+  'made_period',
+  'made_half',
+  'made_player',
+  'made_assist',
+  'made_foul',
+  'made_eliminated',
+  'made_final',
+  'made_shape',
+] as const;
+
+export type MadeErrorCode = (typeof madeErrorCodes)[number];
+
+export function madeErrorCode(message: string): MadeErrorCode {
+  if (message.toLowerCase().includes('finished game')) return 'made_final';
+  return madeErrorCodes.find((code) => message.includes(code)) ?? 'made_invalid';
+}
+
+export const substitutionErrorCodes = [
+  'substitution_invalid',
+  'substitution_slot',
+  'substitution_period',
+  'substitution_out',
+  'substitution_in',
+  'substitution_eliminated',
+  'substitution_shape',
+] as const;
+
+export type SubstitutionErrorCode = (typeof substitutionErrorCodes)[number];
+
+export function substitutionErrorCode(message: string): SubstitutionErrorCode {
+  return substitutionErrorCodes.find((code) => message.includes(code)) ?? 'substitution_invalid';
 }
 
 const gameFields = {
@@ -272,11 +376,16 @@ export const foulPlaySchema = z.object({
   const issue = (message: string, path: string) => {
     context.addIssue({ code: 'custom', message, path: [path] });
   };
+  if (value.context === 'shot_made' || value.context === 'shot_missed') {
+    issue('foul_shape', 'context');
+    return;
+  }
+  const chosenThrows = value.throws.length >= 1 && value.throws.length <= 3;
   if (value.coach) {
     if (value.kind !== 'technical' || value.context !== 'technical' || value.offenderId || !value.otherId) {
       issue('foul_shape', 'coach');
     }
-    if (value.coordX !== null || value.coordY !== null || value.throws.length !== 1) issue('foul_shape', 'throws');
+    if (value.coordX !== null || value.coordY !== null || !chosenThrows) issue('foul_shape', 'throws');
     return;
   }
   if (!value.offenderId || value.coordX === null || value.coordY === null) issue('foul_player', 'offenderId');
@@ -291,31 +400,104 @@ export const foulPlaySchema = z.object({
     return;
   }
   if (value.kind === 'technical' || value.context === 'technical') {
-    if (value.kind !== 'technical' || value.context !== 'technical' || !value.otherId || value.throws.length !== 1) {
+    if (value.kind !== 'technical' || value.context !== 'technical' || !value.otherId || !chosenThrows) {
       issue('foul_victim', 'otherId');
     }
     return;
   }
   if (value.kind === 'personal' && value.context === 'no_shot') {
-    if (value.throws.length !== 0 && value.throws.length !== 2) issue('foul_shape', 'throws');
-    if (value.throws.length === 2 && !value.otherId) issue('foul_victim', 'otherId');
+    if (value.throws.length > 0 && !value.otherId) issue('foul_victim', 'otherId');
     if (value.throws.length === 0 && value.otherId) issue('foul_victim', 'otherId');
     return;
   }
   if (value.context === 'no_shot') {
-    if (value.throws.length !== 2 || !value.otherId) issue('foul_shape', 'throws');
-    return;
-  }
-  if (value.context === 'shot_made') {
-    if (value.throws.length !== 1 || !value.otherId) issue('foul_shape', 'throws');
-    return;
-  }
-  if (value.context === 'shot_missed') {
-    if ((value.throws.length !== 2 && value.throws.length !== 3) || !value.otherId) issue('foul_shape', 'throws');
+    if (!chosenThrows || !value.otherId) issue('foul_shape', 'throws');
     return;
   }
   issue('foul_shape', 'context');
 });
+
+const substitutionPlaySchema = z.object({
+  play: z.literal('substitution'),
+  ...gameFields,
+  swaps: z.array(z.object({
+    outId: z.string().uuid(),
+    inId: z.string().uuid(),
+  })).min(1).max(5),
+});
+
+const timeoutPlaySchema = z.object({
+  play: z.literal('timeout'),
+  ...gameFields,
+});
+
+const madePlaySchema = z.object({
+  play: z.literal('made'),
+  ...gameFields,
+  coordX: point,
+  coordY: point,
+  shooterId: z.string().uuid(),
+  assistId: z.string().uuid().nullable(),
+  foulerId: z.string().uuid().nullable(),
+  throws: z.array(z.enum(['made', 'miss'])).max(3),
+}).superRefine((value, context) => {
+  const issue = (message: string, path: string) => {
+    context.addIssue({ code: 'custom', message, path: [path] });
+  };
+  if (value.assistId === value.shooterId) issue('made_assist', 'assistId');
+  if (value.foulerId && (value.foulerId === value.shooterId || value.foulerId === value.assistId)) {
+    issue('made_foul', 'foulerId');
+  }
+  if (value.foulerId) {
+    if (value.throws.length < 1 || value.throws.length > 3) issue('made_foul', 'throws');
+    return;
+  }
+  if (value.throws.length !== 0) issue('made_shape', 'throws');
+});
+
+const missPlaySchema = z.object({
+  play: z.literal('miss'),
+  ...gameFields,
+  coordX: point,
+  coordY: point,
+  shooterId: z.string().uuid(),
+  rebounderId: z.string().uuid().nullable(),
+  foulerId: z.string().uuid().nullable(),
+  throws: z.array(z.enum(['made', 'miss'])).max(3),
+}).superRefine((value, context) => {
+  const issue = (message: string, path: string) => {
+    context.addIssue({ code: 'custom', message, path: [path] });
+  };
+  if (value.foulerId) {
+    if (value.rebounderId) issue('miss_shape', 'rebounderId');
+    if (value.foulerId === value.shooterId) issue('miss_foul', 'foulerId');
+    if (value.throws.length < 1 || value.throws.length > 3) issue('miss_foul', 'throws');
+    return;
+  }
+  if (!value.rebounderId) issue('miss_rebound', 'rebounderId');
+  if (value.throws.length !== 0) issue('miss_shape', 'throws');
+});
+
+export const missErrorCodes = [
+  'miss_invalid',
+  'miss_slot',
+  'miss_possession',
+  'miss_period',
+  'miss_half',
+  'miss_player',
+  'miss_rebound',
+  'miss_foul',
+  'miss_eliminated',
+  'miss_final',
+  'miss_shape',
+] as const;
+
+export type MissErrorCode = (typeof missErrorCodes)[number];
+
+export function missErrorCode(message: string): MissErrorCode {
+  if (message.toLowerCase().includes('finished game')) return 'miss_final';
+  return missErrorCodes.find((code) => message.includes(code)) ?? 'miss_invalid';
+}
 
 export const commitCapturePlaySchema = z.discriminatedUnion('play', [
   turnoverPlaySchema,
@@ -323,6 +505,18 @@ export const commitCapturePlaySchema = z.discriminatedUnion('play', [
   eightSecondsPlaySchema,
   fiveSecondsPlaySchema,
   foulPlaySchema,
+  substitutionPlaySchema,
+  timeoutPlaySchema,
+  madePlaySchema,
+  missPlaySchema,
 ]);
+
+export type MadePlayInput = z.infer<typeof madePlaySchema>;
+
+export type MissPlayInput = z.infer<typeof missPlaySchema>;
+
+export type TimeoutPlayInput = z.infer<typeof timeoutPlaySchema>;
+
+export type SubstitutionPlayInput = z.infer<typeof substitutionPlaySchema>;
 
 export type FoulPlayInput = z.infer<typeof foulPlaySchema>;

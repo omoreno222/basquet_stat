@@ -17,6 +17,18 @@ export function userManagesClub(
   );
 }
 
+/** Platform admin, or a club admin of this club, can open the game editor. */
+export function userCanEditGame(
+  roles: { role: string; club_id: string | null }[],
+  clubId: string | null,
+): boolean {
+  if (!clubId) return false;
+  return roles.some((role) =>
+    (role.role === 'admin' && role.club_id === null)
+    || ((role.role === 'club_admin' || role.role === 'admin') && role.club_id === clubId),
+  );
+}
+
 /** A live game opens on the court for a platform admin or someone who manages that club. */
 export function userCanOpenLiveGame(params: {
   status: string;

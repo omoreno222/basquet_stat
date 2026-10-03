@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPlatformAdmin, userCanOpenLiveGame, userManagesClub } from './live-access';
+import { isPlatformAdmin, userCanEditGame, userCanOpenLiveGame, userManagesClub } from './live-access';
 
 const clubId = 'club-1';
 
@@ -34,6 +34,20 @@ describe('userManagesClub', () => {
     expect(userManagesClub([
       { role: 'team_manager', club_id: clubId },
     ], null)).toBe(false);
+  });
+});
+
+describe('userCanEditGame', () => {
+  it('accepts a club admin of this club or a platform admin', () => {
+    expect(userCanEditGame([{ role: 'club_admin', club_id: clubId }], clubId)).toBe(true);
+    expect(userCanEditGame([{ role: 'admin', club_id: null }], clubId)).toBe(true);
+    expect(userCanEditGame([{ role: 'admin', club_id: clubId }], clubId)).toBe(true);
+  });
+
+  it('rejects a team manager and an admin of another club', () => {
+    expect(userCanEditGame([{ role: 'team_manager', club_id: clubId }], clubId)).toBe(false);
+    expect(userCanEditGame([{ role: 'club_admin', club_id: 'club-2' }], clubId)).toBe(false);
+    expect(userCanEditGame([{ role: 'club_admin', club_id: clubId }], null)).toBe(false);
   });
 });
 

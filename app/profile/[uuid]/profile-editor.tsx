@@ -9,6 +9,7 @@ import { supabase } from '@/lib/supabase';
 import { getInitials, getRoleBadgeClasses, getRoleTranslationKey, type UserRole } from '@/lib/profile-utils';
 import { changeOwnEmail, changeOwnPassword, removeProfileAvatar, saveProfileFields, saveProfileTheme, uploadProfileAvatar } from '@/app/admin/actions';
 import { AdminNavbar } from '@/components/AdminNavbar';
+import { SeasonMathLogo } from '@/components/SeasonMathLogo';
 import { ClubLogo } from '@/components/ClubLogo';
 import { NavPills, type NavPillItem } from '@/components/NavPills';
 import { UserMenu } from '@/components/UserMenu';
@@ -81,9 +82,7 @@ function ProfileChrome({
           <header className="sticky top-0 z-40 bg-brand text-white dark:bg-brand-dark">
             <div className="flex h-20 items-center gap-3 px-4 sm:px-6 lg:px-8">
               <Link href={homeHref(viewerRoles)} className="flex shrink-0 items-center">
-                <Image
-                  src="/images/seasonmath-logo.png"
-                  alt="SeasonMath"
+                <SeasonMathLogo
                   width={188}
                   height={188}
                   className="h-[62.5px] w-auto"
