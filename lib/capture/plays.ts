@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { FOUL_OUT } from '@/lib/period-lineup';
+import { awardedFreeThrows, freeThrowNeedsRebound } from './free-throws';
 
 /**
  * Capture plays committed by commitCapturePlay.
@@ -99,6 +101,11 @@ export const foulKinds = [
 
 export type FoulKind = (typeof foulKinds)[number];
 
+/** A foul on a shot is personal, or one of the three that also give the ball back. */
+export const shotFoulKinds = ['personal', 'disruptive', 'flagrant', 'disqualifying'] as const;
+
+export type ShotFoulKind = (typeof shotFoulKinds)[number];
+
 export const foulContexts = [
   'offensive',
   'no_shot',
@@ -178,8 +185,15 @@ export function clockViolationCountsAsTeamFoul(event: {
     && !event.opponent_player_id;
 }
 
-export function foulEjects(kind: FoulKind) {
+export function foulEjects(kind: string | null | undefined) {
   return kind === 'flagrant' || kind === 'disqualifying';
+}
+
+/** Fifth counting foul, or a flagrant or disqualifying foul, sends the player to the bench. */
+export function playerMustLeaveAfterFoul(priorPersonalFouls: number, kind: string | null | undefined) {
+  if (foulEjects(kind)) return true;
+  if (!foulCountsForPlayer(kind)) return false;
+  return priorPersonalFouls + 1 >= FOUL_OUT;
 }
 
 const COURT_LENGTH_M = 28;
@@ -251,17 +265,14 @@ export function offenseAttacksRight(shootingSide: CaptureSide, periodNumber: num
   return shootingSide === 'home' ? homeRight : !homeRight;
 }
 
-/** A non-shooting foul either awards nothing, or the operator chooses 1, 2, or 3. */
+/** How many free throws this foul awards. The operator does not choose the count. */
 export function foulThrowAllowance(input: {
   kind: FoulKind;
   context: FoulContext;
   teamFoulsBefore: number;
-}): 0 | 'choose' {
-  const { kind, context, teamFoulsBefore } = input;
-  if (kind === 'double' || context === 'double' || context === 'offensive') return 0;
-  if (kind === 'personal' && context === 'no_shot') return teamFoulsBefore >= 4 ? 'choose' : 0;
-  if (context === 'no_shot' || kind === 'technical' || context === 'technical') return 'choose';
-  return 0;
+  shotValue?: 2 | 3 | null;
+}): 0 | 1 | 2 | 3 {
+  return awardedFreeThrows(input);
 }
 
 export function foulNeedsOther(input: {
@@ -361,6 +372,20 @@ const fiveSecondsPlaySchema = z.object({
 
 const point = z.number().finite().min(0).max(1);
 
+/** A required rebound is a named player or the opponent team with no player. */
+function reboundChoice(
+  needsRebound: boolean,
+  rebounderId: string | null | undefined,
+  unknownRebound: boolean | undefined,
+): 'ok' | 'missing' | 'extra' | 'both' {
+  const unknown = unknownRebound === true;
+  const named = !!rebounderId;
+  if (unknown && named) return 'both';
+  if (needsRebound && !named && !unknown) return 'missing';
+  if (!needsRebound && (named || unknown)) return 'extra';
+  return 'ok';
+}
+
 export const foulPlaySchema = z.object({
   play: z.literal('foul'),
   ...gameFields,
@@ -372,20 +397,29 @@ export const foulPlaySchema = z.object({
   otherId: z.string().uuid().nullable(),
   coach: z.boolean(),
   throws: z.array(z.enum(['made', 'miss'])).max(3),
+  rebounderId: z.string().uuid().nullable().optional(),
+  unknownRebound: z.boolean().optional(),
 }).superRefine((value, context) => {
   const issue = (message: string, path: string) => {
     context.addIssue({ code: 'custom', message, path: [path] });
   };
+  const needsRebound = freeThrowNeedsRebound({
+    source: 'foul',
+    kind: value.kind,
+    context: value.context,
+    throws: value.throws,
+  });
+  const choice = reboundChoice(needsRebound, value.rebounderId, value.unknownRebound);
+  if (choice !== 'ok') issue('foul_shape', 'rebounderId');
   if (value.context === 'shot_made' || value.context === 'shot_missed') {
     issue('foul_shape', 'context');
     return;
   }
-  const chosenThrows = value.throws.length >= 1 && value.throws.length <= 3;
   if (value.coach) {
     if (value.kind !== 'technical' || value.context !== 'technical' || value.offenderId || !value.otherId) {
       issue('foul_shape', 'coach');
     }
-    if (value.coordX !== null || value.coordY !== null || !chosenThrows) issue('foul_shape', 'throws');
+    if (value.coordX !== null || value.coordY !== null || value.throws.length !== 1) issue('foul_shape', 'throws');
     return;
   }
   if (!value.offenderId || value.coordX === null || value.coordY === null) issue('foul_player', 'offenderId');
@@ -400,18 +434,19 @@ export const foulPlaySchema = z.object({
     return;
   }
   if (value.kind === 'technical' || value.context === 'technical') {
-    if (value.kind !== 'technical' || value.context !== 'technical' || !value.otherId || !chosenThrows) {
+    if (value.kind !== 'technical' || value.context !== 'technical' || !value.otherId || value.throws.length !== 1) {
       issue('foul_victim', 'otherId');
     }
     return;
   }
   if (value.kind === 'personal' && value.context === 'no_shot') {
-    if (value.throws.length > 0 && !value.otherId) issue('foul_victim', 'otherId');
+    if (value.throws.length !== 0 && value.throws.length !== 2) issue('foul_shape', 'throws');
+    if (value.throws.length === 2 && !value.otherId) issue('foul_victim', 'otherId');
     if (value.throws.length === 0 && value.otherId) issue('foul_victim', 'otherId');
     return;
   }
   if (value.context === 'no_shot') {
-    if (!chosenThrows || !value.otherId) issue('foul_shape', 'throws');
+    if (value.throws.length !== 2 || !value.otherId) issue('foul_shape', 'throws');
     return;
   }
   issue('foul_shape', 'context');
@@ -439,7 +474,10 @@ const madePlaySchema = z.object({
   shooterId: z.string().uuid(),
   assistId: z.string().uuid().nullable(),
   foulerId: z.string().uuid().nullable(),
+  foulKind: z.enum(shotFoulKinds).nullable().optional(),
   throws: z.array(z.enum(['made', 'miss'])).max(3),
+  rebounderId: z.string().uuid().nullable().optional(),
+  unknownRebound: z.boolean().optional(),
 }).superRefine((value, context) => {
   const issue = (message: string, path: string) => {
     context.addIssue({ code: 'custom', message, path: [path] });
@@ -448,11 +486,19 @@ const madePlaySchema = z.object({
   if (value.foulerId && (value.foulerId === value.shooterId || value.foulerId === value.assistId)) {
     issue('made_foul', 'foulerId');
   }
+  const needsRebound = !!value.foulerId && freeThrowNeedsRebound({
+    source: 'made',
+    kind: value.foulKind ?? 'personal',
+    throws: value.throws,
+  });
+  const choice = reboundChoice(needsRebound, value.rebounderId, value.unknownRebound);
+  if (choice === 'missing') issue('made_foul', 'rebounderId');
+  if (choice === 'extra' || choice === 'both') issue('made_shape', 'rebounderId');
   if (value.foulerId) {
-    if (value.throws.length < 1 || value.throws.length > 3) issue('made_foul', 'throws');
+    if (!value.foulKind || value.throws.length !== 1) issue('made_foul', 'throws');
     return;
   }
-  if (value.throws.length !== 0) issue('made_shape', 'throws');
+  if (value.foulKind || value.throws.length !== 0) issue('made_shape', 'throws');
 });
 
 const missPlaySchema = z.object({
@@ -462,19 +508,38 @@ const missPlaySchema = z.object({
   coordY: point,
   shooterId: z.string().uuid(),
   rebounderId: z.string().uuid().nullable(),
+  unknownRebound: z.boolean().optional(),
   foulerId: z.string().uuid().nullable(),
+  foulKind: z.enum(shotFoulKinds).nullable().optional(),
+  deadBall: z.enum(['lodged', 'period_end']).nullable().optional(),
   throws: z.array(z.enum(['made', 'miss'])).max(3),
 }).superRefine((value, context) => {
   const issue = (message: string, path: string) => {
     context.addIssue({ code: 'custom', message, path: [path] });
   };
+  const deadBall = value.deadBall ?? null;
   if (value.foulerId) {
-    if (value.rebounderId) issue('miss_shape', 'rebounderId');
+    if (deadBall) issue('miss_shape', 'rebounderId');
     if (value.foulerId === value.shooterId) issue('miss_foul', 'foulerId');
-    if (value.throws.length < 1 || value.throws.length > 3) issue('miss_foul', 'throws');
+    if (!value.foulKind || (value.throws.length !== 2 && value.throws.length !== 3)) issue('miss_foul', 'throws');
+    const needsRebound = freeThrowNeedsRebound({
+      source: 'miss',
+      kind: value.foulKind ?? 'personal',
+      throws: value.throws,
+    });
+    const choice = reboundChoice(needsRebound, value.rebounderId, value.unknownRebound);
+    if (choice === 'missing') issue('miss_rebound', 'rebounderId');
+    if (choice === 'extra' || choice === 'both') issue('miss_shape', 'rebounderId');
     return;
   }
-  if (!value.rebounderId) issue('miss_rebound', 'rebounderId');
+  const choice = reboundChoice(!deadBall, value.rebounderId, value.unknownRebound);
+  if (choice === 'missing') issue('miss_rebound', 'rebounderId');
+  if (choice === 'extra' || choice === 'both') issue('miss_shape', 'rebounderId');
+  if (value.foulKind) issue('miss_shape', 'foulKind');
+  if (deadBall) {
+    if (value.throws.length !== 0) issue('miss_shape', 'throws');
+    return;
+  }
   if (value.throws.length !== 0) issue('miss_shape', 'throws');
 });
 
@@ -486,6 +551,7 @@ export const missErrorCodes = [
   'miss_half',
   'miss_player',
   'miss_rebound',
+  'miss_arrow',
   'miss_foul',
   'miss_eliminated',
   'miss_final',
@@ -520,3 +586,34 @@ export type TimeoutPlayInput = z.infer<typeof timeoutPlaySchema>;
 export type SubstitutionPlayInput = z.infer<typeof substitutionPlaySchema>;
 
 export type FoulPlayInput = z.infer<typeof foulPlaySchema>;
+
+export const placeMadeShotPointSchema = z.object({
+  gameId: z.string().uuid(),
+  eventId: z.string().uuid(),
+  coordX: z.number().finite().min(0).max(1),
+  coordY: z.number().finite().min(0).max(1),
+  assistId: z.string().uuid().nullable(),
+});
+
+export type PlaceMadeShotPointInput = z.infer<typeof placeMadeShotPointSchema>;
+
+export const editJumpSchema = z.object({
+  gameId: z.string().uuid(),
+  eventId: z.string().uuid(),
+  jumpWon: z.boolean(),
+  homePlayerId: z.string().uuid().nullable(),
+  awayPlayerId: z.string().uuid().nullable(),
+}).refine(
+  (value) => (value.homePlayerId === null) === (value.awayPlayerId === null),
+  { message: 'jump_need_both' },
+);
+
+export type EditJumpInput = z.infer<typeof editJumpSchema>;
+
+export const editFoulReceivedSchema = z.object({
+  gameId: z.string().uuid(),
+  eventId: z.string().uuid(),
+  playerId: z.string().uuid().nullable(),
+});
+
+export type EditFoulReceivedInput = z.infer<typeof editFoulReceivedSchema>;

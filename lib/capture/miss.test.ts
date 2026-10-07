@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   missChooseFouler,
+  missChooseFoulKind,
+  missChooseFtRebounder,
   missChooseRebounder,
+  missChooseUnknownRebound,
   missChooseShooter,
   missCourtTap,
   missNextPossession,
@@ -63,12 +66,38 @@ describe('miss possession and clock', () => {
       reboundSide: 'away',
       personal: true,
       lastThrow: 'miss',
+    })).toBe('away');
+    expect(missNextPossession({
+      shootingSide: 'home',
+      reboundSide: 'home',
+      personal: true,
+      lastThrow: 'miss',
+    })).toBe('home');
+    expect(missNextPossession({
+      shootingSide: 'home',
+      reboundSide: null,
+      personal: true,
+      lastThrow: 'miss',
     })).toBeNull();
     expect(missNextPossession({
       shootingSide: 'home',
       reboundSide: null,
       personal: true,
       lastThrow: 'made',
+    })).toBe('away');
+    expect(missNextPossession({
+      shootingSide: 'home',
+      reboundSide: null,
+      personal: true,
+      lastThrow: 'miss',
+      foulKind: 'flagrant',
+    })).toBe('home');
+    expect(missNextPossession({
+      shootingSide: 'away',
+      reboundSide: 'home',
+      personal: true,
+      lastThrow: 'made',
+      foulKind: 'disqualifying',
     })).toBe('away');
   });
 
@@ -104,7 +133,8 @@ describe('miss sequence', () => {
     expect(missChooseRebounder(shooting, 'home', rebounder).ok).toBe(false);
     expect(missChooseFouler(shooting, id)).toBeNull();
     const fouled = missChooseFouler(shooting, fouler);
-    expect(fouled?.step).toBe('ft');
+    expect(fouled?.step).toBe('kind');
+    expect(fouled?.throwCount).toBe(2);
     if (!fouled) return;
     const back = missStepBack(fouled);
     expect(back).not.toBe('cancel');
@@ -123,43 +153,134 @@ describe('miss play schema', () => {
   it('accepts a miss with a rebound and no free throws', () => {
     expect(commitCapturePlaySchema.safeParse(miss()).success).toBe(true);
     expect(commitCapturePlaySchema.safeParse(miss({ rebounderId: id })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(miss({ rebounderId: null, unknownRebound: true })).success).toBe(true);
     expect(commitCapturePlaySchema.safeParse(miss({ rebounderId: null })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(miss({ unknownRebound: true })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(miss({ rebounderId: null, unknownRebound: true, deadBall: 'lodged' })).success).toBe(false);
   });
 
-  it('accepts one, two, or three free throws only together with a fouler and no rebound', () => {
+  it('accepts a miss with no rebound when the ball lodges or the period ends', () => {
+    expect(commitCapturePlaySchema.safeParse(miss({ rebounderId: null, deadBall: 'lodged' })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(miss({ rebounderId: null, deadBall: 'period_end' })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(miss({ rebounderId: id, deadBall: 'lodged' })).success).toBe(false);
+  });
+
+  it('accepts free throws with a fouler, and a rebound only when the last personal one is missed', () => {
     expect(commitCapturePlaySchema.safeParse(miss({
       foulerId: fouler,
-      rebounderId: null,
-      throws: ['made'],
-    })).success).toBe(true);
-    expect(commitCapturePlaySchema.safeParse(miss({
-      foulerId: fouler,
+      foulKind: 'personal',
       rebounderId: null,
       throws: ['miss', 'made'],
     })).success).toBe(true);
     expect(commitCapturePlaySchema.safeParse(miss({
       foulerId: fouler,
+      foulKind: 'personal',
       rebounderId: null,
       throws: ['miss', 'miss', 'made'],
     })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(miss({
+      foulerId: fouler,
+      foulKind: 'personal',
+      rebounderId: null,
+      throws: ['made'],
+    })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(miss({
+      foulerId: fouler,
+      foulKind: 'personal',
+      rebounderId: rebounder,
+      throws: ['miss', 'miss'],
+    })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(miss({
+      foulerId: fouler,
+      foulKind: 'personal',
+      rebounderId: rebounder,
+      throws: ['made', 'miss'],
+    })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(miss({
+      foulerId: fouler,
+      foulKind: 'flagrant',
+      rebounderId: null,
+      throws: ['miss', 'miss'],
+    })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(miss({
+      foulerId: fouler,
+      foulKind: 'flagrant',
+      rebounderId: rebounder,
+      throws: ['miss', 'miss'],
+    })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(miss({
+      foulerId: fouler,
+      foulKind: 'personal',
+      rebounderId: null,
+      unknownRebound: true,
+      throws: ['miss', 'miss'],
+    })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(miss({
+      foulerId: fouler,
+      foulKind: 'personal',
+      rebounderId: rebounder,
+      unknownRebound: true,
+      throws: ['miss', 'miss'],
+    })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(miss({
+      foulerId: fouler,
+      foulKind: 'personal',
+      rebounderId: null,
+      unknownRebound: true,
+      throws: ['made', 'made'],
+    })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(miss({
+      foulerId: fouler,
+      foulKind: 'personal',
+      rebounderId: null,
+      throws: ['miss', 'miss'],
+    })).success).toBe(false);
     expect(commitCapturePlaySchema.safeParse(miss({ throws: ['miss'] })).success).toBe(false);
     expect(commitCapturePlaySchema.safeParse(miss({
       foulerId: fouler,
+      foulKind: 'personal',
       rebounderId: null,
       throws: [],
     })).success).toBe(false);
     expect(commitCapturePlaySchema.safeParse(miss({
       foulerId: fouler,
+      foulKind: 'personal',
       rebounderId: rebounder,
-      throws: ['made'],
+      throws: ['made', 'made'],
     })).success).toBe(false);
+  });
+
+  it('steps back from a free-throw rebound to the marked sequence', () => {
+    const opened = openMiss('home', true);
+    const tapped = missCourtTap(opened, 0.9, 0.5, true);
+    if (!tapped.ok) return;
+    const shooting = missChooseShooter(tapped.draft, id);
+    if (!shooting) return;
+    const fouled = missChooseFouler(shooting, fouler);
+    if (!fouled) return;
+    const counted = missChooseFoulKind(fouled, 'personal');
+    if (!counted) return;
+    const draft = { ...counted, step: 'ft_rebound' as const, ftMarks: ['made', 'miss'] as ('made' | 'miss')[] };
+    expect(missChooseFtRebounder(draft, 'away', rebounder).ok).toBe(true);
+    const unknown = missChooseUnknownRebound(draft);
+    expect(unknown.ok && unknown.draft.unknownRebound).toBe(true);
+    expect(unknown.ok && unknown.draft.reboundSide).toBe('away');
+    expect(unknown.ok && unknown.draft.rebounderId).toBeNull();
+    expect(missChooseUnknownRebound({ ...draft, ftMarks: ['made'] }).ok).toBe(false);
+    const back = missStepBack(draft);
+    expect(back).not.toBe('cancel');
+    if (back === 'cancel') return;
+    expect(back.step).toBe('ft');
+    expect(back.ftMarks).toEqual(['made', 'miss']);
+    expect(back.rebounderId).toBeNull();
   });
 
   it('rejects a foul charged to the shooter', () => {
     expect(commitCapturePlaySchema.safeParse(miss({
       foulerId: id,
+      foulKind: 'personal',
       rebounderId: null,
-      throws: ['made'],
+      throws: ['miss', 'made'],
     })).success).toBe(false);
   });
 });

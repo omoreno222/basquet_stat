@@ -11,6 +11,7 @@ import { canStartGame, formatTimeUntilStart, type GameStartCheck } from '@/lib/g
 import { userManagesClub } from '@/lib/live-access';
 import { AdminNavbar } from '@/components/AdminNavbar';
 import { TeamManagerNavPills } from '@/components/NavPills';
+import { useLocaleTranslations } from '@/lib/use-locale-translations';
 
 interface GameWithTeam extends Game {
   teams?: {
@@ -36,6 +37,7 @@ export default function GameDetailPage() {
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [gameStartCheck, setGameStartCheck] = useState<GameStartCheck | null>(null);
+  const { t } = useLocaleTranslations();
 
   const loadData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -100,20 +102,27 @@ export default function GameDetailPage() {
   }, [game, currentUserId, gameId]);
 
   async function handleStartGame() {
-    const { error } = await supabase
-      .from('games')
-      .update({
-        status: 'live',
+    const { count } = await supabase
+      .from('game_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('game_id', gameId);
+    const update = count && count > 0
+      ? { status: 'live' as const }
+      : {
+        status: 'live' as const,
         clock_remaining_ms: 600000,
         current_period: 1,
-        possession: 'home',
-      })
+        possession: 'home' as const,
+      };
+    const { error } = await supabase
+      .from('games')
+      .update(update)
       .eq('id', gameId);
 
     if (error) {
       alert(`Error: ${error.message}`);
     } else {
-      router.push(`/team-manager/games/${gameId}/capture`);
+      router.push(`/team-manager/games/live/${gameId}`);
     }
   }
 
@@ -189,6 +198,12 @@ export default function GameDetailPage() {
                 <p className="font-medium text-2xl">{game.team_score} - {game.opponent_score}</p>
               </div>
             </div>
+            <Link
+              href={`/games/eval/${gameId}`}
+              className="mt-6 inline-flex w-full items-center justify-center rounded-lg bg-blue-600 px-6 py-3 text-lg font-bold text-white hover:bg-blue-700 sm:w-auto"
+            >
+              {t('trke_eval_open', 'Evaluation')}
+            </Link>
           </div>
 
           {canCapture && (
@@ -216,7 +231,7 @@ export default function GameDetailPage() {
 
               {game.status === 'live' && (
                 <Link
-                  href={`/team-manager/games/${gameId}/capture`}
+                  href={`/team-manager/games/live/${gameId}`}
                   className="inline-block px-6 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 text-lg font-bold"
                 >
                   Resume Live Capture

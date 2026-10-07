@@ -31,3 +31,22 @@ h3 {
     text-wrap: balance;
   }
 }
+
+@keyframes capture-hysteria {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  18% { opacity: 0.15; transform: scale(1.16); }
+  36% { opacity: 1; transform: scale(0.94); }
+  54% { opacity: 0.2; transform: scale(1.2); }
+  72% { opacity: 1; transform: scale(1.05); }
+}
+
+.animate-capture-hysteria {
+  animation: capture-hysteria 0.38s linear infinite;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-capture-hysteria {
+    animation-duration: 1.6s;
+  }
+}

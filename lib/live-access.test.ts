@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPlatformAdmin, userCanEditGame, userCanOpenLiveGame, userManagesClub } from './live-access';
+import { isPlatformAdmin, userCanEditGame, userCanLogDeferred, userCanOpenLiveGame, userManagesClub } from './live-access';
 
 const clubId = 'club-1';
 
@@ -48,6 +48,19 @@ describe('userCanEditGame', () => {
     expect(userCanEditGame([{ role: 'team_manager', club_id: clubId }], clubId)).toBe(false);
     expect(userCanEditGame([{ role: 'club_admin', club_id: 'club-2' }], clubId)).toBe(false);
     expect(userCanEditGame([{ role: 'club_admin', club_id: clubId }], null)).toBe(false);
+  });
+});
+
+describe('userCanLogDeferred', () => {
+  it('accepts a team manager of this club or a platform admin', () => {
+    expect(userCanLogDeferred([{ role: 'team_manager', club_id: clubId }], clubId)).toBe(true);
+    expect(userCanLogDeferred([{ role: 'admin', club_id: null }], clubId)).toBe(true);
+  });
+
+  it('rejects a club admin, another club, and a missing club', () => {
+    expect(userCanLogDeferred([{ role: 'club_admin', club_id: clubId }], clubId)).toBe(false);
+    expect(userCanLogDeferred([{ role: 'team_manager', club_id: 'club-2' }], clubId)).toBe(false);
+    expect(userCanLogDeferred([{ role: 'team_manager', club_id: clubId }], null)).toBe(false);
   });
 });
 

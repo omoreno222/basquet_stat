@@ -13,6 +13,33 @@ export function timeoutWindow(period: number): TimeoutWindow {
   return { from: period, to: period, max: 1 };
 }
 
+export interface TimeoutBank {
+  id: string;
+  /** Short face for the bank: "1–2", "3–4", or the overtime index. */
+  label: string;
+  max: number;
+  /** Period to pass to countTimeouts so the window matches this bank. */
+  countPeriod: number;
+}
+
+/** Regulation banks always, plus one bank for each overtime already reached. */
+export function timeoutBanks(currentPeriod: number): TimeoutBank[] {
+  const banks: TimeoutBank[] = [
+    { id: '12', label: '1–2', max: 2, countPeriod: 2 },
+    { id: '34', label: '3–4', max: 3, countPeriod: 4 },
+  ];
+  const period = Math.max(1, Math.floor(currentPeriod));
+  for (let overtime = 5; overtime <= period; overtime += 1) {
+    banks.push({
+      id: `ot-${overtime}`,
+      label: String(overtime - 4),
+      max: 1,
+      countPeriod: overtime,
+    });
+  }
+  return banks;
+}
+
 export function countTimeouts(
   events: ReadonlyArray<{
     event_type?: string | null;

@@ -5,10 +5,11 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '@/lib/supabase';
 import { Club, UserRole } from '@/types/database';
+import { parentPlayerExclusiveMessage, playerCoachExclusiveMessage, toggleUserRole } from '@/lib/form-schemas';
 import { resetUserPassword } from '@/lib/password-auth';
 import { useLocaleTranslations } from '@/lib/use-locale-translations';
 import { createAdminUser, removeProfileAvatar, updateAdminUser, uploadProfileAvatar } from '../actions';
-import { FormScreen, errorClass, fieldClass, labelClass, lockedFieldClass, successClass } from '../form-screen';
+import { FormScreen, errorClass, fieldClass, hintClass, labelClass, lockedFieldClass, successClass } from '../form-screen';
 
 const availableRoles: UserRole[] = ['admin', 'club_admin', 'team_manager', 'coach', 'parent', 'player'];
 
@@ -109,13 +110,19 @@ export function UserForm({ userId }: { userId?: string }) {
     return () => URL.revokeObjectURL(url);
   }, [pendingFile]);
 
+  function roleError(message: string) {
+    if (message === playerCoachExclusiveMessage) {
+      return t('trke_role_player_coach_exclusive', playerCoachExclusiveMessage);
+    }
+    if (message === parentPlayerExclusiveMessage) {
+      return t('trke_role_parent_player_exclusive', parentPlayerExclusiveMessage);
+    }
+    return message;
+  }
+
   function toggleRole(role: UserRole) {
-    setFormData((current) => {
-      const roles = current.roles.includes(role)
-        ? current.roles.filter((item) => item !== role)
-        : [...current.roles, role];
-      return { ...current, roles };
-    });
+    setError('');
+    setFormData((current) => ({ ...current, roles: toggleUserRole(current.roles, role) }));
   }
 
   const recordId = createdId;
@@ -142,7 +149,7 @@ export function UserForm({ userId }: { userId?: string }) {
       });
       if (result.error) {
         setSaving(false);
-        setError(result.error);
+        setError(roleError(result.error));
         return;
       }
 
@@ -172,7 +179,7 @@ export function UserForm({ userId }: { userId?: string }) {
 
     if (!('userId' in result) || !result.userId) {
       setSaving(false);
-      setError(result.error || 'Could not create the user');
+      setError(roleError(result.error || 'Could not create the user'));
       return;
     }
 
@@ -311,6 +318,7 @@ export function UserForm({ userId }: { userId?: string }) {
                   </label>
                 ))}
               </div>
+              <p className={hintClass}>{t('trke_role_exclusive_hint', 'A user cannot be a player and a coach, or a parent and a player, at the same time.')}</p>
             </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-4">

@@ -2,6 +2,14 @@
 
 import { useState } from 'react';
 import { inkOn } from '@/lib/colors';
+import {
+  COURT_MAX,
+  applySubstitutionTap,
+  createSubstitutionDraft,
+  draftCourtIds,
+  substitutionReady,
+  type SubstitutionDraft,
+} from '@/lib/capture/substitution-draft';
 
 export interface SubstitutionChoice {
   id: string;
@@ -19,8 +27,6 @@ export interface SubstitutionSwap {
 
 type Translate = (key: string, fallback: string) => string;
 
-const COURT_MAX = 5;
-
 interface SubstitutionPopupProps {
   t: Translate;
   teamName: string;
@@ -29,6 +35,8 @@ interface SubstitutionPopupProps {
   saving: boolean;
   error: string | null;
   addFirstNote?: string | null;
+  /** Player already moved to the bench because they fouled out. They cannot return. */
+  forcedOutId?: string | null;
   onConfirm: (swaps: SubstitutionSwap[]) => void;
   onClose: () => void;
 }
@@ -39,6 +47,7 @@ function PlayerRow({
   muted = false,
   locked = false,
   note,
+  selected = false,
   onPick,
 }: {
   player: SubstitutionChoice;
@@ -46,6 +55,7 @@ function PlayerRow({
   muted?: boolean;
   locked?: boolean;
   note?: string;
+  selected?: boolean;
   onPick: () => void;
 }) {
   const ink = muted ? '#525252' : inkOn(color);
@@ -53,8 +63,9 @@ function PlayerRow({
     <button
       type="button"
       disabled={muted || locked}
+      aria-pressed={selected}
       onClick={onPick}
-      className="flex min-h-12 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left shadow-sm disabled:cursor-default"
+      className={`flex min-h-12 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left shadow-sm disabled:cursor-default ${selected ? 'ring-4 ring-neutral-900 ring-offset-2' : ''}`}
       style={{ backgroundColor: muted ? '#d4d4d4' : color, color: ink }}
     >
       {player.avatarUrl ? (
@@ -82,59 +93,65 @@ export function SubstitutionPopup({
   saving,
   error,
   addFirstNote = null,
+  forcedOutId = null,
   onConfirm,
   onClose,
 }: SubstitutionPopupProps) {
-  const initialCourt = players.filter((player) => player.onCourt).map((player) => player.id);
-  const [courtIds, setCourtIds] = useState(initialCourt);
+  const [session] = useState(() => {
+    const initialCourt = players.filter((player) => player.onCourt).map((player) => player.id);
+    const parkedId = forcedOutId && initialCourt.includes(forcedOutId) ? forcedOutId : null;
+    return {
+      initialCourt,
+      parkedId,
+      draft: createSubstitutionDraft(initialCourt, forcedOutId ?? null),
+    };
+  });
+  const [draft, setDraft] = useState<SubstitutionDraft>(session.draft);
   const [full, setFull] = useState(false);
+  const { initialCourt, parkedId } = session;
   const byId = new Map(players.map((player) => [player.id, player]));
+  const courtIds = draftCourtIds(initialCourt, draft);
   const onCourt = courtIds.flatMap((id) => {
     const player = byId.get(id);
     return player ? [player] : [];
   });
+  const departed = new Set([...draft.swaps.map((swap) => swap.outId), ...draft.waitingOutIds]);
   const bench = players
     .filter((player) => !courtIds.includes(player.id))
     .sort((a, b) => {
-      const aLeft = initialCourt.includes(a.id) ? 1 : 0;
-      const bLeft = initialCourt.includes(b.id) ? 1 : 0;
+      const aLeft = departed.has(a.id) ? 0 : 1;
+      const bLeft = departed.has(b.id) ? 0 : 1;
       return aLeft - bLeft || a.jersey - b.jersey || a.name.localeCompare(b.name);
     });
-  const outs = initialCourt.filter((id) => !courtIds.includes(id));
-  const ins = courtIds.filter((id) => !initialCourt.includes(id));
-  const ready = !saving && outs.length > 0 && outs.length === ins.length && onCourt.length <= COURT_MAX;
+  const ready = substitutionReady(draft, saving);
   const eliminatedLabel = t('trke_period_lineup_eliminated', 'Eliminado');
   const benchCanEnter = players.some((player) => !player.onCourt && !player.eliminated);
-  const hint = !benchCanEnter && addFirstNote
-    ? addFirstNote
-    : full
-      ? t('trke_sub_hint_full', 'Máximo 5 en pista')
-      : outs.length !== ins.length
-        ? t('trke_sub_hint_pair', 'Tiene que entrar uno por cada uno que sale')
-        : t('trke_sub_hint_move', 'Toca en pista para bajar al banquillo. Toca en el banquillo para subir.');
+  const foulOutWaiting = !!parkedId && draft.waitingOutIds.includes(parkedId);
+  const foulOutHint = t('trke_sub_hint_foul_out', 'Fuera del partido. Toca quién entra del banquillo.');
+  const hint = parkedId && !benchCanEnter
+    ? (addFirstNote ?? t('trke_sub_hint_foul_out_short', 'Fuera del partido. El equipo sigue con uno menos.'))
+    : foulOutWaiting
+      ? foulOutHint
+      : draft.pendingInId
+        ? t('trke_sub_hint_out', 'Toca quién sale')
+        : !benchCanEnter && addFirstNote
+          ? addFirstNote
+          : full
+            ? t('trke_sub_hint_full', 'Máximo 5 en pista')
+            : draft.waitingOutIds.length > 0
+              ? t('trke_sub_hint_in', 'Toca quién entra del banquillo')
+              : t('trke_sub_hint_move', 'Toca en pista para bajar al banquillo. Toca en el banquillo para subir.');
 
-  function toBench(id: string) {
-    if (saving || !initialCourt.includes(id)) return;
-    setFull(false);
-    setCourtIds((current) => current.filter((item) => item !== id));
-  }
-
-  function toCourt(player: SubstitutionChoice) {
-    if (saving || player.eliminated || initialCourt.includes(player.id)) return;
-    setCourtIds((current) => {
-      if (current.includes(player.id)) return current;
-      if (current.length >= COURT_MAX) {
-        setFull(true);
-        return current;
-      }
-      setFull(false);
-      return [...current, player.id];
-    });
+  function apply(tap: Parameters<typeof applySubstitutionTap>[2]) {
+    if (saving) return;
+    const result = applySubstitutionTap(initialCourt, draft, tap);
+    setDraft(result.draft);
+    setFull(result.full);
   }
 
   function confirm() {
     if (!ready) return;
-    onConfirm(outs.map((outId, index) => ({ outId, inId: ins[index] })));
+    onConfirm(draft.swaps);
   }
 
   return (
@@ -163,8 +180,8 @@ export function SubstitutionPopup({
                   key={player.id}
                   player={player}
                   color={color}
-                  locked={saving || !initialCourt.includes(player.id)}
-                  onPick={() => toBench(player.id)}
+                  locked={saving}
+                  onPick={() => apply({ kind: 'court', playerId: player.id })}
                 />
               ))}
             </div>
@@ -175,16 +192,22 @@ export function SubstitutionPopup({
             </p>
             <div className="flex flex-col gap-2">
               {bench.map((player) => {
-                const justLeft = initialCourt.includes(player.id);
+                const fouledOut = player.eliminated || player.id === parkedId;
                 return (
                   <PlayerRow
                     key={player.id}
                     player={player}
                     color={color}
-                    muted={justLeft || player.eliminated}
-                    locked={saving && !justLeft && !player.eliminated}
-                    note={player.eliminated ? eliminatedLabel : undefined}
-                    onPick={() => toCourt(player)}
+                    muted={fouledOut}
+                    locked={saving && !fouledOut}
+                    selected={draft.pendingInId === player.id}
+                    note={fouledOut ? eliminatedLabel : undefined}
+                    onPick={() => apply({
+                      kind: 'bench',
+                      playerId: player.id,
+                      eliminated: player.eliminated,
+                      forcedOut: player.id === parkedId,
+                    })}
                   />
                 );
               })}

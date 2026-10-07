@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { freeThrowSequenceReady } from '@/lib/capture/free-throws';
 
 export type FreeThrowMark = 'made' | 'miss';
 
@@ -11,20 +12,58 @@ export interface FreeThrowSequenceResult {
 
 type Translate = (key: string, fallback: string) => string;
 
+const FREE_THROW_CLOSE_MS = 100;
+
 interface FreeThrowSequencePopupProps {
   t: Translate;
   count: 1 | 2 | 3;
+  initialShots?: FreeThrowMark[];
+  onShotsChange?: (shots: readonly (FreeThrowMark | null)[]) => void;
   onConfirm: (result: FreeThrowSequenceResult) => void;
   onClose: () => void;
 }
 
-export function FreeThrowSequencePopup({ t, count, onConfirm, onClose }: FreeThrowSequencePopupProps) {
-  const [shots, setShots] = useState<(FreeThrowMark | null)[]>(() => Array.from({ length: count }, () => null));
+export function FreeThrowSequencePopup({
+  t,
+  count,
+  initialShots,
+  onShotsChange,
+  onConfirm,
+  onClose,
+}: FreeThrowSequencePopupProps) {
+  const [shots, setShots] = useState<(FreeThrowMark | null)[]>(() => (
+    initialShots && initialShots.length === count
+      ? [...initialShots]
+      : Array.from({ length: count }, () => null)
+  ));
+  const closeTimer = useRef<number | null>(null);
 
-  const complete = shots.length === count && shots.every((shot) => shot !== null);
+  useEffect(() => () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+  }, []);
+
+  function cancel() {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    onClose();
+  }
 
   function markShot(index: number, mark: FreeThrowMark) {
-    setShots((current) => current.map((shot, shotIndex) => (shotIndex === index ? mark : shot)));
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    const next = shots.map((shot, shotIndex) => (shotIndex === index ? mark : shot));
+    setShots(next);
+    onShotsChange?.(next);
+    if (!freeThrowSequenceReady(next) || next.length !== count) return;
+    const confirmed = next;
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null;
+      onConfirm({ count, shots: confirmed });
+    }, FREE_THROW_CLOSE_MS);
   }
 
   return (
@@ -80,26 +119,14 @@ export function FreeThrowSequencePopup({ t, count, onConfirm, onClose }: FreeThr
           </div>
         </div>
 
-        <footer className="flex gap-2 border-t border-neutral-200 p-3">
+        <footer className="border-t border-neutral-200 p-3">
           <button
             type="button"
-            onClick={onClose}
-            className="flex-1 bg-neutral-200 py-3 text-sm font-bold text-neutral-800 hover:bg-neutral-300"
+            onClick={cancel}
+            className="w-full bg-neutral-200 py-3 text-sm font-bold text-neutral-800 hover:bg-neutral-300"
             style={{ minHeight: '48px' }}
           >
             {t('trke_cancel', 'Cancel')}
-          </button>
-          <button
-            type="button"
-            disabled={!complete}
-            onClick={() => {
-              if (!complete) return;
-              onConfirm({ count, shots: shots as FreeThrowMark[] });
-            }}
-            className="flex-1 bg-neutral-900 py-3 text-sm font-black text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-40"
-            style={{ minHeight: '48px' }}
-          >
-            {t('trke_ft_sequence_done', 'Done')}
           </button>
         </footer>
       </div>

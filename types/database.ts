@@ -1,7 +1,7 @@
 export type UserRole = 'admin' | 'club_admin' | 'team_manager' | 'coach' | 'parent' | 'player';
 export type GameStatus = 'scheduled' | 'live' | 'final';
 export type KitColor = 'primary' | 'secondary';
-export type EventType = 'shot' | 'free_throw' | 'foul' | 'rebound' | 'assist' | 'steal' | 'turnover' | 'timeout';
+export type EventType = 'shot' | 'free_throw' | 'foul' | 'rebound' | 'assist' | 'steal' | 'turnover' | 'timeout' | 'jump';
 export type Locale = 'en' | 'es' | 'ca';
 export type TeamCategory = 'premini' | 'mini' | 'infantil' | 'cadete' | 'junior' | 'sub22' | 'senior';
 export type TeamGender = 'male' | 'female' | 'mixed';
@@ -51,12 +51,16 @@ export interface Team {
   club_id: string;
   name: string;
   fiba_short_name: string | null;
-  coach_id: string | null;
   category: TeamCategory;
   gender: TeamGender;
   logo_url: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface TeamCoach {
+  team_id: string;
+  profile_id: string;
 }
 
 export interface Player {
@@ -153,9 +157,19 @@ export interface GameEvent {
   coord_y: number | null;
   zone: number | null;
   is_offensive: boolean | null;
+  /** Opponent team rebound with no player. */
+  rebound_side?: 'away' | null;
+  /** Missed shot with no rebound: ball lodged, or the period ended. */
+  dead_ball?: 'lodged' | 'period_end' | null;
   turnover_type: string | null;
   turnover_side: 'home' | 'away' | null;
   timeout_side: 'home' | 'away' | null;
+  jump_side?: 'home' | 'away' | null;
+  jump_won?: boolean | null;
+  jump_home_player_id?: string | null;
+  jump_away_player_id?: string | null;
+  foul_received_player_id?: string | null;
+  foul_received_opponent_player_id?: string | null;
   recorded_by_user_id: string | null;
   created_at: string;
 }

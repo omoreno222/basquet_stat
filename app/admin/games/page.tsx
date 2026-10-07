@@ -8,8 +8,8 @@ import { AdminNavbar } from '@/components/AdminNavbar';
 import { ClubLogo } from '@/components/ClubLogo';
 import { isPlatformAdmin, userCanOpenLiveGame, userManagesClub } from '@/lib/live-access';
 import { useLocaleTranslations } from '@/lib/use-locale-translations';
-import { Plus } from 'lucide-react';
-import { DeleteButton, EditLink, ResetButton } from '../row-actions';
+import { ChartColumn, Plus, RadioTower } from 'lucide-react';
+import { DeleteButton, EditLink, HoverLabel, ResetButton } from '../row-actions';
 
 interface GameWithTeam extends Game {
   teams?: {
@@ -151,23 +151,28 @@ export default function GamesPage() {
                             <ClubLogo logoUrl={game.teams.clubs.logo_url} clubName={game.teams.clubs.name} size="sm" />
                           ) : null}
                           <div>
-                            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                              {live ? (
-                                <Link
-                                  href={`/team-manager/games/${game.id}/capture`}
-                                  className="inline-flex items-center gap-2 hover:underline"
-                                >
-                                  <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
-                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
-                                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-600" />
-                                  </span>
-                                  <span className="animate-pulse">{title}</span>
-                                  <span className="sr-only">Live</span>
-                                </Link>
-                              ) : (
-                                <span>{title}</span>
-                              )}
-                            </h3>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                                {live ? (
+                                  <Link
+                                    href={`/team-manager/games/live/${game.id}`}
+                                    className="inline-flex items-center gap-2 hover:underline"
+                                  >
+                                    <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
+                                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
+                                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-600" />
+                                    </span>
+                                    <span className="animate-pulse">{title}</span>
+                                    <span className="sr-only">Live</span>
+                                  </Link>
+                                ) : (
+                                  <span>{title}</span>
+                                )}
+                              </h3>
+                              <span className={`rounded px-2 py-1 text-xs font-semibold uppercase ${game.status === 'live' ? 'bg-green-100 text-green-800 dark:bg-green-300 dark:text-green-950' : game.status === 'final' ? 'bg-gray-100 text-gray-800 dark:bg-gray-300 dark:text-gray-950' : 'bg-blue-100 text-blue-800 dark:bg-blue-300 dark:text-blue-950'}`}>
+                                {game.status}
+                              </span>
+                            </div>
                             <p className="text-sm text-gray-500 dark:text-gray-400">{new Date(game.game_date).toLocaleString()} - {game.venue || 'TBD'}</p>
                             <p className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                               <span>{game.is_home ? 'Home' : 'Away'} · {game.official ? 'Official' : 'Friendly'}</span>
@@ -187,9 +192,27 @@ export default function GamesPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className={`rounded px-2 py-1 text-xs font-semibold uppercase ${game.status === 'live' ? 'bg-green-100 text-green-800 dark:bg-green-300 dark:text-green-950' : game.status === 'final' ? 'bg-gray-100 text-gray-800 dark:bg-gray-300 dark:text-gray-950' : 'bg-blue-100 text-blue-800 dark:bg-blue-300 dark:text-blue-950'}`}>
-                            {game.status}
-                          </span>
+                          <HoverLabel label={t('trke_eval_open', 'Evaluation')}>
+                            <Link
+                              href={`/games/eval/${game.id}`}
+                              aria-label={t('trke_eval_open', 'Evaluation')}
+                              className="inline-flex shrink-0 items-center justify-center rounded bg-rose-600 p-2 text-white hover:bg-rose-800"
+                            >
+                              <RadioTower className="h-4 w-4" aria-hidden="true" />
+                            </Link>
+                          </HoverLabel>
+                          <EditLink href={`/admin/games/${game.id}`} label={`${t('trke_edit', 'Edit')} ${game.opponent_name}`} />
+                          {platformAdmin ? (
+                            <HoverLabel label={t('trke_deferred_open', 'Log from video')}>
+                              <Link
+                                href={`/team-manager/games/deferred/${game.id}`}
+                                aria-label={t('trke_deferred_open', 'Log from video')}
+                                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-gray-300 bg-white text-gray-900 hover:bg-gray-100 dark:border-white/20 dark:bg-gray-950 dark:text-gray-100"
+                              >
+                                <ChartColumn className="h-4 w-4" aria-hidden="true" />
+                              </Link>
+                            </HoverLabel>
+                          ) : null}
                           {platformAdmin ? (
                             <ResetButton
                               label={t('trke_game_reset', 'Reiniciar')}
@@ -197,7 +220,6 @@ export default function GamesPage() {
                               onClick={() => handleReset(game.id)}
                             />
                           ) : null}
-                          <EditLink href={`/admin/games/${game.id}`} label={`${t('trke_edit', 'Edit')} ${game.opponent_name}`} />
                           <DeleteButton label={`${t('trke_delete', 'Delete')} ${game.opponent_name}`} onClick={() => handleDelete(game.id)} />
                         </div>
                       </div>

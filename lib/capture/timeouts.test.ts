@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countTimeouts, periodOutcome, timeoutWindow } from './timeouts';
+import { countTimeouts, periodOutcome, timeoutBanks, timeoutWindow } from './timeouts';
 
 describe('timeoutWindow', () => {
   it('shares 2 timeouts across the first two periods', () => {
@@ -34,6 +34,23 @@ describe('countTimeouts', () => {
     expect(countTimeouts(events, 'home', 3)).toBe(1);
     expect(countTimeouts(events, 'home', 5)).toBe(1);
     expect(countTimeouts(events, 'home', 6)).toBe(0);
+  });
+});
+
+describe('timeoutBanks', () => {
+  it('shows the two-timeout half and the three-timeout half', () => {
+    expect(timeoutBanks(1)).toEqual([
+      { id: '12', label: '1–2', max: 2, countPeriod: 2 },
+      { id: '34', label: '3–4', max: 3, countPeriod: 4 },
+    ]);
+    expect(timeoutBanks(4)).toEqual(timeoutBanks(1));
+  });
+
+  it('adds one timeout for each overtime', () => {
+    expect(timeoutBanks(6).slice(2)).toEqual([
+      { id: 'ot-5', label: '1', max: 1, countPeriod: 5 },
+      { id: 'ot-6', label: '2', max: 1, countPeriod: 6 },
+    ]);
   });
 });
 

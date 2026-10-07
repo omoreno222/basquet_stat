@@ -395,45 +395,48 @@ export async function uploadPlayerAvatar(playerId: string, file: File) {
     return { error: 'File size exceeds 5MB limit.' };
   }
 
-  // Get file extension
-  const ext = file.name.split('.').pop() || 'jpg';
-  const filePath = `players/${playerId}/avatar.${ext}`;
+  // A stable name (avatar.jpeg) keeps the same public URL. The storage CDN and
+  // next/image then keep serving the previous photo after a replacement.
+  const rawExt = (file.name.split('.').pop() || 'jpg').toLowerCase();
+  const ext = /^[a-z0-9]+$/.test(rawExt) ? rawExt : 'jpg';
+  const filePath = `players/${playerId}/${crypto.randomUUID()}.${ext}`;
 
-  // Delete old avatar if exists
-  const { data: existingFiles } = await supabase.storage
-    .from('avatars')
-    .list(`players/${playerId}`);
-
-  if (existingFiles && existingFiles.length > 0) {
-    const filesToDelete = existingFiles.map(f => `players/${playerId}/${f.name}`);
-    await supabase.storage.from('avatars').remove(filesToDelete);
-  }
-
-  // Upload new avatar
   const { error: uploadError } = await supabase.storage
     .from('avatars')
     .upload(filePath, file, {
-      cacheControl: '3600',
-      upsert: true,
+      cacheControl: '31536000',
+      contentType: file.type,
+      upsert: false,
     });
 
   if (uploadError) {
     return { error: uploadError.message };
   }
 
-  // Get public URL
   const { data: { publicUrl } } = supabase.storage
     .from('avatars')
     .getPublicUrl(filePath);
 
-  // Update player with avatar URL
   const { error: updateError } = await supabase
     .from('players')
     .update({ avatar_url: publicUrl })
     .eq('id', playerId);
 
   if (updateError) {
+    await supabase.storage.from('avatars').remove([filePath]);
     return { error: updateError.message };
+  }
+
+  const { data: existingFiles } = await supabase.storage
+    .from('avatars')
+    .list(`players/${playerId}`);
+
+  const stale = (existingFiles || [])
+    .filter((entry) => entry.name && entry.name !== filePath.split('/').pop())
+    .map((entry) => `players/${playerId}/${entry.name}`);
+
+  if (stale.length > 0) {
+    await supabase.storage.from('avatars').remove(stale);
   }
 
   return { success: true, url: publicUrl };
@@ -506,6 +509,42 @@ async function userClient() {
   });
 
   return { error: null, supabase };
+}
+
+function teamCoachWriteError(message: string) {
+  if (message.includes('at most 3 coaches')) return 'A team can have at most 3 coaches';
+  if (message.includes('coach role in this club')) return 'Each coach must be a user with the coach role in this club';
+  if (message.includes('duplicate key') || message.includes('team_coaches_pkey')) return 'Each coach can only be added once';
+  return message;
+}
+
+async function syncTeamCoaches(
+  supabase: NonNullable<Awaited<ReturnType<typeof userClient>>['supabase']>,
+  teamId: string,
+  coachIds: string[],
+) {
+  const { data: existing, error: readError } = await supabase
+    .from('team_coaches')
+    .select('profile_id')
+    .eq('team_id', teamId);
+  if (readError) return readError.message;
+
+  const current = new Set((existing || []).map((row) => row.profile_id as string));
+  const next = new Set(coachIds);
+  const remove = [...current].filter((id) => !next.has(id));
+  const add = coachIds.filter((id) => !current.has(id));
+
+  if (remove.length) {
+    const { error } = await supabase.from('team_coaches').delete().eq('team_id', teamId).in('profile_id', remove);
+    if (error) return teamCoachWriteError(error.message);
+  }
+
+  if (add.length) {
+    const { error } = await supabase.from('team_coaches').insert(add.map((profile_id) => ({ team_id: teamId, profile_id })));
+    if (error) return teamCoachWriteError(error.message);
+  }
+
+  return null;
 }
 
 async function clubAccessError(clubId: string) {
@@ -604,38 +643,43 @@ export async function saveTeam(input: unknown) {
     }
   }
 
-  const coachId = parsed.data.coach_id || null;
-  if (coachId) {
-    const { data: coachRole, error: coachError } = await client.supabase
+  const coachIds = parsed.data.coach_ids;
+  if (coachIds.length) {
+    const { data: coachRoles, error: coachError } = await client.supabase
       .from('profile_roles')
       .select('profile_id')
-      .eq('profile_id', coachId)
+      .in('profile_id', coachIds)
       .eq('role', 'coach')
-      .eq('club_id', clubId)
-      .limit(1);
+      .eq('club_id', clubId);
     if (coachError) return { error: coachError.message };
-    if (!coachRole?.length) return { error: 'Team coach must be a user with the coach role in this club' };
+    const found = new Set((coachRoles || []).map((row) => row.profile_id as string));
+    if (coachIds.some((id) => !found.has(id))) {
+      return { error: 'Each coach must be a user with the coach role in this club' };
+    }
   }
 
   const payload = {
     name: parsed.data.name,
     fiba_short_name: parsed.data.fiba_short_name || null,
     club_id: clubId,
-    coach_id: coachId,
     season_id: parsed.data.season_id,
     category: parsed.data.category,
     gender: parsed.data.gender,
   };
 
-  if (parsed.data.id) {
-    const { error } = await client.supabase.from('teams').update(payload).eq('id', parsed.data.id);
+  let teamId = parsed.data.id;
+  if (teamId) {
+    const { error } = await client.supabase.from('teams').update(payload).eq('id', teamId);
     if (error) return { error: error.message };
-    return { id: parsed.data.id };
+  } else {
+    const { data, error } = await client.supabase.from('teams').insert(payload).select('id').single();
+    if (error) return { error: error.message };
+    teamId = data.id as string;
   }
 
-  const { data, error } = await client.supabase.from('teams').insert(payload).select('id').single();
-  if (error) return { error: error.message };
-  return { id: data.id as string };
+  const coachSyncError = await syncTeamCoaches(client.supabase, teamId, coachIds);
+  if (coachSyncError) return { error: coachSyncError, id: teamId };
+  return { id: teamId };
 }
 
 export async function savePlayer(input: unknown) {

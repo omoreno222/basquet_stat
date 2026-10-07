@@ -25,6 +25,10 @@ interface BasketballCourtProps {
   logoInverted?: boolean;
   /** Pulsing wood strip on the attacking half. Visual only; taps pass through. */
   showAttackBar?: boolean;
+  /** Round marks in the bottom corners. Off on the live court; they sit on the hint bar. */
+  showAttackMarks?: boolean;
+  /** Unique when more than one court is mounted, so the home logo clip does not collide. */
+  logoClipId?: string;
 }
 
 /**
@@ -80,6 +84,8 @@ export function BasketballCourt({
   tableLabel = "Scorer's table",
   logoInverted = false,
   showAttackBar = false,
+  showAttackMarks = true,
+  logoClipId = 'capture-home-attack-logo',
 }: BasketballCourtProps) {
   const handleClick = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!onCourtTap) return;
@@ -232,7 +238,7 @@ export function BasketballCourt({
       {showAttackBar ? (
         <rect
           x={highlightRight ? COURT_LENGTH / 2 : 0}
-          y={0}
+          y={tableOnBottom ? 0 : COURT_WIDTH - ATTACK_BAR_H}
           width={COURT_LENGTH / 2}
           height={ATTACK_BAR_H}
           fill={ATTACK_BAR_FILL}
@@ -464,7 +470,7 @@ export function BasketballCourt({
       />
       
       {/* Bottom corner of each attacking half: round mark plus a triangle pointing at that basket. */}
-      {(() => {
+      {showAttackMarks ? (() => {
         const pad = 16;
         const leftX = pad;
         const rightX = COURT_LENGTH - ATTACK_MARK_W - pad;
@@ -479,7 +485,7 @@ export function BasketballCourt({
         return (
           <g style={{ pointerEvents: 'none' }}>
             <defs>
-              <clipPath id="capture-home-attack-logo">
+              <clipPath id={logoClipId}>
                 <circle cx={homeMark.cx} cy={homeMark.cy} r={homeMark.r} />
               </clipPath>
             </defs>
@@ -493,7 +499,7 @@ export function BasketballCourt({
                   width={homeMark.r * 2}
                   height={homeMark.r * 2}
                   preserveAspectRatio="xMidYMid slice"
-                  clipPath="url(#capture-home-attack-logo)"
+                  clipPath={`url(#${logoClipId})`}
                 />
                 <circle cx={homeMark.cx} cy={homeMark.cy} r={homeMark.r} fill="none" stroke="#1a1a1a" strokeWidth="3" />
                 <path d={homeMark.triangle} fill="#1a1a1a" stroke="#ffffff" strokeWidth="2.5" strokeLinejoin="miter" />
@@ -517,7 +523,7 @@ export function BasketballCourt({
             <path d={awayMark.triangle} fill={opponentColor} stroke={awayInk} strokeWidth="2.5" strokeLinejoin="miter" />
           </g>
         );
-      })()}
+      })() : null}
 
       <g
         role="img"

@@ -48,6 +48,8 @@ export function PlayerForm({ playerId, startEditing = false }: { playerId?: stri
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [incomingFile, setIncomingFile] = useState<File | null>(null);
+  const [incomingPreview, setIncomingPreview] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | undefined>(playerId);
   const [playerName, setPlayerName] = useState('');
   const [formData, setFormData] = useState({
@@ -136,12 +138,23 @@ export function PlayerForm({ playerId, startEditing = false }: { playerId?: stri
     return () => URL.revokeObjectURL(url);
   }, [pendingFile]);
 
+  useEffect(() => {
+    if (!incomingFile) {
+      setIncomingPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(incomingFile);
+    setIncomingPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [incomingFile]);
+
   const visibleTeams = teams.filter((team) => !formData.club_id || team.club_id === formData.club_id);
   const recordId = savedId;
 
   function cancelEditing() {
     if (savedForm) setFormData(savedForm);
     setPendingFile(null);
+    setIncomingFile(null);
     setError('');
     setEditing(false);
     if (recordId) router.replace(`/admin/players/${recordId}`);
@@ -205,23 +218,32 @@ export function PlayerForm({ playerId, startEditing = false }: { playerId?: stri
       return;
     }
 
+    // Detach the bytes from the file input. Resetting that input can drop the
+    // original File, and a later save would send the previous photo again.
+    const snapshot = new File([await file.arrayBuffer()], file.name, {
+      type: file.type,
+      lastModified: file.lastModified,
+    });
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
     if (!recordId) {
       setError('');
-      setPendingFile(file);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      setPendingFile(snapshot);
       return;
     }
 
+    setIncomingFile(snapshot);
     setUploading(true);
     setError('');
-    const result = await uploadPlayerAvatar(recordId, file);
+    const result = await uploadPlayerAvatar(recordId, snapshot);
     setUploading(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
     if (result.error) {
+      setIncomingFile(null);
       setError(result.error);
       return;
     }
     if ('url' in result && result.url) setAvatarUrl(result.url);
+    setIncomingFile(null);
   }
 
   async function handleAvatarRemove() {
@@ -244,7 +266,8 @@ export function PlayerForm({ playerId, startEditing = false }: { playerId?: stri
   const title = playerId
     ? (formData.full_name || playerName || t('trke_player_edit', 'Edit player'))
     : t('trke_player_new', 'New player');
-  const shownPhoto = previewUrl || avatarUrl;
+  const blobPreview = incomingPreview || previewUrl;
+  const shownPhoto = blobPreview || avatarUrl;
   const inputClass = editing ? fieldClass : lockedFieldClass;
 
   return (
@@ -301,10 +324,10 @@ export function PlayerForm({ playerId, startEditing = false }: { playerId?: stri
             </div>
           </div>
           <div className="mt-4 flex items-center gap-4">
-            {previewUrl ? (
-              <img src={previewUrl} alt={formData.full_name || playerName} className="h-16 w-16 rounded-full object-cover" />
+            {blobPreview ? (
+              <img src={blobPreview} alt={formData.full_name || playerName} className="h-16 w-16 rounded-full object-cover" />
             ) : avatarUrl ? (
-              <Image src={avatarUrl} alt={playerName} width={64} height={64} className="h-16 w-16 rounded-full object-cover" />
+              <Image key={avatarUrl} src={avatarUrl} alt={playerName} width={64} height={64} className="h-16 w-16 rounded-full object-cover" />
             ) : (
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-200 text-lg font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-300">
                 {(formData.full_name || playerName || '?').charAt(0).toUpperCase()}
@@ -322,11 +345,19 @@ export function PlayerForm({ playerId, startEditing = false }: { playerId?: stri
                     if (file) handleAvatarUpload(file);
                   }}
                 />
-                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="rounded bg-green-500 px-4 py-2 text-sm font-sans text-white hover:bg-green-700 disabled:opacity-50">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                    fileInputRef.current?.click();
+                  }}
+                  disabled={uploading}
+                  className="rounded bg-green-500 px-4 py-2 text-sm font-sans text-white hover:bg-green-700 disabled:opacity-50"
+                >
                   {uploading ? t('trke_loading', 'Loading...') : shownPhoto ? t('trke_player_change_photo', 'Change photo') : t('trke_player_add_photo', 'Add photo')}
                 </button>
                 {shownPhoto && (
-                  <button type="button" onClick={handleAvatarRemove} className="rounded bg-orange-500 px-4 py-2 text-sm font-sans text-white hover:bg-orange-700">
+                  <button type="button" onClick={handleAvatarRemove} disabled={uploading} className="rounded bg-orange-500 px-4 py-2 text-sm font-sans text-white hover:bg-orange-700 disabled:opacity-50">
                     {t('trke_player_remove_photo', 'Remove photo')}
                   </button>
                 )}

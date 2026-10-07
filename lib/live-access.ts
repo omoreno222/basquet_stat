@@ -36,3 +36,14 @@ export function userCanOpenLiveGame(params: {
 }): boolean {
   return params.status === 'live' && params.managesClub;
 }
+
+/** Deferred logging is for a team manager of this club, or a platform admin. */
+export function userCanLogDeferred(
+  roles: { role: string; club_id: string | null }[],
+  clubId: string | null,
+): boolean {
+  if (!clubId) return false;
+  return isPlatformAdmin(roles) || roles.some((role) => (
+    role.role === 'team_manager' && role.club_id === clubId
+  ));
+}

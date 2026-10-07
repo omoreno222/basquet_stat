@@ -1,7 +1,7 @@
 export const PUBLIC_ROUTES = ['/login', '/change-password'];
 
 /** Routes any authenticated user may open, regardless of role. */
-export const AUTHENTICATED_ROUTES = ['/profile'];
+export const AUTHENTICATED_ROUTES = ['/profile', '/games'];
 
 export const ROLE_ROUTES: Record<string, string[]> = {
   admin: ['/admin', '/team-manager', '/coach', '/parent', '/player'],

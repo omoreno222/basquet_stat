@@ -303,10 +303,6 @@ export function ProfileEditor({ profileId }: { profileId: string }) {
           }]);
         }
       }
-
-      // For coach/team_manager: load their teams
-      // (This requires a teams.coach_id or similar column that may not exist)
-      // Skipping for now as the schema doesn't have this relation clearly defined
     } catch (err) {
       console.error('Error loading linked data:', err);
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { periodInbound } from './period-inbound';
+import { arrowSide, periodInbound } from './period-inbound';
 
 describe('periodInbound', () => {
   it('leaves the opening period to the jump ball', () => {
@@ -24,5 +24,24 @@ describe('periodInbound', () => {
   it('keeps alternating through a second overtime', () => {
     expect(periodInbound(6, 'home')).toBe('away');
     expect(periodInbound(6, 'away')).toBe('home');
+  });
+
+  it('reverses the next period when a ball lodged before it', () => {
+    expect(periodInbound(2, 'home', 1)).toBe('home');
+    expect(periodInbound(3, 'home', 1)).toBe('away');
+    expect(periodInbound(2, 'away', 2)).toBe('away');
+  });
+});
+
+describe('arrowSide', () => {
+  it('gives the first alternating possession to the team that lost the tip', () => {
+    expect(arrowSide('home', 1, 0)).toBe('away');
+    expect(arrowSide('away', 1, 0)).toBe('home');
+  });
+
+  it('flips after each lodged ball and after each period start', () => {
+    expect(arrowSide('home', 1, 1)).toBe('home');
+    expect(arrowSide('home', 2, 0)).toBe('home');
+    expect(arrowSide('home', 2, 1)).toBe('away');
   });
 });

@@ -63,7 +63,7 @@ describe('decideAuthenticatedRoute', () => {
     })).toEqual({ action: 'next' });
 
     expect(decideAuthenticatedRoute({
-      pathname: '/team-manager/games/game-1/capture',
+      pathname: '/team-manager/games/live/game-1',
       roles: ['team_manager'],
       primaryRole: 'team_manager',
       mustChangePassword: false,
@@ -99,6 +99,35 @@ describe('decideAuthenticatedRoute', () => {
       mustChangePassword: false,
     });
     expect(decision).toEqual({ action: 'next' });
+  });
+
+  it('lets every role open a game evaluation', () => {
+    for (const role of ['admin', 'club_admin', 'team_manager', 'coach', 'parent', 'player']) {
+      expect(decideAuthenticatedRoute({
+        pathname: '/games/eval/11111111-1111-4111-8111-111111111111',
+        roles: [role],
+        primaryRole: role,
+        mustChangePassword: false,
+      })).toEqual({ action: 'next' });
+    }
+  });
+
+  it('still forces a password change before a game evaluation', () => {
+    expect(decideAuthenticatedRoute({
+      pathname: '/games/eval/11111111-1111-4111-8111-111111111111',
+      roles: ['coach'],
+      primaryRole: 'coach',
+      mustChangePassword: true,
+    })).toEqual({ action: 'redirect', to: '/change-password' });
+  });
+
+  it('keeps a coach out of the team manager area', () => {
+    expect(decideAuthenticatedRoute({
+      pathname: '/team-manager',
+      roles: ['coach'],
+      primaryRole: 'coach',
+      mustChangePassword: false,
+    })).toEqual({ action: 'redirect', to: '/coach' });
   });
 
   it('redirects / to the primary role dashboard', () => {

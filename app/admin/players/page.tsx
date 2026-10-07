@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { supabase } from '@/lib/supabase';
@@ -22,8 +22,23 @@ interface PlayerWithTeam extends Player {
 export default function PlayersPage() {
   const { t } = useLocaleTranslations();
   const [players, setPlayers] = useState<PlayerWithTeam[]>([]);
+  const [teamQuery, setTeamQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const teamNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const player of players) {
+      if (player.teams?.name) names.add(player.teams.name);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [players]);
+
+  const filteredPlayers = useMemo(() => {
+    const query = teamQuery.trim().toLowerCase();
+    if (!query) return players;
+    return players.filter((player) => (player.teams?.name || '').toLowerCase().includes(query));
+  }, [players, teamQuery]);
 
   useEffect(() => {
     loadData();
@@ -91,11 +106,35 @@ export default function PlayersPage() {
           {error && <div className="mb-4 px-4"><div className="rounded bg-red-100 p-3 text-red-700 dark:bg-red-950 dark:text-red-200">{error}</div></div>}
           <div className="px-4 py-6 sm:px-0">
             <div className="overflow-hidden bg-white shadow sm:rounded-md dark:bg-gray-900 dark:ring-1 dark:ring-white/10">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-gray-50 px-6 py-4 dark:border-white/10 dark:bg-gray-900">
+                <h2 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                  {t('trke_players', 'Players')}
+                  <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
+                    {teamQuery.trim() ? `${filteredPlayers.length} of ${players.length}` : players.length}
+                  </span>
+                </h2>
+                <input
+                  type="search"
+                  value={teamQuery}
+                  onChange={(event) => setTeamQuery(event.target.value)}
+                  list="player-team-names"
+                  placeholder={t('trke_players_search_team', 'Search by team')}
+                  aria-label={t('trke_players_search_team', 'Search by team')}
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 sm:w-72 dark:border-white/20 dark:bg-gray-950 dark:text-gray-100"
+                />
+                <datalist id="player-team-names">
+                  {teamNames.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+              </div>
               <ul className="divide-y divide-gray-200 dark:divide-white/10">
                 {players.length === 0 ? (
                   <li className="px-6 py-4 text-gray-500 dark:text-gray-400">No players found</li>
+                ) : filteredPlayers.length === 0 ? (
+                  <li className="px-6 py-4 text-gray-500 dark:text-gray-400">{t('trke_players_no_team_match', 'No players match this team')}</li>
                 ) : (
-                  players.map((player) => (
+                  filteredPlayers.map((player) => (
                     <li key={player.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-white/5">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="flex items-center gap-4">

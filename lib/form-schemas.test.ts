@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { incorporatePlayerSchema, opponentBenchAddSchema, opponentRosterSchema, teamSchema } from './form-schemas';
+import {
+  incorporatePlayerSchema,
+  opponentBenchAddSchema,
+  opponentRosterSchema,
+  parentPlayerExclusiveMessage,
+  playerCoachExclusiveMessage,
+  teamSchema,
+  toggleUserRole,
+  userCreateSchema,
+} from './form-schemas';
 
 const validTeam = {
   name: 'Senior A',
@@ -28,6 +37,35 @@ describe('teamSchema fiba_short_name', () => {
     expect(teamSchema.safeParse({ ...validTeam, fiba_short_name: 'BA' }).success).toBe(false);
     expect(teamSchema.safeParse({ ...validTeam, fiba_short_name: 'BARR' }).success).toBe(false);
     expect(teamSchema.safeParse({ ...validTeam, fiba_short_name: 'B-R' }).success).toBe(false);
+  });
+});
+
+const coachA = '22222222-2222-4222-8222-222222222222';
+const coachB = '33333333-3333-4333-8333-333333333333';
+const coachC = '44444444-4444-4444-8444-444444444444';
+const coachD = '55555555-5555-4555-8555-555555555555';
+
+describe('teamSchema coach_ids', () => {
+  it('accepts a team with no coaches', () => {
+    const parsed = teamSchema.parse(validTeam);
+    expect(parsed.coach_ids).toEqual([]);
+  });
+
+  it('accepts three coaches', () => {
+    const parsed = teamSchema.parse({ ...validTeam, coach_ids: [coachA, coachB, coachC] });
+    expect(parsed.coach_ids).toEqual([coachA, coachB, coachC]);
+  });
+
+  it('rejects a fourth coach', () => {
+    const parsed = teamSchema.safeParse({ ...validTeam, coach_ids: [coachA, coachB, coachC, coachD] });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.issues[0]?.message).toBe('A team can have at most 3 coaches');
+  });
+
+  it('rejects the same coach twice', () => {
+    const parsed = teamSchema.safeParse({ ...validTeam, coach_ids: [coachA, coachA] });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.issues[0]?.message).toBe('Each coach can only be added once');
   });
 });
 
@@ -227,5 +265,32 @@ describe('incorporatePlayerSchema', () => {
     });
     expect(parsed.success).toBe(false);
     if (!parsed.success) expect(parsed.error.issues[0]?.message).toBe('at most 12 players');
+  });
+});
+
+describe('user role exclusivity', () => {
+  const user = {
+    email: 'coach1@lestonna.com',
+    full_name: 'Entrenador',
+    club_id: '11111111-1111-4111-8111-111111111111',
+  };
+
+  it('accepts a parent who is also a coach', () => {
+    expect(userCreateSchema.safeParse({ ...user, roles: ['parent', 'coach'] }).success).toBe(true);
+    expect(toggleUserRole(['parent'], 'coach')).toEqual(['parent', 'coach']);
+  });
+
+  it('drops coach when player is selected', () => {
+    expect(toggleUserRole(['coach', 'team_manager'], 'player')).toEqual(['team_manager', 'player']);
+    const parsed = userCreateSchema.safeParse({ ...user, roles: ['player', 'coach'] });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.issues[0]?.message).toBe(playerCoachExclusiveMessage);
+  });
+
+  it('drops player when parent is selected', () => {
+    expect(toggleUserRole(['player'], 'parent')).toEqual(['parent']);
+    const parsed = userCreateSchema.safeParse({ ...user, roles: ['parent', 'player'] });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.issues[0]?.message).toBe(parentPlayerExclusiveMessage);
   });
 });

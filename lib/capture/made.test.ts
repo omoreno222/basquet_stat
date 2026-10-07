@@ -79,17 +79,31 @@ describe('made play schema', () => {
     expect(commitCapturePlaySchema.safeParse(made()).success).toBe(true);
   });
 
-  it('accepts one, two, or three free throws only together with a fouler', () => {
+  it('accepts one free throw with the foul kind, and a rebound only when that throw is missed', () => {
     const foulerId = '33333333-3333-4333-8333-333333333333';
-    expect(commitCapturePlaySchema.safeParse(made({ foulerId, throws: ['made'] })).success).toBe(true);
-    expect(commitCapturePlaySchema.safeParse(made({ foulerId, throws: ['made', 'miss'] })).success).toBe(true);
-    expect(commitCapturePlaySchema.safeParse(made({ foulerId, throws: ['miss', 'made', 'miss'] })).success).toBe(true);
-    expect(commitCapturePlaySchema.safeParse(made({ throws: ['miss'] })).success).toBe(false);
-    expect(commitCapturePlaySchema.safeParse(made({ foulerId, throws: [] })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(made({ foulerId, foulKind: 'personal', throws: ['made'] })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(made({ foulerId, foulKind: 'personal', throws: ['miss'], rebounderId: other })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(made({ foulerId, foulKind: 'personal', throws: ['miss'], unknownRebound: true })).success).toBe(true);
     expect(commitCapturePlaySchema.safeParse(made({
       foulerId,
-      throws: ['made', 'made', 'made', 'made'],
+      foulKind: 'personal',
+      throws: ['miss'],
+      rebounderId: other,
+      unknownRebound: true,
     })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(made({ foulerId, foulKind: 'personal', throws: ['made'], unknownRebound: true })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(made({ foulerId, foulKind: 'personal', throws: ['miss'] })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(made({ foulerId, foulKind: 'flagrant', throws: ['miss'] })).success).toBe(true);
+    expect(commitCapturePlaySchema.safeParse(made({
+      foulerId,
+      foulKind: 'flagrant',
+      throws: ['miss'],
+      rebounderId: other,
+    })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(made({ foulerId, throws: ['made'] })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(made({ foulerId, foulKind: 'personal', throws: ['made', 'miss'] })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(made({ throws: ['miss'] })).success).toBe(false);
+    expect(commitCapturePlaySchema.safeParse(made({ foulerId, foulKind: 'personal', throws: [] })).success).toBe(false);
   });
 
   it('stops the clock only when the basket includes a personal foul', () => {
@@ -101,6 +115,7 @@ describe('made play schema', () => {
     expect(commitCapturePlaySchema.safeParse(made({ assistId: id })).success).toBe(false);
     expect(commitCapturePlaySchema.safeParse(made({
       foulerId: id,
+      foulKind: 'personal',
       throws: ['made'],
     })).success).toBe(false);
   });

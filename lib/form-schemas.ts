@@ -2,6 +2,34 @@ import { z } from 'zod';
 import { validateEmail, validatePassword, validatePhone } from '@/lib/profile-utils';
 
 export const userRoleValues = ['admin', 'club_admin', 'team_manager', 'coach', 'parent', 'player'] as const;
+export type UserRoleValue = (typeof userRoleValues)[number];
+
+export const playerCoachExclusiveMessage = 'A user cannot be a player and a coach at the same time';
+export const parentPlayerExclusiveMessage = 'A user cannot be a parent and a player at the same time';
+
+const roleConflicts: Partial<Record<UserRoleValue, UserRoleValue[]>> = {
+  player: ['coach', 'parent'],
+  coach: ['player'],
+  parent: ['player'],
+};
+
+export function toggleUserRole(roles: UserRoleValue[], role: UserRoleValue): UserRoleValue[] {
+  if (roles.includes(role)) return roles.filter((item) => item !== role);
+  const drop = new Set(roleConflicts[role] ?? []);
+  return [...roles.filter((item) => !drop.has(item)), role];
+}
+
+function rejectIncompatibleRoles(roles: string[], ctx: z.RefinementCtx) {
+  if (roles.includes('player') && roles.includes('coach')) {
+    ctx.addIssue({ code: 'custom', message: playerCoachExclusiveMessage });
+  }
+  if (roles.includes('player') && roles.includes('parent')) {
+    ctx.addIssue({ code: 'custom', message: parentPlayerExclusiveMessage });
+  }
+}
+
+const userRoleListSchema = z.array(z.enum(userRoleValues)).min(1, 'At least one role must be selected').superRefine(rejectIncompatibleRoles);
+
 export const teamCategoryValues = ['premini', 'mini', 'infantil', 'cadete', 'junior', 'sub22', 'senior'] as const;
 export const teamGenderValues = ['male', 'female', 'mixed'] as const;
 export const gameStatusValues = ['scheduled', 'live', 'final'] as const;
@@ -58,7 +86,11 @@ export const teamSchema = z.object({
   name: z.string().trim().min(1, 'Team name is required').max(200),
   fiba_short_name: optionalFibaShortName,
   club_id: optionalUuid,
-  coach_id: optionalUuid,
+  coach_ids: z.array(z.string().uuid()).max(3, 'A team can have at most 3 coaches').default([]).superRefine((ids, ctx) => {
+    if (new Set(ids).size !== ids.length) {
+      ctx.addIssue({ code: 'custom', message: 'Each coach can only be added once' });
+    }
+  }),
   season_id: z.string().uuid('Season is required'),
   category: z.enum(teamCategoryValues),
   gender: z.enum(teamGenderValues),
@@ -185,7 +217,7 @@ export const gameSchema = z.object({
 export const userCreateSchema = z.object({
   email: z.string().trim().refine(validateEmail, 'Invalid email address'),
   full_name: z.string().trim().max(200).optional().default(''),
-  roles: z.array(z.enum(userRoleValues)).min(1, 'At least one role must be selected'),
+  roles: userRoleListSchema,
   club_id: optionalUuid,
 });
 
@@ -194,7 +226,7 @@ export const userUpdateSchema = userCreateSchema.extend({
 });
 
 export const userRolesSchema = z.object({
-  roles: z.array(z.enum(userRoleValues)).min(1, 'At least one role must be selected'),
+  roles: userRoleListSchema,
   clubId: optionalUuid,
 });
 

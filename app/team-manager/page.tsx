@@ -4,11 +4,14 @@ import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ChartColumn } from 'lucide-react';
 import { SeasonMathLogo } from '@/components/SeasonMathLogo';
 import { Profile, Game } from '@/lib/types';
 import { Club } from '@/types/database';
 import { ClubLogo } from '@/components/ClubLogo';
 import { TeamManagerNavPills } from '@/components/NavPills';
+import { userCanLogDeferred } from '@/lib/live-access';
+import { useLocaleTranslations } from '@/lib/use-locale-translations';
 
 interface GameWithTeam extends Game {
   teams?: { 
@@ -23,9 +26,11 @@ interface GameWithTeam extends Game {
 
 export default function TeamManagerDashboard() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [roles, setRoles] = useState<{ role: string; club_id: string | null }[]>([]);
   const [games, setGames] = useState<GameWithTeam[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+  const { t } = useLocaleTranslations();
 
   const checkUser = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -48,9 +53,10 @@ export default function TeamManagerDashboard() {
     // Check if user has team_manager or admin role (multi-role support)
     const { data: userRoles } = await supabase
       .from('profile_roles')
-      .select('role')
+      .select('role, club_id')
       .eq('profile_id', user.id);
 
+    setRoles(userRoles ?? []);
     const roles = userRoles?.map(r => r.role) || [profileData.role];
     const hasAccess = roles.includes('team_manager') || roles.includes('admin');
 
@@ -122,8 +128,8 @@ export default function TeamManagerDashboard() {
                 <li className="px-6 py-4 text-gray-500">No games available</li>
               ) : (
                 games.map((game) => (
-                  <li key={game.id} className="px-6 py-4 hover:bg-gray-50">
-                    <Link href={`/team-manager/games/${game.id}`}>
+                  <li key={game.id} className="flex items-center gap-3 px-6 py-4 hover:bg-gray-50">
+                    <Link href={`/team-manager/games/${game.id}`} className="min-w-0 flex-1">
                       <div className="flex items-center justify-between cursor-pointer">
                         <div className="flex items-center gap-3">
                           {game.teams?.clubs && (
@@ -156,6 +162,21 @@ export default function TeamManagerDashboard() {
                         </div>
                       </div>
                     </Link>
+                    <Link
+                      href={`/games/eval/${game.id}`}
+                      className="inline-flex shrink-0 items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700"
+                    >
+                      {t('trke_eval_open', 'Evaluation')}
+                    </Link>
+                    {userCanLogDeferred(roles, game.teams?.clubs?.id ?? null) ? (
+                      <Link
+                        href={`/team-manager/games/deferred/${game.id}`}
+                        aria-label={t('trke_deferred_open', 'Log from video')}
+                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded border border-gray-300 bg-white text-gray-900 hover:bg-gray-100 dark:border-white/20 dark:bg-gray-950 dark:text-gray-100"
+                      >
+                        <ChartColumn className="h-5 w-5" aria-hidden="true" />
+                      </Link>
+                    ) : null}
                   </li>
                 ))
               )}

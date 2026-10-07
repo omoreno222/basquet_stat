@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import Link from 'next/link';
 import { Pencil } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { ClubLogo } from '@/components/ClubLogo';
@@ -17,10 +18,66 @@ type TeamDraft = {
   fiba_short_name: string;
   season_id: string;
   club_id: string;
-  coach_id: string;
+  coach_ids: string[];
   category: TeamCategory;
   gender: TeamGender;
 };
+
+type CoachProfile = { full_name: string | null; email: string | null; avatar_url: string | null };
+
+type CoachOption = {
+  id: string;
+  name: string;
+  email: string;
+  avatar_url: string | null;
+};
+
+function coachOption(id: string, profile: CoachProfile | CoachProfile[] | null): CoachOption {
+  const person = Array.isArray(profile) ? profile[0] : profile;
+  const fullName = person?.full_name?.trim() || '';
+  const email = person?.email?.trim() || '';
+  return {
+    id,
+    name: fullName || email || id,
+    email: fullName ? email : '',
+    avatar_url: person?.avatar_url || null,
+  };
+}
+
+function mergeCoachOptions(clubCoaches: CoachOption[], pinned: CoachOption[]) {
+  const map = new Map<string, CoachOption>();
+  for (const coach of [...clubCoaches, ...pinned]) {
+    const existing = map.get(coach.id);
+    if (!existing) {
+      map.set(coach.id, coach);
+      continue;
+    }
+    map.set(coach.id, {
+      ...existing,
+      avatar_url: existing.avatar_url || coach.avatar_url,
+      email: existing.email || coach.email,
+    });
+  }
+  return [...map.values()].sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+}
+
+function CoachPortrait({ coach }: { coach: CoachOption }) {
+  return (
+    <>
+      {coach.avatar_url ? (
+        <Image src={coach.avatar_url} alt="" width={40} height={40} className="h-10 w-10 shrink-0 rounded-full object-cover" />
+      ) : (
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
+          <span className="text-sm font-medium text-gray-500 dark:text-gray-300">{coach.name.charAt(0).toUpperCase()}</span>
+        </div>
+      )}
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium text-gray-900 dark:text-gray-100">{coach.name}</span>
+        {coach.email && <span className="block truncate text-xs text-gray-500 dark:text-gray-400">{coach.email}</span>}
+      </span>
+    </>
+  );
+}
 
 type RosterPlayer = {
   id: string;
@@ -78,13 +135,15 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
   const [clubs, setClubs] = useState<Club[]>([]);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [userClubId, setUserClubId] = useState<string | null>(null);
-  const [coaches, setCoaches] = useState<{ id: string; label: string }[]>([]);
+  const [coaches, setCoaches] = useState<CoachOption[]>([]);
+  const [pinnedCoaches, setPinnedCoaches] = useState<CoachOption[]>([]);
+  const [coachesLoadError, setCoachesLoadError] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     fiba_short_name: '',
     season_id: '',
     club_id: '',
-    coach_id: '',
+    coach_ids: [] as string[],
     category: 'senior' as TeamCategory,
     gender: 'mixed' as TeamGender,
   });
@@ -105,7 +164,7 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
       const clubAdmin = roles?.find((role) => (role.role === 'club_admin' || role.role === 'admin') && role.club_id !== null);
       const clubId = clubAdmin?.club_id || null;
 
-      const [seasonsData, clubsData, teamData, rosterData] = await Promise.all([
+      const [seasonsData, clubsData, teamData, rosterData, coachData] = await Promise.all([
         supabase.from('seasons').select('*').order('start_date', { ascending: false }),
         platformAdmin
           ? supabase.from('clubs').select('*').order('name')
@@ -118,6 +177,9 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
         teamId
           ? supabase.from('players').select('id, full_name, jersey_number, position, date_of_birth, avatar_url').eq('team_id', teamId).order('jersey_number')
           : Promise.resolve({ data: [] as RosterPlayer[], error: null }),
+        teamId
+          ? supabase.from('team_coaches').select('profile_id, profiles(full_name, email, avatar_url)').eq('team_id', teamId)
+          : Promise.resolve({ data: [] as { profile_id: string; profiles: CoachProfile | null }[], error: null }),
       ]);
 
       if (cancelled) return;
@@ -131,15 +193,18 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
         if (teamData.error || !teamData.data) {
           setMissing(true);
         } else {
+          const assigned = coachData.error ? [] : (coachData.data || []).map((row) => coachOption(row.profile_id, row.profiles));
           const draft: TeamDraft = {
             name: teamData.data.name,
             fiba_short_name: teamData.data.fiba_short_name || '',
             season_id: teamData.data.season_id,
             club_id: teamData.data.club_id || '',
-            coach_id: teamData.data.coach_id || '',
+            coach_ids: assigned.map((coach) => coach.id),
             category: teamData.data.category || 'senior',
             gender: teamData.data.gender || 'mixed',
           };
+          setPinnedCoaches(assigned);
+          setCoachesLoadError(coachData.error ? coachData.error.message : '');
           setFormData(draft);
           setSavedForm(draft);
         }
@@ -158,7 +223,7 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
           setSavedPlayers(roster);
         }
       } else {
-        setFormData((current) => ({ ...current, club_id: clubId || '', coach_id: '' }));
+        setFormData((current) => ({ ...current, club_id: clubId || '', coach_ids: [] }));
       }
 
       setLoading(false);
@@ -178,16 +243,14 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
     async function loadCoaches() {
       const { data } = await supabase
         .from('profile_roles')
-        .select('profile_id, profiles(full_name, email)')
+        .select('profile_id, profiles(full_name, email, avatar_url)')
         .eq('role', 'coach')
         .eq('club_id', clubId);
       if (cancelled) return;
-      const options = (data || []).map((row) => {
-        const profile = row.profiles as { full_name: string | null; email: string | null } | { full_name: string | null; email: string | null }[] | null;
-        const person = Array.isArray(profile) ? profile[0] : profile;
-        const label = person?.full_name?.trim() || person?.email || row.profile_id;
-        return { id: row.profile_id, label };
-      });
+      const options = (data || []).map((row) => coachOption(
+        row.profile_id,
+        row.profiles as CoachProfile | CoachProfile[] | null,
+      ));
       setCoaches(options);
     }
 
@@ -196,6 +259,28 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
       cancelled = true;
     };
   }, [formData.club_id, userClubId, loading]);
+
+  function coachMessage(message: string) {
+    if (message === 'A team can have at most 3 coaches') return t('trke_team_coaches_limit', 'A team can have at most 3 coaches');
+    if (message === 'Each coach must be a user with the coach role in this club') return t('trke_team_coach_invalid', 'Each coach must be a user with the coach role in this club');
+    if (message === 'Each coach can only be added once') return t('trke_team_coaches_duplicate', 'Each coach can only be added once');
+    return message;
+  }
+
+  function toggleCoach(id: string) {
+    if (!editing) return;
+    if (formData.coach_ids.includes(id)) {
+      setError('');
+      setFormData({ ...formData, coach_ids: formData.coach_ids.filter((item) => item !== id) });
+      return;
+    }
+    if (formData.coach_ids.length >= 3) {
+      setError(t('trke_team_coaches_limit', 'A team can have at most 3 coaches'));
+      return;
+    }
+    setError('');
+    setFormData({ ...formData, coach_ids: [...formData.coach_ids, id] });
+  }
 
   function updatePlayer(id: string, patch: Partial<RosterPlayer>) {
     setPlayers((current) => current.map((player) => (player.id === id ? { ...player, ...patch } : player)));
@@ -223,6 +308,10 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (blockSubmit.current || (teamId && !editing)) return;
+    if (coachesLoadError) {
+      setError(coachesLoadError);
+      return;
+    }
     setSaving(true);
     setError('');
     const result = await saveTeam({
@@ -232,7 +321,8 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
     });
     if (result.error || !result.id) {
       setSaving(false);
-      setError(result.error || 'Could not save the team');
+      setError(coachMessage(result.error || 'Could not save the team'));
+      if (!teamId && result.id) router.replace(`/admin/teams/${result.id}?edit=1`);
       return;
     }
 
@@ -255,6 +345,7 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
         }
       }
       const draft = { ...formData, club_id: formData.club_id || userClubId || '' };
+      setPinnedCoaches((current) => current.filter((coach) => draft.coach_ids.includes(coach.id)));
       const roster = [...players].sort((left, right) => left.jersey_number - right.jersey_number);
       setFormData(draft);
       setSavedForm(draft);
@@ -271,6 +362,8 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
   }
 
   const title = teamId ? (formData.name || t('trke_team_edit', 'Edit team')) : t('trke_team_new', 'New team');
+  const coachChoices = mergeCoachOptions(coaches, pinnedCoaches);
+  const visibleCoaches = editing ? coachChoices : coachChoices.filter((coach) => formData.coach_ids.includes(coach.id));
   const selectedClub = clubs.find((club) => club.id === (formData.club_id || userClubId)) || null;
   const lockedClub = selectedClub?.name || '';
   const inputClass = editing ? fieldClass : lockedFieldClass;
@@ -331,7 +424,7 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
                   required
                   value={formData.club_id}
                   disabled={Boolean(teamId)}
-                  onChange={(event) => setFormData({ ...formData, club_id: event.target.value, coach_id: '' })}
+                  onChange={(event) => setFormData({ ...formData, club_id: event.target.value, coach_ids: [] })}
                   className={teamId ? lockedFieldClass : fieldClass}
                 >
                   <option value="">{t('trke_team_club', 'Club')}</option>
@@ -363,20 +456,44 @@ export function TeamForm({ teamId, startEditing = false }: { teamId?: string; st
                 ))}
               </select>
             </div>
-            <div>
-              <label className={labelClass}>{t('trke_team_coach', 'Coach')}</label>
-              <select
-                value={formData.coach_id}
-                disabled={!editing}
-                onChange={(event) => setFormData({ ...formData, coach_id: event.target.value })}
-                className={inputClass}
-              >
-                <option value="">{t('trke_team_coach_none', 'No coach')}</option>
-                {coaches.map((coach) => (
-                  <option key={coach.id} value={coach.id}>{coach.label}</option>
-                ))}
-              </select>
-              <p className={hintClass}>{t('trke_team_coach_hint', 'Optional. A user with the coach role in this club.')}</p>
+            <div className="md:col-span-2">
+              <div className="mb-2 flex items-baseline justify-between gap-3">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('trke_team_coaches', 'Coaches')}</span>
+                {editing && <span className="text-xs text-gray-500 dark:text-gray-400">{formData.coach_ids.length}/3</span>}
+              </div>
+              {visibleCoaches.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400">{t('trke_team_coach_none', 'No coaches')}</p>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  {visibleCoaches.map((coach) => {
+                    const selected = formData.coach_ids.includes(coach.id);
+                    const cardClass = `flex min-w-52 max-w-full items-center gap-3 rounded-lg border px-3 py-2 text-left ${
+                      editing && selected
+                        ? 'border-green-600 bg-green-50 dark:border-green-500 dark:bg-green-950/40'
+                        : 'border-gray-200 bg-white dark:border-white/10 dark:bg-gray-950'
+                    }`;
+                    if (!editing) {
+                      return (
+                        <Link key={coach.id} href={`/admin/users/${coach.id}`} className={`${cardClass} hover:border-gray-400 dark:hover:border-gray-500`}>
+                          <CoachPortrait coach={coach} />
+                        </Link>
+                      );
+                    }
+                    return (
+                      <button
+                        key={coach.id}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => toggleCoach(coach.id)}
+                        className={`${cardClass} cursor-pointer hover:border-gray-400 dark:hover:border-gray-500`}
+                      >
+                        <CoachPortrait coach={coach} />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <p className={hintClass}>{t('trke_team_coaches_hint', 'Optional. Up to 3 users with the coach role in this club.')}</p>
             </div>
             <div>
               <label className={labelClass}>{t('trke_team_season', 'Season')} *</label>
