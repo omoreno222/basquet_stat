@@ -382,6 +382,7 @@ export default async function GameEvalPage({
   }
 
   const gameColumns = 'id, team_id, opponent_name, team_score, opponent_score, current_period, possession, clock_running, clock_remaining_ms, clock_synced_at, updated_at, status, teams(name)';
+  const legacyColumns = 'id, team_id, opponent_name, team_score, opponent_score, current_period, possession, clock_running, clock_remaining_ms, updated_at, status, teams(name)';
   let { data: game, error: gameError } = await supabase
     .from('games')
     .select(gameColumns)
@@ -390,10 +391,10 @@ export default async function GameEvalPage({
   if (gameError && String(gameError.message).includes('clock_synced_at')) {
     const legacy = await supabase
       .from('games')
-      .select(gameColumns.replace('clock_synced_at, ', ''))
+      .select(legacyColumns)
       .eq('id', id)
       .single();
-    game = legacy.data;
+    game = legacy.data ? { ...legacy.data, clock_synced_at: null } : null;
     gameError = legacy.error;
   }
 
