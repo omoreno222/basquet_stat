@@ -60,6 +60,7 @@ export const turnoverErrorCodes = [
   'turnover_eliminated',
   'turnover_clock',
   'turnover_period',
+  'turnover_final',
   'turnover_shape',
 ] as const;
 
@@ -293,6 +294,7 @@ export const foulErrorCodes = [
   'foul_victim',
   'foul_eliminated',
   'foul_period',
+  'foul_final',
   'foul_shape',
 ] as const;
 
@@ -330,6 +332,7 @@ export const substitutionErrorCodes = [
   'substitution_out',
   'substitution_in',
   'substitution_eliminated',
+  'substitution_final',
   'substitution_shape',
 ] as const;
 
@@ -344,6 +347,8 @@ const gameFields = {
   periodNumber: z.number().int().min(1).max(20),
   clockRemainingMs: z.number().int().min(0).max(600000),
   side: z.enum(['home', 'away']),
+  /** Log a play at its own period and time without moving the live clock or possession. */
+  backfill: z.boolean().optional(),
 };
 
 const turnoverPlaySchema = z.object({
@@ -617,3 +622,10 @@ export const editFoulReceivedSchema = z.object({
 });
 
 export type EditFoulReceivedInput = z.infer<typeof editFoulReceivedSchema>;
+
+export const deleteCapturePlaySchema = z.object({
+  gameId: z.string().uuid(),
+  eventId: z.string().uuid(),
+});
+
+export type DeleteCapturePlayInput = z.infer<typeof deleteCapturePlaySchema>;

@@ -203,10 +203,10 @@ export default function GamesPage() {
                           </HoverLabel>
                           <EditLink href={`/admin/games/${game.id}`} label={`${t('trke_edit', 'Edit')} ${game.opponent_name}`} />
                           {platformAdmin ? (
-                            <HoverLabel label={t('trke_deferred_open', 'Log from video')}>
+                            <HoverLabel label={t('trke_capture_open', 'Open the court')}>
                               <Link
-                                href={`/team-manager/games/deferred/${game.id}`}
-                                aria-label={t('trke_deferred_open', 'Log from video')}
+                                href={`/team-manager/games/live/${game.id}`}
+                                aria-label={t('trke_capture_open', 'Open the court')}
                                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-gray-300 bg-white text-gray-900 hover:bg-gray-100 dark:border-white/20 dark:bg-gray-950 dark:text-gray-100"
                               >
                                 <ChartColumn className="h-4 w-4" aria-hidden="true" />

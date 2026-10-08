@@ -118,7 +118,6 @@ interface DeferredSequencePopupProps {
   opponentColor?: string;
   opponentCode?: string;
   onClose: () => void;
-  onPlace: (periodNumber: number, clockRemainingMs: number) => void;
   onSubmit: (input: DeferredSequenceInput) => Promise<string | null>;
 }
 
@@ -196,7 +195,6 @@ export function DeferredSequencePopup({
   opponentColor = '#737373',
   opponentCode = '',
   onClose,
-  onPlace,
   onSubmit,
 }: DeferredSequencePopupProps) {
   const [play, setPlay] = useState<SequenceId | null>(null);
@@ -385,12 +383,11 @@ export function DeferredSequencePopup({
     if (!side) return false;
     if (play === 'timeout') return true;
     if (play === 'shot_clock' || play === 'eight_seconds' || play === 'five_seconds') {
-      return side === possession;
+      return true;
     }
     if (play === 'substitution') return swaps.length >= 1 && swaps.length <= 5;
     if (play === 'turnover') {
-      return side === possession
-        && !!coord
+      return !!coord
         && !!reason
         && turnoverPlayers.some((player) => player.id === shooterId);
     }
@@ -567,8 +564,6 @@ export function DeferredSequencePopup({
                       onClick={() => {
                         setQuarter(item);
                         setCoord(null);
-                        const ms = clockFromText(clockText);
-                        if (ms != null) onPlace(item, ms);
                       }}
                       className={`min-h-11 rounded-lg border text-sm font-bold ${quarter === item ? 'border-black bg-black text-white' : 'border-neutral-300'}`}
                     >
@@ -589,8 +584,6 @@ export function DeferredSequencePopup({
                   onChange={(event) => {
                     const next = event.target.value.replace(/[^\d:]/g, '').slice(0, 5);
                     setClockText(next);
-                    const ms = clockFromText(next);
-                    if (ms != null) onPlace(quarter, ms);
                   }}
                   className="mt-1 block min-h-11 w-full rounded border border-neutral-300 bg-white px-2 text-sm text-neutral-900"
                   style={{ colorScheme: 'light' }}
@@ -890,9 +883,6 @@ export function DeferredSequencePopup({
                 </div>
               ) : null}
 
-              {(play === 'turnover' || play === 'shot_clock' || play === 'eight_seconds' || play === 'five_seconds') && side && side !== possession ? (
-                <p className="text-sm text-red-700">{t('trke_turnover_hint_wrong_side', 'Only the team with the ball can turn it over')}</p>
-              ) : null}
               {error ? <p className="text-sm text-red-700">{error}</p> : null}
             </div>
           )}

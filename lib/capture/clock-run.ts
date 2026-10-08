@@ -52,3 +52,28 @@ export function liveRemaining(
   const raw = !running || endsAt == null ? remainingMs : endsAt - now;
   return Math.max(0, Math.round(raw));
 }
+
+/**
+ * The stored remaining time is a sample, not a live counter.
+ * While the clock is running, subtract the wall time since that sample.
+ */
+export function displayedRemaining(
+  running: boolean,
+  remainingMs: number,
+  syncedAt: string | null | undefined,
+  now: number,
+): number {
+  const base = Number.isFinite(remainingMs) ? remainingMs : 0;
+  if (!running || !syncedAt) return Math.max(0, Math.round(base));
+  const sampled = Date.parse(syncedAt);
+  if (!Number.isFinite(sampled)) return Math.max(0, Math.round(base));
+  const elapsed = Math.max(0, now - sampled);
+  return Math.max(0, Math.round(base - elapsed));
+}
+
+export function formatGameClock(ms: number): string {
+  const safe = Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : 0;
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}

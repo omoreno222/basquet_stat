@@ -41,10 +41,7 @@ function captureReturnPath(gameId: string | undefined, returnTo: string | undefi
   if (!gameId || !returnTo) return null;
   if (!returnTo.startsWith('/') || returnTo.startsWith('//') || returnTo.includes('\\')) return null;
   const pathname = returnTo.split('?')[0]?.split('#')[0] ?? '';
-  if (
-    pathname !== `/team-manager/games/live/${gameId}`
-    && pathname !== `/team-manager/games/deferred/${gameId}`
-  ) return null;
+  if (pathname !== `/team-manager/games/live/${gameId}`) return null;
   return pathname;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clockFace, liveRemaining, sameClockFace, scoreboardClock } from './clock-run';
+import { clockFace, displayedRemaining, formatGameClock, liveRemaining, sameClockFace, scoreboardClock } from './clock-run';
 
 describe('liveRemaining', () => {
   it('keeps a stopped clock on the frozen time', () => {
@@ -13,6 +13,38 @@ describe('liveRemaining', () => {
 
   it('does not go below zero', () => {
     expect(liveRemaining(true, 100, 500, 900)).toBe(0);
+  });
+});
+
+describe('displayedRemaining', () => {
+  const syncedAt = '2026-10-08T05:40:58.000Z';
+  const now = Date.parse('2026-10-08T05:43:46.000Z');
+
+  it('keeps a stopped clock on the stored time', () => {
+    expect(displayedRemaining(false, 347_238, syncedAt, now)).toBe(347_238);
+  });
+
+  it('subtracts the wall time since the running sample', () => {
+    expect(displayedRemaining(true, 559_663, syncedAt, now)).toBe(559_663 - 168_000);
+  });
+
+  it('does not add time when the sample is ahead of now', () => {
+    expect(displayedRemaining(true, 559_663, '2026-10-08T05:44:00.000Z', now)).toBe(559_663);
+  });
+
+  it('uses the stored time when the sample is missing', () => {
+    expect(displayedRemaining(true, 559_663, null, now)).toBe(559_663);
+  });
+
+  it('does not go below zero', () => {
+    expect(displayedRemaining(true, 1_000, syncedAt, now)).toBe(0);
+  });
+});
+
+describe('formatGameClock', () => {
+  it('shows minutes and seconds', () => {
+    expect(formatGameClock(559_663)).toBe('9:20');
+    expect(formatGameClock(0)).toBe('0:00');
   });
 });
 

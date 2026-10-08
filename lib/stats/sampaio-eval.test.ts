@@ -116,6 +116,17 @@ describe('evaluateGame', () => {
     expect(row!.assists).toBe(5);
     expect(row!.turnovers).toBe(3);
     expect(row!.points).toBe(13);
+    expect(formatShotLine(result.homeTeam.ftMade, result.homeTeam.ftAtt, 'en')).toBe('2/15 13.3%');
+    expect(formatShotLine(result.homeTeam.twoMade, result.homeTeam.twoAtt, 'en')).toBe('4/81 4.9%');
+    expect(formatShotLine(result.homeTeam.threeMade, result.homeTeam.threeAtt, 'en')).toBe('1/1 100%');
+    expect(result.homeTeam.drb).toBe(23);
+    expect(result.homeTeam.orb).toBe(16);
+    expect(result.homeTeam.foulsCommitted).toBe(4);
+    expect(result.homeTeam.foulsReceived).toBe(1);
+    expect(formatShotLine(result.awayTeam.ftMade, result.awayTeam.ftAtt, 'en')).toBe('0/15 0%');
+    expect(result.awayTeam.drb).toBe(24);
+    expect(result.awayTeam.orb).toBe(12);
+    expect(result.awayTeam.foulsCommitted).toBe(1);
 
     const dressed = result.home.find((player) => player.id === 'bench');
     expect(formatShotLine(dressed!.twoMade, dressed!.twoAtt, 'en')).toBe('0/0');
@@ -152,6 +163,8 @@ describe('evaluateGame', () => {
     });
 
     expect(result.away).toEqual([]);
+    expect(result.awayTeam.orb).toBe(1);
+    expect(result.awayTeam.drb).toBe(0);
     expect(formatRebound(result.home[0]!.drb, result.home[0]!.drbShare, 'en')).toBe('1 (100%)');
     expect(result.awayPossessions).toBeCloseTo(-1, 5);
   });
@@ -230,6 +243,7 @@ describe('evaluateGame', () => {
     });
 
     expect(result.home).toEqual([]);
+    expect(result.homeTeam.foulsCommitted).toBe(0);
     expect(result.homePossessions).toBe(0);
     expect(result.homePoints).toBe(0);
   });

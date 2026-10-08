@@ -1,7 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
-import { MapPin } from 'lucide-react';
 import { z } from 'zod';
 import { getAuthenticatedUser } from '@/lib/auth-server';
 import { countTimeouts, timeoutBanks } from '@/lib/capture/timeouts';
@@ -13,20 +12,27 @@ import {
   type EvalEvent,
   type EvalPerson,
   type PlayerEval,
+  type TeamEval,
 } from '@/lib/stats/sampaio-eval';
+import { formatPossessionTime, possessionTime } from '@/lib/stats/possession-time';
+import { eventChart } from '@/lib/stats/event-chart';
+import { shotChart } from '@/lib/stats/shot-chart';
 import {
   EvalScoreboard,
   PlayerPortrait,
-  formatGameClock,
   type ScoreboardPlayer,
+  type ScoreboardTeamLine,
 } from './eval-scoreboard';
 import { EvalRefresh } from './eval-refresh';
+import { EvalEventChart } from './eval-event-chart';
+import { EvalShotChart } from './eval-shot-chart';
 
 export const dynamic = 'force-dynamic';
 
 const COPY = {
   trke_eval_title: 'Player evaluation',
   trke_eval_possessions: 'Possessions',
+  trke_eval_possession_time: 'Possession time',
   trke_players: 'Players',
   trke_eval_ft: 'FT',
   trke_eval_two: '2P',
@@ -55,11 +61,18 @@ const COPY = {
   trke_eval_stopped: 'Stopped',
   trke_eval_timeout_short: 'TO',
   trke_eval_overtime: 'OT',
+  trke_eval_shot_chart: 'Shot chart',
+  trke_eval_shot_made: 'Make',
+  trke_eval_shot_miss: 'Miss',
+  trke_eval_event_chart: 'Fouls and turnovers',
+  trke_eval_event_foul: 'Foul',
+  trke_eval_event_turnover: 'Turnover',
 } as const;
 
 const COPY_LOCALE: Record<string, Partial<Record<CopyKey, string>>> = {
   es: {
     trke_players: 'Jugadores',
+    trke_eval_possession_time: 'Tiempo de posesión',
     trke_eval_ft: 'TL',
     trke_eval_fh: 'FH',
     trke_eval_fr: 'FR',
@@ -79,9 +92,16 @@ const COPY_LOCALE: Record<string, Partial<Record<CopyKey, string>>> = {
     trke_eval_stopped: 'Parado',
     trke_eval_timeout_short: 'T.M.',
     trke_eval_overtime: 'PR',
+    trke_eval_shot_chart: 'Mapa de tiros',
+    trke_eval_shot_made: 'Acierto',
+    trke_eval_shot_miss: 'Fallo',
+    trke_eval_event_chart: 'Faltas y pérdidas',
+    trke_eval_event_foul: 'Falta',
+    trke_eval_event_turnover: 'Pérdida',
   },
   ca: {
     trke_players: 'Jugadors',
+    trke_eval_possession_time: 'Temps de possessió',
     trke_eval_ft: 'TL',
     trke_eval_fh: 'FH',
     trke_eval_fr: 'FR',
@@ -101,6 +121,12 @@ const COPY_LOCALE: Record<string, Partial<Record<CopyKey, string>>> = {
     trke_eval_stopped: 'Aturat',
     trke_eval_timeout_short: 'T.M.',
     trke_eval_overtime: 'PR',
+    trke_eval_shot_chart: 'Mapa de tirs',
+    trke_eval_shot_made: 'Encert',
+    trke_eval_shot_miss: 'Fall',
+    trke_eval_event_chart: 'Faltes i pèrdues',
+    trke_eval_event_foul: 'Falta',
+    trke_eval_event_turnover: 'Pèrdua',
   },
 };
 
@@ -113,6 +139,8 @@ const EVENT_COLUMNS = [
   'opponent_player_id',
   'points',
   'made',
+  'coord_x',
+  'coord_y',
   'is_offensive',
   'rebound_side',
   'turnover_side',
@@ -124,6 +152,7 @@ const EVENT_COLUMNS = [
   'period_number',
   'clock_remaining_ms',
   'created_at',
+  'possession_before',
   'player_out_id',
   'opponent_player_out_id',
   'timeout_side',
@@ -143,6 +172,62 @@ function teamName(teams: { name?: string } | { name?: string }[] | null): string
   return row?.name ?? '';
 }
 
+const ACCENT_NUMBER = 'text-blue-700 dark:text-blue-300';
+
+function EvalMark({
+  label,
+  title,
+  value,
+  detail,
+  primary = false,
+  accent = false,
+}: {
+  label: string;
+  title?: string;
+  value: string | number;
+  detail?: string | null;
+  primary?: boolean;
+  accent?: boolean;
+}) {
+  return (
+    <div title={title ?? label} className="flex min-w-0 flex-col items-center">
+      <span className={`font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 ${primary ? 'text-xs' : 'text-[11px]'}`}>
+        {label}
+      </span>
+      <span className={`text-center tabular-nums ${accent ? ACCENT_NUMBER : 'text-gray-900 dark:text-gray-100'} ${primary ? 'text-xl font-black leading-none' : 'mt-0.5 whitespace-nowrap text-sm font-semibold leading-tight'}`}>
+        {value}
+      </span>
+      {detail ? (
+        <span className="whitespace-nowrap text-[11px] font-semibold tabular-nums leading-tight text-gray-500 dark:text-gray-400">{detail}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function shotParts(line: string): { value: string; detail: string | null } {
+  const space = line.lastIndexOf(' ');
+  if (space === -1) return { value: line, detail: null };
+  return { value: line.slice(0, space), detail: line.slice(space + 1) };
+}
+
+function boardLine(team: TeamEval, locale: string): ScoreboardTeamLine {
+  return {
+    ft: formatShotLine(team.ftMade, team.ftAtt, locale),
+    two: formatShotLine(team.twoMade, team.twoAtt, locale),
+    three: formatShotLine(team.threeMade, team.threeAtt, locale),
+    drb: team.drb,
+    orb: team.orb,
+    foulsCommitted: team.foulsCommitted,
+    foulsReceived: team.foulsReceived,
+  };
+}
+
+function givenName(name: string): string {
+  const trimmed = name.trim();
+  const space = trimmed.indexOf(' ');
+  return space === -1 ? trimmed : trimmed.slice(0, space);
+}
+
 function EvalTable({
   rows,
   locale,
@@ -159,7 +244,46 @@ function EvalTable({
   portrait?: 'jersey' | 'avatar';
 }) {
   return (
-    <div className="overflow-x-auto">
+    <>
+      <ul className="-mx-4 divide-y divide-gray-200 dark:divide-white/10 sm:-mx-6 lg:hidden">
+        {rows.map((row) => {
+          const playing = onCourt.has(row.id);
+          return (
+            <li
+              key={row.id}
+              className={`grid grid-cols-[minmax(0,0.8fr)_minmax(11rem,1.4fr)] items-center gap-x-2 gap-y-1.5 px-4 py-2.5 sm:px-6 ${playing ? 'bg-amber-50 dark:bg-amber-950' : ''}`}
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <PlayerPortrait name={row.name} jerseyNumber={row.jerseyNumber} avatarUrl={photos.get(row.id) ?? null} placeholder={portrait} />
+                {row.jerseyNumber != null ? (
+                  <span className="shrink-0 tabular-nums text-xs text-gray-500 dark:text-gray-400">{row.jerseyNumber}</span>
+                ) : null}
+                <span className="truncate text-sm font-bold leading-tight" title={row.name}>{givenName(row.name)}</span>
+                {playing ? (
+                  <span className="shrink-0 text-sm leading-none" role="img" aria-label={headers.trke_eval_in_play}>
+                    🏀
+                  </span>
+                ) : null}
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                <EvalMark label={headers.trke_eval_points} title={headers.trke_eval_points_name} value={row.points} primary accent />
+                <EvalMark label={headers.trke_eval_fh} value={row.foulsCommitted} primary accent />
+                <EvalMark label={headers.trke_eval_fr} value={row.foulsReceived} primary />
+                <EvalMark label={headers.trke_eval_assists} title={headers.trke_eval_assists_name} value={row.assists} primary accent />
+              </div>
+              <div className="col-span-2 grid grid-cols-3 gap-x-1.5 gap-y-1">
+                <EvalMark label={headers.trke_eval_ft} {...shotParts(formatShotLine(row.ftMade, row.ftAtt, locale))} />
+                <EvalMark label={headers.trke_eval_two} {...shotParts(formatShotLine(row.twoMade, row.twoAtt, locale))} />
+                <EvalMark label={headers.trke_eval_three} {...shotParts(formatShotLine(row.threeMade, row.threeAtt, locale))} />
+                <EvalMark label={headers.trke_eval_reb_def} title={headers.trke_eval_reb_def_name} value={row.drb} />
+                <EvalMark label={headers.trke_eval_reb_off} title={headers.trke_eval_reb_off_name} value={row.orb} />
+                <EvalMark label={headers.trke_eval_turnovers} title={headers.trke_eval_turnovers_name} value={row.turnovers} />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="hidden overflow-x-auto lg:block">
       <table className="min-w-full border-collapse text-sm">
         <thead>
           <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
@@ -191,13 +315,6 @@ function EvalTable({
                     ) : null}
                     <PlayerPortrait name={row.name} jerseyNumber={row.jerseyNumber} avatarUrl={photos.get(row.id) ?? null} placeholder={portrait} />
                     <span className="inline-flex flex-wrap items-center">
-                      <button
-                        type="button"
-                        aria-label={headers.trke_eval_location}
-                        className="mr-1 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-700 hover:bg-black/5 dark:text-gray-100 dark:hover:bg-white/10"
-                      >
-                        <MapPin className="h-4 w-4" aria-hidden="true" />
-                      </button>
                       <span className="font-bold">{row.name}</span>
                       {playing ? (
                         <span className="ml-1 text-sm leading-none" role="img" aria-label={headers.trke_eval_in_play}>
@@ -210,11 +327,11 @@ function EvalTable({
                 <td className="whitespace-nowrap px-3 py-[0.425rem] tabular-nums">{formatShotLine(row.ftMade, row.ftAtt, locale)}</td>
                 <td className="whitespace-nowrap px-3 py-[0.425rem] tabular-nums">{formatShotLine(row.twoMade, row.twoAtt, locale)}</td>
                 <td className="whitespace-nowrap px-3 py-[0.425rem] tabular-nums">{formatShotLine(row.threeMade, row.threeAtt, locale)}</td>
-                <td className="whitespace-nowrap px-3 py-[0.425rem] tabular-nums">{row.points}</td>
-                <td className="whitespace-nowrap px-3 py-[0.425rem] tabular-nums">{row.assists}</td>
+                <td className={`whitespace-nowrap px-3 py-[0.425rem] tabular-nums font-semibold ${ACCENT_NUMBER}`}>{row.points}</td>
+                <td className={`whitespace-nowrap px-3 py-[0.425rem] tabular-nums font-semibold ${ACCENT_NUMBER}`}>{row.assists}</td>
                 <td className="whitespace-nowrap px-3 py-[0.425rem] tabular-nums">{row.drb}</td>
                 <td className="whitespace-nowrap px-3 py-[0.425rem] tabular-nums">{row.orb}</td>
-                <td className="whitespace-nowrap px-3 py-[0.425rem] tabular-nums">{row.foulsCommitted}</td>
+                <td className={`whitespace-nowrap px-3 py-[0.425rem] tabular-nums font-semibold ${ACCENT_NUMBER}`}>{row.foulsCommitted}</td>
                 <td className="whitespace-nowrap px-3 py-[0.425rem] tabular-nums">{row.foulsReceived}</td>
                 <td className="whitespace-nowrap px-3 py-[0.425rem] tabular-nums">{row.turnovers}</td>
               </tr>
@@ -222,7 +339,8 @@ function EvalTable({
           })}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -263,11 +381,21 @@ export default async function GameEvalPage({
     );
   }
 
-  const { data: game } = await supabase
+  const gameColumns = 'id, team_id, opponent_name, team_score, opponent_score, current_period, possession, clock_running, clock_remaining_ms, clock_synced_at, updated_at, status, teams(name)';
+  let { data: game, error: gameError } = await supabase
     .from('games')
-    .select('id, team_id, opponent_name, team_score, opponent_score, current_period, possession, clock_running, clock_remaining_ms, teams(name)')
+    .select(gameColumns)
     .eq('id', id)
     .single();
+  if (gameError && String(gameError.message).includes('clock_synced_at')) {
+    const legacy = await supabase
+      .from('games')
+      .select(gameColumns.replace('clock_synced_at, ', ''))
+      .eq('id', id)
+      .single();
+    game = legacy.data;
+    gameError = legacy.error;
+  }
 
   if (!game) {
     return (
@@ -301,6 +429,7 @@ export default async function GameEvalPage({
     period_number: number | null;
     clock_remaining_ms: number | null;
     created_at: string | null;
+    possession_before: string | null;
     player_out_id: string | null;
     opponent_player_out_id: string | null;
     timeout_side: 'home' | 'away' | null;
@@ -321,6 +450,20 @@ export default async function GameEvalPage({
   const poss = (value: number) => formatStat(value, 1, locale);
   const period = game.current_period || 1;
   const possession = game.possession === 'home' || game.possession === 'away' ? game.possession : null;
+  const held = possessionTime({
+    events: events.map((event) => ({
+      playGroupId: event.play_group_id,
+      periodNumber: event.period_number,
+      clockRemainingMs: event.clock_remaining_ms,
+      possessionBefore: event.possession_before,
+      createdAt: event.created_at,
+    })),
+    currentPeriod: period,
+    possession,
+    final: game.status === 'final',
+  });
+  const charts = shotChart(events);
+  const eventCharts = eventChart(events);
   const photos = new Map((playersRes.data ?? []).map((player) => [player.id, player.avatar_url ?? null]));
   const homeById = new Map(homePlayers.map((player) => [player.id, player]));
   const awayById = new Map(awayPlayers.map((player) => [player.id, player]));
@@ -397,9 +540,26 @@ export default async function GameEvalPage({
           possession={possession}
           period={period}
           clockRunning={game.clock_running === true}
-          clockLabel={formatGameClock(game.clock_remaining_ms ?? 0)}
+          clockRemainingMs={game.clock_remaining_ms ?? 0}
+          clockSyncedAt={
+            typeof game.clock_synced_at === 'string'
+              ? game.clock_synced_at
+              : (game.clock_running === true && typeof game.updated_at === 'string' ? game.updated_at : null)
+          }
+          clockAsOf={Date.now()}
           homeOnCourt={homeCourtIds.map((playerId) => face(playerId, 'home'))}
           awayOnCourt={awayCourtIds.map((playerId) => face(playerId, 'away'))}
+          homeLine={boardLine(result.homeTeam, locale)}
+          awayLine={boardLine(result.awayTeam, locale)}
+          lineLabels={{
+            ft: headers.trke_eval_ft,
+            two: headers.trke_eval_two,
+            three: headers.trke_eval_three,
+            rebDef: headers.trke_eval_reb_def,
+            rebOff: headers.trke_eval_reb_off,
+            fh: headers.trke_eval_fh,
+            fr: headers.trke_eval_fr,
+          }}
           homeTimeouts={sideTimeouts('home')}
           awayTimeouts={sideTimeouts('away')}
           quarterLabel={headers.trke_eval_quarter}
@@ -409,7 +569,9 @@ export default async function GameEvalPage({
           timeoutPrefix={headers.trke_eval_timeout_short}
           possessionsLabel={headers.trke_eval_possessions}
           playersLabel={headers.trke_players}
-          locationLabel={headers.trke_eval_location}
+          possessionTimeLabel={headers.trke_eval_possession_time}
+          homeHeld={formatPossessionTime(held.homeMs)}
+          awayHeld={formatPossessionTime(held.awayMs)}
         >
           <EvalRefresh
             updatedAt={new Date().toISOString()}
@@ -425,39 +587,57 @@ export default async function GameEvalPage({
         )}
 
         <section className="rounded-lg bg-white p-4 shadow dark:bg-gray-900 dark:ring-1 dark:ring-white/10 sm:p-6">
-          <h2 className="mb-3 flex items-center gap-1 text-lg font-bold">
-            <button
-              type="button"
-              aria-label={headers.trke_eval_location}
-              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-700 hover:bg-black/5 dark:text-gray-100 dark:hover:bg-white/10"
-            >
-              <MapPin className="h-4 w-4" aria-hidden="true" />
-            </button>
-            {ourName}
-          </h2>
+          <h2 className="mb-3 text-lg font-bold">{ourName}</h2>
           {result.home.length === 0 ? (
             <p className="text-sm text-gray-500 dark:text-gray-400">{headers.trke_eval_empty}</p>
           ) : (
             <EvalTable rows={result.home} locale={locale} headers={headers} photos={photos} onCourt={new Set(homeCourtIds)} />
           )}
+          <div className="grid grid-cols-1 items-start gap-2 sm:grid-cols-2">
+            <EvalEventChart
+              side="home"
+              marks={eventCharts.home}
+              chartLabel={headers.trke_eval_event_chart}
+              foulLabel={headers.trke_eval_event_foul}
+              turnoverLabel={headers.trke_eval_event_turnover}
+              emptyLabel={headers.trke_eval_empty}
+            />
+            <EvalShotChart
+              side="home"
+              marks={charts.home}
+              chartLabel={headers.trke_eval_shot_chart}
+              madeLabel={headers.trke_eval_shot_made}
+              missLabel={headers.trke_eval_shot_miss}
+              emptyLabel={headers.trke_eval_empty}
+            />
+          </div>
         </section>
 
         <section className="rounded-lg bg-white p-4 shadow dark:bg-gray-900 dark:ring-1 dark:ring-white/10 sm:p-6">
-          <h2 className="mb-3 flex items-center gap-1 text-lg font-bold">
-            <button
-              type="button"
-              aria-label={headers.trke_eval_location}
-              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-700 hover:bg-black/5 dark:text-gray-100 dark:hover:bg-white/10"
-            >
-              <MapPin className="h-4 w-4" aria-hidden="true" />
-            </button>
-            {opponentName}
-          </h2>
+          <h2 className="mb-3 text-lg font-bold">{opponentName}</h2>
           {result.away.length === 0 ? (
             <p className="text-sm text-gray-500 dark:text-gray-400">{headers.trke_eval_empty}</p>
           ) : (
             <EvalTable rows={result.away} locale={locale} headers={headers} photos={photos} onCourt={new Set(awayCourtIds)} portrait="avatar" />
           )}
+          <div className="grid grid-cols-1 items-start gap-2 sm:grid-cols-2">
+            <EvalEventChart
+              side="away"
+              marks={eventCharts.away}
+              chartLabel={headers.trke_eval_event_chart}
+              foulLabel={headers.trke_eval_event_foul}
+              turnoverLabel={headers.trke_eval_event_turnover}
+              emptyLabel={headers.trke_eval_empty}
+            />
+            <EvalShotChart
+              side="away"
+              marks={charts.away}
+              chartLabel={headers.trke_eval_shot_chart}
+              madeLabel={headers.trke_eval_shot_made}
+              missLabel={headers.trke_eval_shot_miss}
+              emptyLabel={headers.trke_eval_empty}
+            />
+          </div>
         </section>
       </div>
     </main>

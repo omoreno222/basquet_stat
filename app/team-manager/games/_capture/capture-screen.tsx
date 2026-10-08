@@ -24,7 +24,7 @@ import { JumpEditPopup } from './components/JumpEditPopup';
 import { FoulReceivedPopup } from './components/FoulReceivedPopup';
 import { MadeAssistPopup } from './components/MadeShotPopups';
 import { PeriodInboundModal } from './components/PeriodInboundModal';
-import { commitCapturePlay, editFoulReceived, editJump, placeMadeShotPoint } from './actions';
+import { commitCapturePlay, deleteCapturePlay, editFoulReceived, editJump, placeMadeShotPoint } from './actions';
 import { freeThrowNeedsRebound } from '@/lib/capture/free-throws';
 import {
   missChooseFouler,
@@ -78,7 +78,7 @@ import { canStartPeriod, isEliminated, minimumToStart } from '@/lib/period-lineu
 import { boardFlowFallback, boardFlowKey, formatBoardNote, nextBoardFlow, type BoardFlow } from '@/lib/capture/board-note';
 import { readCourtOrientation } from '@/lib/capture/court-orientation';
 import { nextClockFromRemote } from '@/lib/capture/clock-sync';
-import { clockFace, liveRemaining, sameClockFace, type ClockFace } from '@/lib/capture/clock-run';
+import { clockFace, displayedRemaining, liveRemaining, sameClockFace, type ClockFace } from '@/lib/capture/clock-run';
 import { periodInbound } from '@/lib/capture/period-inbound';
 import { onCourtAfterSubs, onCourtBefore, playerEliminatedBefore } from '@/lib/capture/substitutions';
 import { countTimeouts, periodOutcome, timeoutWindow } from '@/lib/capture/timeouts';
@@ -122,6 +122,7 @@ interface Game {
   official?: boolean;
   clock_running: boolean;
   clock_remaining_ms: number;
+  clock_synced_at?: string | null;
   current_period: number;
   possession: 'home' | 'away' | null;
   opening_tip_winner?: 'home' | 'away' | null;
@@ -245,6 +246,45 @@ function newerCaptureEvent(
   return playStep(b.event_type) - playStep(a.event_type);
 }
 
+const emptyLogEdit = {
+  canPlaceShot: false,
+  canEditJump: false,
+  canEditFoulReceived: false,
+  shotEditId: undefined as string | undefined,
+  jumpEditId: undefined as string | undefined,
+  foulEditId: undefined as string | undefined,
+};
+
+function captureLogEdit(event: GameEvent, events: GameEvent[]) {
+  const group = event.play_group_id
+    ? events.filter((item) => item.play_group_id === event.play_group_id)
+    : [event];
+  const madeShot = group.find((item) => item.event_type === 'shot' && item.made === true);
+  const jump = group.find((item) => item.event_type === 'jump');
+  const foul = group.find((item) => (
+    item.event_type === 'foul' && (item.foul_side === 'home' || item.foul_side === 'away')
+  ));
+  if (event.event_type === 'shot' && event.made === true) {
+    return { ...emptyLogEdit, canPlaceShot: true, shotEditId: event.id };
+  }
+  if (event.event_type === 'jump') {
+    return { ...emptyLogEdit, canEditJump: true, jumpEditId: event.id };
+  }
+  if (event.event_type === 'foul' && (event.foul_side === 'home' || event.foul_side === 'away')) {
+    return { ...emptyLogEdit, canEditFoulReceived: true, foulEditId: event.id };
+  }
+  if (madeShot) {
+    return { ...emptyLogEdit, canPlaceShot: true, shotEditId: madeShot.id };
+  }
+  if (foul) {
+    return { ...emptyLogEdit, canEditFoulReceived: true, foulEditId: foul.id };
+  }
+  if (jump) {
+    return { ...emptyLogEdit, canEditJump: true, jumpEditId: jump.id };
+  }
+  return emptyLogEdit;
+}
+
 function scoreAfterMadeShots(events: GameEvent[]): Map<string, { home: number; away: number }> {
   const scores = new Map<string, { home: number; away: number }>();
   let home = 0;
@@ -267,14 +307,11 @@ function scoreAfterMadeShots(events: GameEvent[]): Map<string, { home: number; a
 
 export default function CaptureScreen({
   gameId,
-  mode,
 }: {
   gameId: string;
-  mode: 'live' | 'deferred';
 }) {
   const router = useRouter();
   const { t } = useLocaleTranslations();
-  const deferredEntry = mode === 'deferred';
 
   const [game, setGame] = useState<Game | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -284,8 +321,6 @@ export default function CaptureScreen({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sequenceOpen, setSequenceOpen] = useState(false);
-  const [periodClosedAtZero, setPeriodClosedAtZero] = useState(false);
-  const deferredView = deferredEntry || periodClosedAtZero;
   const [shotPointId, setShotPointId] = useState<string | null>(null);
   const [jumpEditId, setJumpEditId] = useState<string | null>(null);
   const [foulReceivedId, setFoulReceivedId] = useState<string | null>(null);
@@ -646,8 +681,14 @@ export default function CaptureScreen({
       setGame(gameData);
       if (!clockOwnedRef.current) {
         const period = gameData.current_period || 1;
-        const remaining = gameData.clock_remaining_ms ?? getPeriodLengthMs(period);
-        adoptClockRef.current(Boolean(gameData.clock_running), remaining, period, Boolean(gameData.clock_running));
+        const running = Boolean(gameData.clock_running);
+        const remaining = displayedRemaining(
+          running,
+          gameData.clock_remaining_ms ?? getPeriodLengthMs(period),
+          gameData.clock_synced_at,
+          Date.now(),
+        );
+        adoptClockRef.current(running, remaining, period, running);
       }
       setPossession(gameData.possession || 'home');
       setTeamScore(gameData.team_score || 0);
@@ -660,26 +701,6 @@ export default function CaptureScreen({
       // Check if side has been chosen (if game has started or events exist, side was chosen)
       const hasStarted = gameData.current_period > 0 || (gameData.team_score + gameData.opponent_score) > 0;
       setSideChosen(hasStarted);
-
-      const periodNumber = gameData.current_period || 1;
-      let periodClosed = false;
-      if (periodNumber >= 4) {
-        const { data: periodRow, error: periodReadError } = await supabase
-          .from('game_periods')
-          .select('clock_remaining_ms')
-          .eq('game_id', gameId)
-          .eq('period_number', periodNumber)
-          .maybeSingle();
-        periodClosed = !periodReadError && periodRow?.clock_remaining_ms === 0;
-      }
-      setPeriodClosedAtZero(periodClosed);
-      if (
-        periodClosed
-        && typeof window !== 'undefined'
-        && mode !== 'deferred'
-      ) {
-        router.replace(`/team-manager/games/deferred/${gameId}`);
-      }
 
       const { data: playersData } = await supabase
         .from('players')
@@ -816,7 +837,7 @@ export default function CaptureScreen({
 
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameId, mode, router]);
+  }, [gameId, router]);
   
   // REMOVED loadData from dependencies of setupRealtimeSubscription
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -890,7 +911,12 @@ export default function CaptureScreen({
                 },
                 {
                   running: Boolean(newData.clock_running),
-                  remainingMs: newData.clock_remaining_ms,
+                  remainingMs: displayedRemaining(
+                    Boolean(newData.clock_running),
+                    newData.clock_remaining_ms,
+                    newData.clock_synced_at,
+                    Date.now(),
+                  ),
                   period: newData.current_period || currentPeriodRef.current,
                 },
                 false,
@@ -1045,11 +1071,17 @@ export default function CaptureScreen({
     if (!clockRunning) setMarkEventAlarm(0);
   }, [clockRunning]);
 
-  // Wall-clock sync. The on-screen clock is local; this only publishes it.
+  useEffect(() => {
+    if (clockRunning) setSequenceOpen(false);
+  }, [clockRunning]);
+
+  // Wall-clock sync. The on-screen clock is local; this publishes the sample
+  // other screens extrapolate from. A hidden tab stops the interval, so
+  // publish once as it goes to the background.
   useEffect(() => {
     if (!allowed || !clockRunning) return;
 
-    const interval = setInterval(() => {
+    const publish = () => {
       if (!clockRunningRef.current) return;
       const remaining = clockNow();
       void supabase
@@ -1057,9 +1089,17 @@ export default function CaptureScreen({
         .update({ clock_remaining_ms: remaining })
         .eq('id', gameId)
         .eq('clock_running', true);
-    }, 3000);
+    };
+    const interval = setInterval(publish, 3000);
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') publish();
+    };
+    document.addEventListener('visibilitychange', onHide);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onHide);
+    };
   }, [allowed, clockRunning, gameId]);
 
   function courtRoster(side: CaptureSide) {
@@ -1086,6 +1126,7 @@ export default function CaptureScreen({
   }
 
   function turnoverHintKey(code: string) {
+    if (code === 'turnover_final') return 'trke_deferred_closed';
     if (code === 'turnover_possession') return 'trke_turnover_hint_possession';
     if (code === 'turnover_eliminated') return 'trke_turnover_hint_eliminated';
     if (code === 'turnover_victim') return 'trke_turnover_hint_victim';
@@ -1094,6 +1135,7 @@ export default function CaptureScreen({
   }
 
   function turnoverHintFallback(code: string) {
+    if (code === 'turnover_final') return 'This game is closed';
     if (code === 'turnover_possession') return 'The ball changed hands. Turnover was not saved.';
     if (code === 'turnover_eliminated') return 'That player is already eliminated';
     if (code === 'turnover_victim') return 'Choose the player who was fouled';
@@ -1268,6 +1310,7 @@ export default function CaptureScreen({
   }
 
   function madeErrorText(code: string) {
+    if (code === 'made_final') return t('trke_deferred_closed', 'This game is closed');
     if (code === 'made_half') return t('trke_made_hint_half', 'That point is not on the attacking half');
     if (code === 'made_assist') return t('trke_made_hint_assist', 'Choose the assist');
     if (code === 'made_foul') return t('trke_made_hint_fouler', 'Choose who committed the foul');
@@ -1527,6 +1570,7 @@ export default function CaptureScreen({
   }
 
   function missErrorText(code: string) {
+    if (code === 'miss_final') return t('trke_deferred_closed', 'This game is closed');
     if (code === 'miss_half') return t('trke_made_hint_half', 'That point is not on the attacking half');
     if (code === 'miss_rebound') return t('trke_miss_hint_rebound', 'Choose who took the rebound');
     if (code === 'miss_arrow') return t('trke_miss_arrow', 'Record the opening jump before a lodged ball');
@@ -1971,7 +2015,9 @@ export default function CaptureScreen({
           kind: 'timeout_cap',
           body: result.error === 'timeout_cap'
             ? timeoutCapText(period)
-            : t('trke_timeout_error', 'Could not save the timeout'),
+            : result.error === 'timeout_final'
+              ? t('trke_deferred_closed', 'This game is closed')
+              : t('trke_timeout_error', 'Could not save the timeout'),
         });
         return;
       }
@@ -2115,6 +2161,7 @@ export default function CaptureScreen({
   }
 
   function foulErrorText(code: string) {
+    if (code === 'foul_final') return t('trke_deferred_closed', 'This game is closed');
     if (code === 'foul_possession') return t('trke_foul_hint_possession', 'Set possession before the foul');
     if (code === 'foul_eliminated') return t('trke_foul_hint_eliminated', 'That player is already eliminated');
     if (code === 'foul_player') return t('trke_foul_hint_player', 'Choose who committed the foul');
@@ -3028,11 +3075,6 @@ export default function CaptureScreen({
     if (periodError) {
       console.error('Failed to record period end time:', periodError);
       alert(`Error recording period end time: ${periodError.message}`);
-      return;
-    }
-    setPeriodClosedAtZero(true);
-    if (mode !== 'deferred') {
-      router.replace(`/team-manager/games/deferred/${gameId}`);
     }
   }
 
@@ -3111,7 +3153,7 @@ export default function CaptureScreen({
   }
 
   async function assignPossession(side: 'home' | 'away') {
-    if (deferredView || shotStep || miss || turnoverStep || foulStep) return;
+    if (gameStatusRef.current === 'final' || shotStep || miss || turnoverStep || foulStep) return;
     if (possession === side) return;
     setPossession(side);
     await updateGameState({ possession: side });
@@ -3126,7 +3168,7 @@ export default function CaptureScreen({
 
   async function flipCourt() {
     if (shotStep || miss || turnoverStep || foulStep) return;
-    if (!deferredView && periodAlreadyStarted(currentPeriodRef.current)) return;
+    if (gameStatusRef.current === 'final' || clockRunningRef.current) return;
     const newDirection = !attackRightFirst;
     setAttackRightFirst(newDirection);
     await updateGameState({ attack_right_first: newDirection });
@@ -3137,70 +3179,38 @@ export default function CaptureScreen({
   }
 
   function openGameEditor() {
-    const returnTo = encodeURIComponent(
-      mode === 'deferred'
-        ? `/team-manager/games/deferred/${gameId}`
-        : `/team-manager/games/live/${gameId}`,
-    );
+    const returnTo = encodeURIComponent(`/team-manager/games/live/${gameId}`);
     router.push(`/admin/games/${gameId}?returnTo=${returnTo}`);
   }
 
-  async function handleUndo() {
-    if (shotStep || miss || turnoverStep || foulStep || subSide || events.length === 0) return;
-
-    const lastEvent = events[0];
-    const group = lastEvent.play_group_id
-      ? events.filter((event) => event.play_group_id === lastEvent.play_group_id)
-      : [lastEvent];
-    const isOwnEvent = group.every((event) => event.recorded_by_user_id === currentUser?.id);
-
-    if (!isOwnEvent) {
-      if (!confirm('This event was recorded by another user. Undo anyway?')) {
-        return;
-      }
+  async function deletePlay(eventId: string) {
+    if (clockRunningRef.current || gameStatusRef.current === 'final') return;
+    if (shotStep || miss || turnoverStep || foulStep || subSide) return;
+    const target = events.find((event) => event.id === eventId);
+    if (!target) return;
+    if (!confirm(t('trke_log_delete_confirm', 'Delete this play? The score will be recalculated.'))) return;
+    const result = await deleteCapturePlay({ gameId, eventId });
+    if ('error' in result) {
+      alert(result.error === 'delete_final'
+        ? t('trke_deferred_closed', 'This game is closed')
+        : t('trke_log_delete_error', 'Could not delete the play'));
+      return;
     }
-
-    let homePoints = 0;
-    let awayPoints = 0;
-    group.forEach((event) => {
-      if (!event.made || !event.points) return;
-      if (event.player_id) homePoints += event.points;
-      else if (event.opponent_player_id) awayPoints += event.points;
-    });
-    const priorPossession = group.find((event) => event.possession_before)?.possession_before;
-    const nextTeam = Math.max(0, teamScore - homePoints);
-    const nextOpponent = Math.max(0, opponentScore - awayPoints);
-    const updates: Partial<Game> = {};
-    if (homePoints) updates.team_score = nextTeam;
-    if (awayPoints) updates.opponent_score = nextOpponent;
-    if (priorPossession) updates.possession = priorPossession;
-    if (homePoints) setTeamScore(nextTeam);
-    if (awayPoints) setOpponentScore(nextOpponent);
-    if (priorPossession) setPossession(priorPossession);
-    if (Object.keys(updates).length) await updateGameState(updates);
-
-    const removeIds = new Set(group.map((event) => event.id));
-    const { error } = lastEvent.play_group_id
-      ? await supabase.from('game_events').delete().eq('play_group_id', lastEvent.play_group_id)
-      : await supabase.from('game_events').delete().eq('id', lastEvent.id);
-
-    if (error) {
-      alert(`Error: ${error.message}`);
-    } else {
-      setEvents((prev) => prev.filter((event) => !removeIds.has(event.id)));
-      if (!priorPossession && lastEvent.event_type === 'turnover' && lastEvent.turnover_side) {
-        setPossession(lastEvent.turnover_side);
-        await updateGameState({ possession: lastEvent.turnover_side });
-      }
-      if (lastEvent.event_type === 'jump' && lastEvent.jump_side) {
-        const winner = lastEvent.jump_won ? lastEvent.jump_side : otherCaptureSide(lastEvent.jump_side);
-        const anotherJump = events.some((event) => event.event_type === 'jump' && event.id !== lastEvent.id);
-        if (!anotherJump && openingTipWinnerRef.current === winner) {
-          openingTipWinnerRef.current = null;
-          setOpeningTipWinner(null);
-          await updateGameState({ opening_tip_winner: null });
-        }
-      }
+    const groupId = target.play_group_id;
+    setEvents((prev) => prev.filter((event) => (
+      groupId ? event.play_group_id !== groupId : event.id !== eventId
+    )));
+    setTeamScore(result.teamScore);
+    setOpponentScore(result.opponentScore);
+    setGame((prev) => (prev ? {
+      ...prev,
+      team_score: result.teamScore,
+      opponent_score: result.opponentScore,
+      ...(result.openingTipCleared ? { opening_tip_winner: null } : {}),
+    } : prev));
+    if (result.openingTipCleared) {
+      openingTipWinnerRef.current = null;
+      setOpeningTipWinner(null);
     }
   }
 
@@ -3422,6 +3432,7 @@ export default function CaptureScreen({
   }
 
   function subErrorText(code: string) {
+    if (code === 'substitution_final') return t('trke_deferred_closed', 'This game is closed');
     if (code === 'substitution_eliminated') return t('trke_sub_hint_eliminated', 'Ese jugador ya está eliminado');
     if (code === 'substitution_out') return t('trke_sub_hint_out', 'Toca quién sale');
     if (code === 'substitution_in') return t('trke_sub_hint_in', 'Toca quién entra del banquillo');
@@ -3491,19 +3502,9 @@ export default function CaptureScreen({
     }
   }
 
-  async function placeDeferredClock(periodNumber: number, clockRemainingMs: number) {
-    holdClock(false, clockRemainingMs, periodNumber);
-    return updateGameState({
-      current_period: periodNumber,
-      clock_remaining_ms: clockRemainingMs,
-      clock_running: false,
-    });
-  }
-
   async function saveDeferredSequence(input: DeferredSequenceInput): Promise<string | null> {
     if (gameStatusRef.current === 'final') return t('trke_deferred_closed', 'This game is closed');
-    const placed = await placeDeferredClock(input.periodNumber, input.clockRemainingMs);
-    if (!placed) return t('trke_made_hint_error', 'Could not save the basket');
+    if (clockRunningRef.current) return t('trke_made_hint_error', 'Could not save the basket');
     if (input.play === 'jump_won' || input.play === 'jump_lost') {
       const winner = input.play === 'jump_won' ? input.side : otherCaptureSide(input.side);
       const { data, error } = await supabase
@@ -3528,15 +3529,13 @@ export default function CaptureScreen({
         .single();
       if (error || !data) return t('trke_made_hint_error', 'Could not save the basket');
       setEvents((prev) => (prev.some((event) => event.id === data.id) ? prev : [data, ...prev]));
-      setPossession(winner);
-      const patch: Partial<Game> = { possession: winner };
+      let saved = true;
       if (!openingTipWinnerRef.current) {
         openingTipWinnerRef.current = winner;
         setOpeningTipWinner(winner);
-        patch.opening_tip_winner = winner;
+        setGame((prev) => (prev ? { ...prev, opening_tip_winner: winner } : prev));
+        saved = await updateGameState({ opening_tip_winner: winner });
       }
-      setGame((prev) => (prev ? { ...prev, ...patch } : prev));
-      const saved = await updateGameState(patch);
       const title = input.play === 'jump_won'
         ? t('trke_deferred_jump_won', 'Jump won')
         : t('trke_deferred_jump_lost', 'Jump lost');
@@ -3548,6 +3547,7 @@ export default function CaptureScreen({
       gameId,
       periodNumber: input.periodNumber,
       clockRemainingMs: input.clockRemainingMs,
+      backfill: true as const,
     };
     const payload = input.play === 'turnover'
       ? {
@@ -3582,6 +3582,7 @@ export default function CaptureScreen({
     try {
       const result = await commitCapturePlay(payload);
       if ('error' in result) {
+        if (result.error.endsWith('_final')) return t('trke_deferred_closed', 'This game is closed');
         if (input.play === 'made') return madeErrorText(result.error);
         if (input.play === 'miss') return missErrorText(result.error);
         if (input.play === 'foul') return foulErrorText(result.error);
@@ -3610,17 +3611,16 @@ export default function CaptureScreen({
           return added.length ? [...added, ...prev] : prev;
         });
       }
-      if (input.play === 'turnover' || input.play === 'shot_clock' || input.play === 'eight_seconds' || input.play === 'five_seconds') {
-        const next = otherCaptureSide(input.side);
-        setPossession(next);
-        setGame((prev) => (prev ? { ...prev, possession: next } : prev));
-      } else if (input.play !== 'timeout' && input.play !== 'substitution' && (input.play !== 'foul' || result.possessionChanged)) {
-        setPossession(result.possession ?? null);
-        setGame((prev) => (prev ? { ...prev, possession: result.possession ?? null } : prev));
-      }
       if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
       if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
-      showNote(t('trke_sub_hint_saved', 'Cambio guardado'), null);
+      if (typeof result.teamScore === 'number' || typeof result.opponentScore === 'number') {
+        setGame((prev) => (prev ? {
+          ...prev,
+          ...(typeof result.teamScore === 'number' ? { team_score: result.teamScore } : {}),
+          ...(typeof result.opponentScore === 'number' ? { opponent_score: result.opponentScore } : {}),
+        } : prev));
+      }
+      showNote(t('trke_log_added', 'Play added to the log'), null);
       return null;
     } catch {
       return t('trke_made_hint_error', 'Could not save the basket');
@@ -3812,6 +3812,8 @@ export default function CaptureScreen({
       )
       : '';
 
+  const showDeferredAdd = game.status !== 'final' && !clockRunning;
+  const logEdits = showDeferredAdd && !shotStep && !miss && !turnoverStep && !foulStep && !subSide;
   const scoreAtShot = scoreAfterMadeShots(events);
   const seenSubGroups = new Set<string>();
   const seenFreeThrowGroups = new Set<string>();
@@ -3924,25 +3926,23 @@ export default function CaptureScreen({
               : t('trke_foul', 'Foul');
       title = place && !event.coach_technical_side ? `${label} · ${place}` : label;
       detail = coachName ?? who;
-      if (deferredView) {
-        const receivedName = event.foul_side === 'home'
+      const receivedName = event.foul_side === 'home'
+        ? (() => {
+          const player = event.foul_received_opponent_player_id
+            ? opponentPlayers.find((item) => item.id === event.foul_received_opponent_player_id)
+            : null;
+          return player ? `#${opponentShirt(player)} ${player.name || ''}`.trim() : '';
+        })()
+        : event.foul_side === 'away'
           ? (() => {
-            const player = event.foul_received_opponent_player_id
-              ? opponentPlayers.find((item) => item.id === event.foul_received_opponent_player_id)
+            const player = event.foul_received_player_id
+              ? players.find((item) => item.id === event.foul_received_player_id)
               : null;
-            return player ? `#${opponentShirt(player)} ${player.name || ''}`.trim() : '';
+            return player ? `#${player.jersey_number} ${player.full_name}` : '';
           })()
-          : event.foul_side === 'away'
-            ? (() => {
-              const player = event.foul_received_player_id
-                ? players.find((item) => item.id === event.foul_received_player_id)
-                : null;
-              return player ? `#${player.jersey_number} ${player.full_name}` : '';
-            })()
-            : '';
-        if (receivedName) {
-          detail = `${detail}\n${t('trke_foul_received_by', 'Received by')} ${receivedName}`;
-        }
+          : '';
+      if (receivedName) {
+        detail = `${detail}\n${t('trke_foul_received_by', 'Received by')} ${receivedName}`;
       }
     } else if (
       event.event_type === 'turnover'
@@ -4042,6 +4042,7 @@ export default function CaptureScreen({
       title = t('trke_cambio', 'Cambio');
       detail = pairs.join('\n');
     }
+    const edit = logEdits ? captureLogEdit(event, events) : emptyLogEdit;
     return {
       id: event.id,
       periodLabel: getPeriodLabel(event.period_number),
@@ -4055,9 +4056,8 @@ export default function CaptureScreen({
       clockMs: event.clock_remaining_ms,
       at: event.created_at ?? '',
       step: playStep(event.event_type),
-      canPlaceShot: event.event_type === 'shot' && event.made === true,
-      canEditJump: event.event_type === 'jump',
-      canEditFoulReceived: deferredView && event.event_type === 'foul' && (event.foul_side === 'home' || event.foul_side === 'away'),
+      ...edit,
+      canDelete: logEdits,
     };
   });
 
@@ -4095,9 +4095,8 @@ export default function CaptureScreen({
         clockMs: getPeriodLengthMs(period),
         at: '',
         step: -1,
-        canPlaceShot: false,
-        canEditJump: false,
-        canEditFoulReceived: false,
+        ...emptyLogEdit,
+        canDelete: false,
       }];
     }));
 
@@ -4110,6 +4109,8 @@ export default function CaptureScreen({
     })
     .map((row) => ({
       id: row.id,
+      period: row.period,
+      clockMs: row.clockMs,
       periodLabel: row.periodLabel,
       clock: row.clock,
       title: row.title,
@@ -4120,6 +4121,10 @@ export default function CaptureScreen({
       canPlaceShot: row.canPlaceShot,
       canEditJump: row.canEditJump,
       canEditFoulReceived: row.canEditFoulReceived,
+      shotEditId: row.shotEditId,
+      jumpEditId: row.jumpEditId,
+      foulEditId: row.foulEditId,
+      canDelete: row.canDelete,
     }));
 
   const teamLabel = (side: 'home' | 'away') => (
@@ -4210,8 +4215,6 @@ export default function CaptureScreen({
     return points;
   })();
 
-  const showDeferredAdd = deferredView && game.status !== 'final' && !clockRunning;
-
   return (
     <div className="fixed inset-0 bg-gray-900 text-white flex flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col">
@@ -4226,8 +4229,6 @@ export default function CaptureScreen({
           subscribeClock={subscribeClock}
           getClockFace={getClockFace}
           clockRunning={clockRunning}
-          hideClock={periodClosedAtZero}
-          logOnly={deferredView}
           canControlClock
           idleClockLabel={
             currentPeriod === 1 && !periodAlreadyStarted(1)
@@ -4370,31 +4371,29 @@ export default function CaptureScreen({
               : undefined
           }
           hintUrgentKey={markEventAlarm}
-          deferredNote={
-            deferredView && !clockRunning
-              ? (game.status === 'final'
-                ? t('trke_deferred_closed', 'This game is closed')
-                : t('trke_deferred_banner', 'The clock is stopped. Set the period and the time, then add each event.'))
+          closedBadge={
+            game.status === 'final'
+              ? t('trke_deferred_closed', 'This game is closed')
               : undefined
           }
           closeGameLabel={t('trke_deferred_close', 'Close game')}
           onCloseGame={
-            deferredView && !clockRunning && game.status !== 'final'
+            !clockRunning && game.status !== 'final'
               ? () => { void closeDeferredGame(); }
               : undefined
           }
           onStepBack={miss ? stepMissBack : shotStep ? stepShotBack : foulStep ? stepFoulBack : undefined}
           onCancelDelete={miss ? () => cancelMiss() : shotStep ? () => cancelShot() : foulStep ? () => cancelFoul() : undefined}
           logItems={visibleLog}
-          onUndo={() => { void handleUndo(); }}
-          canUndo={events.length > 0}
-          onAddLog={showDeferredAdd ? () => setSequenceOpen(true) : undefined}
+          onDeletePlay={logEdits ? (id) => { void deletePlay(id); } : undefined}
+          deletePlayLabel={t('trke_log_delete', 'Delete this play')}
+          onAddLog={logEdits ? () => setSequenceOpen(true) : undefined}
           addLogLabel={t('trke_deferred_add', 'Add a sequence')}
-          onPlaceShot={setShotPointId}
+          onPlaceShot={logEdits ? setShotPointId : undefined}
           placeShotLabel={t('trke_shot_point_edit', 'Edit shot spot')}
-          onEditJump={setJumpEditId}
+          onEditJump={logEdits ? setJumpEditId : undefined}
           editJumpLabel={t('trke_jump_edit', 'Edit jump')}
-          onEditFoulReceived={deferredView ? setFoulReceivedId : undefined}
+          onEditFoulReceived={logEdits ? setFoulReceivedId : undefined}
           editFoulReceivedLabel={t('trke_foul_received_edit', 'Who received the foul')}
           nextLabel="Next"
           onNextPeriod={() => { void nextPeriod(); }}
@@ -4405,7 +4404,7 @@ export default function CaptureScreen({
               : undefined
           }
           onFlipCourt={
-            deferredView || (game.status !== 'final' && !periodAlreadyStarted(currentPeriod))
+            game.status !== 'final' && !clockRunning
               ? () => { void flipCourt(); }
               : undefined
           }
@@ -4414,6 +4413,7 @@ export default function CaptureScreen({
           onBack={leaveCapture}
           homeCoaches={homeCoachNames.map((name) => ({ name }))}
           awayCoach={awayCoachName ? { name: awayCoachName } : null}
+          outLabel={t('trke_bench_out', 'Out')}
           onHomeCoach={homeCoachNames.length ? () => { armCoachTechnical('home'); } : undefined}
           onAwayCoach={awayCoachName ? () => { armCoachTechnical('away'); } : undefined}
           onEditAwayBench={
@@ -4422,7 +4422,7 @@ export default function CaptureScreen({
               : undefined
           }
           editBenchLabel={t('trke_opponent_bench_edit', 'Edit bench')}
-          canSetPossession={!deferredView}
+          canSetPossession={game.status !== 'final'}
           onSetPossession={(side) => { void assignPossession(side); }}
           homeAttacksRight={attacking}
           awayMark={opponentMark(game.opponent_name || '')}
@@ -4430,7 +4430,7 @@ export default function CaptureScreen({
           attackMarkAwayLabel={withTeam('trke_attack_mark', '{team} attacks this basket', 'away')}
           court={(
             <BasketballCourt
-              onCourtTap={deferredView ? undefined : handleCourtTap}
+              onCourtTap={game.status === 'final' ? undefined : handleCourtTap}
               shotMarkers={shotMarkers}
               placement={(turnoverStep || foulStep || (shotStep && shotStep !== 'court') || (miss && miss.step !== 'court')) && tapCoordinates ? tapCoordinates : null}
               attackingRight={attacking}
@@ -4778,7 +4778,6 @@ export default function CaptureScreen({
           opponentColor={normalizeHexColor(game.opponent_color)}
           opponentCode={opponentMark(game.opponent_name || '')}
           onClose={() => setSequenceOpen(false)}
-          onPlace={(periodNumber, remaining) => { void placeDeferredClock(periodNumber, remaining); }}
           onSubmit={saveDeferredSequence}
         />
       ) : null}

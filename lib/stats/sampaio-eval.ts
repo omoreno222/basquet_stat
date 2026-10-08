@@ -62,12 +62,28 @@ export interface PlayerEval {
   points: number;
 }
 
+/** Team totals, including rebounds and fouls that are not charged to a player. */
+export interface TeamEval {
+  ftMade: number;
+  ftAtt: number;
+  twoMade: number;
+  twoAtt: number;
+  threeMade: number;
+  threeAtt: number;
+  drb: number;
+  orb: number;
+  foulsCommitted: number;
+  foulsReceived: number;
+}
+
 export interface EvalResult {
   homePossessions: number;
   awayPossessions: number;
   gamePossessions: number;
   homePoints: number;
   awayPoints: number;
+  homeTeam: TeamEval;
+  awayTeam: TeamEval;
   home: PlayerEval[];
   away: PlayerEval[];
 }
@@ -91,8 +107,15 @@ interface Counts {
 interface TeamCounts {
   fga: number;
   fta: number;
+  ftMade: number;
+  twoMade: number;
+  twoAtt: number;
+  threeMade: number;
+  threeAtt: number;
   drb: number;
   orb: number;
+  fc: number;
+  fr: number;
   tov: number;
   points: number;
 }
@@ -116,7 +139,36 @@ function emptyCounts(): Counts {
 }
 
 function emptyTeam(): TeamCounts {
-  return { fga: 0, fta: 0, drb: 0, orb: 0, tov: 0, points: 0 };
+  return {
+    fga: 0,
+    fta: 0,
+    ftMade: 0,
+    twoMade: 0,
+    twoAtt: 0,
+    threeMade: 0,
+    threeAtt: 0,
+    drb: 0,
+    orb: 0,
+    fc: 0,
+    fr: 0,
+    tov: 0,
+    points: 0,
+  };
+}
+
+function teamEval(team: TeamCounts): TeamEval {
+  return {
+    ftMade: team.ftMade,
+    ftAtt: team.fta,
+    twoMade: team.twoMade,
+    twoAtt: team.twoAtt,
+    threeMade: team.threeMade,
+    threeAtt: team.threeAtt,
+    drb: team.drb,
+    orb: team.orb,
+    foulsCommitted: team.fc,
+    foulsReceived: team.fr,
+  };
 }
 
 function actorSide(playerId: string | null | undefined, opponentId: string | null | undefined): EvalSide | null {
@@ -213,6 +265,13 @@ export function evaluateGame(input: EvalInput): EvalResult {
       const points = event.points ?? 0;
       if (event.event_type === 'shot') {
         team.fga += 1;
+        if (points === 2) {
+          team.twoAtt += 1;
+          if (made) team.twoMade += 1;
+        } else if (points === 3) {
+          team.threeAtt += 1;
+          if (made) team.threeMade += 1;
+        }
         if (counts) {
           if (points === 2) {
             counts.twoAtt += 1;
@@ -226,6 +285,7 @@ export function evaluateGame(input: EvalInput): EvalResult {
         if (made) team.points += points;
       } else {
         team.fta += 1;
+        if (made) team.ftMade += 1;
         if (counts) {
           counts.ftAtt += 1;
           if (made) {
@@ -259,6 +319,7 @@ export function evaluateGame(input: EvalInput): EvalResult {
           ? event.foul_side
           : actorSide(event.player_id, event.opponent_player_id);
         if (side) {
+          teams[side].fc += 1;
           const id = actorId(event, side);
           if (id) ensure(id, side).fc += 1;
           const groupHasTurnover = !!event.play_group_id && turnoverGroups.has(event.play_group_id);
@@ -269,9 +330,11 @@ export function evaluateGame(input: EvalInput): EvalResult {
         }
       }
       if (event.foul_received_player_id) {
+        teams.home.fr += 1;
         ensure(event.foul_received_player_id, 'home').fr += 1;
       }
       if (event.foul_received_opponent_player_id) {
+        teams.away.fr += 1;
         ensure(event.foul_received_opponent_player_id, 'away').fr += 1;
       }
       continue;
@@ -344,6 +407,8 @@ export function evaluateGame(input: EvalInput): EvalResult {
     gamePossessions,
     homePoints: home.points,
     awayPoints: away.points,
+    homeTeam: teamEval(home),
+    awayTeam: teamEval(away),
     home: idsFor('home', input.homeSquadIds),
     away: idsFor('away', input.awayRosterIds),
   };

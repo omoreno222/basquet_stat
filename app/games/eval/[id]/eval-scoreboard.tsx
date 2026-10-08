@@ -1,6 +1,9 @@
-import { MapPin, User } from 'lucide-react';
+import { User } from 'lucide-react';
 
 import type { ReactNode } from 'react';
+import { EvalClock } from './eval-clock';
+
+export { formatGameClock } from '@/lib/capture/clock-run';
 
 export interface ScoreboardPlayer {
   id: string;
@@ -14,13 +17,6 @@ export interface ScoreboardTimeout {
   label: string;
   used: number;
   max: number;
-}
-
-export function formatGameClock(ms: number): string {
-  const safe = Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : 0;
-  const minutes = Math.floor(safe / 60);
-  const seconds = safe % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
 export function periodFace(period: number, overtimeLabel: string): string {
@@ -37,7 +33,7 @@ function PlayerFace({
   size: 'board' | 'row';
   placeholder?: 'jersey' | 'avatar';
 }) {
-  const box = size === 'board' ? 'h-8 w-8 text-[10px] sm:h-10 sm:w-10 sm:text-xs' : 'h-9 w-9 text-xs';
+  const box = size === 'board' ? 'h-8 w-8 text-[10px]' : 'h-9 w-9 text-xs';
   const ring = size === 'board' ? 'ring-white/25' : 'ring-black/10 dark:ring-white/15';
   if (player.avatarUrl) {
     return (
@@ -91,25 +87,115 @@ function TimeoutPips({
   );
 }
 
+export interface ScoreboardTeamLine {
+  ft: string;
+  two: string;
+  three: string;
+  drb: number;
+  orb: number;
+  foulsCommitted: number;
+  foulsReceived: number;
+}
+
+export interface ScoreboardLineLabels {
+  ft: string;
+  two: string;
+  three: string;
+  rebDef: string;
+  rebOff: string;
+  fh: string;
+  fr: string;
+}
+
+function shotFace(line: string): { value: string; detail: string | null } {
+  const space = line.lastIndexOf(' ');
+  if (space === -1) return { value: line, detail: null };
+  return { value: line.slice(0, space), detail: line.slice(space + 1) };
+}
+
+function LineMark({
+  label,
+  value,
+  detail,
+  align,
+}: {
+  label: string;
+  value: string;
+  detail?: string | null;
+  align: 'start' | 'end';
+}) {
+  const end = align === 'end';
+  return (
+    <div className={`flex min-w-0 flex-col ${end ? 'items-end' : 'items-start'}`}>
+      <span className="text-[9px] font-bold uppercase tracking-wide text-white/45">{label}</span>
+      <span className="whitespace-nowrap text-[10px] font-semibold tabular-nums leading-tight text-white">{value}</span>
+      {detail ? (
+        <span className="whitespace-nowrap text-[10px] font-semibold tabular-nums leading-tight text-white/60">{detail}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function TeamLine({
+  line,
+  labels,
+  align,
+}: {
+  line: ScoreboardTeamLine;
+  labels: ScoreboardLineLabels;
+  align: 'start' | 'end';
+}) {
+  const shots = [
+    [labels.ft, line.ft],
+    [labels.two, line.two],
+    [labels.three, line.three],
+  ] as const;
+  const counts = [
+    [labels.rebDef, line.drb],
+    [labels.rebOff, line.orb],
+    [labels.fh, line.foulsCommitted],
+    [labels.fr, line.foulsReceived],
+  ] as const;
+  return (
+    <div className={`mt-1.5 flex w-[10.5rem] max-w-full flex-col gap-1.5 ${align === 'end' ? 'items-end' : 'items-start'}`}>
+      <div className="grid w-full grid-cols-3 gap-x-1.5">
+        {shots.map(([label, text]) => {
+          const face = shotFace(text);
+          return <LineMark key={label} label={label} value={face.value} detail={face.detail} align={align} />;
+        })}
+      </div>
+      <div className="grid w-full grid-cols-4 gap-x-1.5">
+        {counts.map(([label, value]) => (
+          <LineMark key={label} label={label} value={String(value)} align={align} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OnCourt({
   players,
   label,
   placeholder = 'jersey',
   align = 'start',
+  line,
+  lineLabels,
 }: {
   players: ScoreboardPlayer[];
   label: string;
   placeholder?: 'jersey' | 'avatar';
   align?: 'start' | 'end';
+  line: ScoreboardTeamLine;
+  lineLabels: ScoreboardLineLabels;
 }) {
   const end = align === 'end';
   return (
-    <div className={`flex flex-col gap-1 ${end ? 'items-end' : 'items-start'}`}>
+    <div className={`flex min-w-0 flex-col gap-1 ${end ? 'items-end' : 'items-start'}`}>
       <p className="text-[10px] font-bold uppercase tracking-wide text-white/55">{label}</p>
       {players.length === 0 ? null : (
-    <ul className={`flex shrink-0 flex-nowrap items-end gap-1 ${end ? 'justify-end' : ''}`}>
+    <ul className={`flex flex-wrap items-end gap-1 ${end ? 'justify-end' : ''}`}>
       {players.map((player) => (
-        <li key={player.id} className="flex w-8 flex-col items-center gap-0.5 sm:w-10" title={player.name}>
+        <li key={player.id} className="flex w-8 flex-col items-center gap-0.5" title={player.name}>
           <PlayerFace player={player} size="board" placeholder={placeholder} />
           <span className="max-w-full truncate text-[10px] font-bold leading-none text-white/80">
             {player.jerseyNumber != null ? player.jerseyNumber : player.name}
@@ -118,6 +204,7 @@ function OnCourt({
       ))}
     </ul>
       )}
+      <TeamLine line={line} labels={lineLabels} align={align} />
     </div>
   );
 }
@@ -130,7 +217,6 @@ function TeamSide({
   hasBall,
   timeouts,
   timeoutPrefix,
-  locationLabel,
   align,
 }: {
   name: string;
@@ -140,24 +226,14 @@ function TeamSide({
   hasBall: boolean;
   timeouts: ScoreboardTimeout[];
   timeoutPrefix: string;
-  locationLabel: string;
   align: 'start' | 'end';
 }) {
   const end = align === 'end';
   return (
     <div className={`min-w-0 ${end ? 'text-right' : 'text-left'}`}>
-      <p className={`flex min-w-0 items-center gap-1 ${end ? 'flex-row-reverse' : ''}`}>
-        <button
-          type="button"
-          aria-label={locationLabel}
-          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white/80 hover:bg-white/10"
-        >
-          <MapPin className="h-4 w-4" aria-hidden="true" />
-        </button>
-        <span className="truncate text-xs font-bold uppercase tracking-wide text-white/70 sm:text-sm">{name}</span>
-      </p>
+      <p className={`min-w-0 truncate text-xs font-bold uppercase tracking-wide text-white/70 sm:text-sm ${end ? 'text-right' : 'text-left'}`}>{name}</p>
       <div className={`mt-1 flex items-center gap-2 ${end ? 'flex-row-reverse' : ''}`}>
-        <p className="text-5xl font-black tabular-nums leading-none sm:text-6xl">{score}</p>
+        <p className="text-4xl font-black tabular-nums leading-none sm:text-5xl">{score}</p>
         <span className={`text-2xl leading-none ${hasBall ? '' : 'invisible'}`} aria-hidden="true">
           🏀
         </span>
@@ -185,9 +261,14 @@ export function EvalScoreboard({
   possession,
   period,
   clockRunning,
-  clockLabel,
+  clockRemainingMs,
+  clockSyncedAt,
+  clockAsOf,
   homeOnCourt,
   awayOnCourt,
+  homeLine,
+  awayLine,
+  lineLabels,
   homeTimeouts,
   awayTimeouts,
   quarterLabel,
@@ -196,8 +277,10 @@ export function EvalScoreboard({
   overtimeLabel,
   timeoutPrefix,
   possessionsLabel,
-  locationLabel,
   playersLabel,
+  possessionTimeLabel,
+  homeHeld,
+  awayHeld,
   children,
 }: {
   homeName: string;
@@ -209,9 +292,14 @@ export function EvalScoreboard({
   possession: 'home' | 'away' | null;
   period: number;
   clockRunning: boolean;
-  clockLabel: string;
+  clockRemainingMs: number;
+  clockSyncedAt: string | null;
+  clockAsOf: number;
   homeOnCourt: ScoreboardPlayer[];
   awayOnCourt: ScoreboardPlayer[];
+  homeLine: ScoreboardTeamLine;
+  awayLine: ScoreboardTeamLine;
+  lineLabels: ScoreboardLineLabels;
   homeTimeouts: ScoreboardTimeout[];
   awayTimeouts: ScoreboardTimeout[];
   quarterLabel: string;
@@ -220,25 +308,79 @@ export function EvalScoreboard({
   overtimeLabel: string;
   timeoutPrefix: string;
   possessionsLabel: string;
-  locationLabel: string;
   playersLabel: string;
+  possessionTimeLabel: string;
+  homeHeld: string;
+  awayHeld: string;
   children?: ReactNode;
 }) {
   const status = clockRunning ? inPlayLabel : stoppedLabel;
+  const clock = () => (
+    <EvalClock
+      running={clockRunning}
+      remainingMs={clockRemainingMs}
+      syncedAt={clockSyncedAt}
+      asOf={clockAsOf}
+    />
+  );
+  const betweenScores = () => (
+    <div className="flex w-[7.25rem] flex-col items-center self-start pt-6 text-center sm:w-[8.75rem] sm:pt-8">
+      <p className="font-mono text-3xl font-semibold tabular-nums leading-none sm:text-4xl">{clock()}</p>
+      <p className={`mt-1 flex items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wide sm:text-xs ${clockRunning ? 'text-emerald-400' : 'text-white/45'}`}>
+        <span className={`h-2 w-2 rounded-full ${clockRunning ? 'animate-pulse bg-emerald-400' : 'bg-white/30'}`} />
+        {status}
+      </p>
+      <p className="mt-3 text-[10px] font-bold uppercase leading-tight tracking-wide text-white/50">{possessionTimeLabel}</p>
+      <p className="mt-1 flex items-baseline justify-center gap-1.5 font-mono text-sm font-semibold tabular-nums leading-none sm:gap-2 sm:text-base">
+        <span>{homeHeld}</span>
+        <span className="text-white/30">·</span>
+        <span>{awayHeld}</span>
+      </p>
+    </div>
+  );
   return (
     <section className="overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg ring-1 ring-white/10">
-      <div className="flex items-stretch justify-between gap-3 overflow-x-auto px-4 py-4 sm:gap-6 sm:px-5 sm:py-5">
-        <div className="flex shrink-0 items-start gap-8 sm:gap-12">
+      <div className="flex flex-col gap-4 px-3 py-4 lg:hidden">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300">{quarterLabel}</p>
+          <p className="text-3xl font-black tabular-nums leading-none">{periodFace(period, overtimeLabel)}</p>
+        </div>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2">
+          <TeamSide
+            name={homeName}
+            score={homeScore}
+            possessionsLabel={possessionsLabel}
+            possessions={homePossessions}
+            hasBall={possession === 'home'}
+            timeouts={homeTimeouts}
+            timeoutPrefix={timeoutPrefix}
+            align="start"
+          />
+          {betweenScores()}
+          <TeamSide
+            name={awayName}
+            score={awayScore}
+            possessionsLabel={possessionsLabel}
+            possessions={awayPossessions}
+            hasBall={possession === 'away'}
+            timeouts={awayTimeouts}
+            timeoutPrefix={timeoutPrefix}
+            align="end"
+          />
+        </div>
+        <div className="grid grid-cols-2 items-start gap-3">
+          <OnCourt players={homeOnCourt} label={playersLabel} line={homeLine} lineLabels={lineLabels} />
+          <OnCourt players={awayOnCourt} label={playersLabel} placeholder="avatar" align="end" line={awayLine} lineLabels={lineLabels} />
+        </div>
+        {children}
+      </div>
+      <div className="hidden grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 px-3 py-4 sm:gap-4 sm:px-5 lg:grid">
+        <div className="flex min-w-0 items-start gap-3 sm:gap-5">
           <div className="flex flex-col items-start gap-3">
-            <OnCourt players={homeOnCourt} label={playersLabel} />
+            <OnCourt players={homeOnCourt} label={playersLabel} line={homeLine} lineLabels={lineLabels} />
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300">{quarterLabel}</p>
               <p className="text-3xl font-black tabular-nums leading-none">{periodFace(period, overtimeLabel)}</p>
-              <p className="mt-2 font-mono text-3xl font-semibold tabular-nums tracking-tight leading-none">{clockLabel}</p>
-              <p className={`mt-1 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide ${clockRunning ? 'text-emerald-400' : 'text-white/45'}`}>
-                <span className={`h-2 w-2 rounded-full ${clockRunning ? 'animate-pulse bg-emerald-400' : 'bg-white/30'}`} />
-                {status}
-              </p>
             </div>
           </div>
           <TeamSide
@@ -249,11 +391,11 @@ export function EvalScoreboard({
             hasBall={possession === 'home'}
             timeouts={homeTimeouts}
             timeoutPrefix={timeoutPrefix}
-            locationLabel={locationLabel}
             align="start"
           />
         </div>
-        <div className="flex shrink-0 items-start gap-8 sm:gap-12">
+        {betweenScores()}
+        <div className="flex min-w-0 items-start justify-end gap-3 sm:gap-5">
           <TeamSide
             name={awayName}
             score={awayScore}
@@ -262,11 +404,10 @@ export function EvalScoreboard({
             hasBall={possession === 'away'}
             timeouts={awayTimeouts}
             timeoutPrefix={timeoutPrefix}
-            locationLabel={locationLabel}
             align="end"
           />
           <div className="flex flex-col items-end self-stretch">
-            <OnCourt players={awayOnCourt} label={playersLabel} placeholder="avatar" align="end" />
+            <OnCourt players={awayOnCourt} label={playersLabel} placeholder="avatar" align="end" line={awayLine} lineLabels={lineLabels} />
             <div className="mt-auto">{children}</div>
           </div>
         </div>

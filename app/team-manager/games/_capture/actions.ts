@@ -8,6 +8,7 @@ import { isEliminated } from '@/lib/period-lineup';
 import {
   clockViolationCountsAsTeamFoul,
   commitCapturePlaySchema,
+  deleteCapturePlaySchema,
   foulCountsForPlayer,
   foulCountsForTeam,
   foulErrorCode,
@@ -42,6 +43,7 @@ import { freeThrowNeedsRebound, shotFoulLeavesBallWithOffense } from '@/lib/capt
 import { missNextPossession, missStopsClock, reboundIsOffensive } from '@/lib/capture/miss';
 import { arrowSide } from '@/lib/capture/period-inbound';
 import { captureHappenedBefore, onCourtAfterSubs, onCourtBefore, playerEliminatedBefore } from '@/lib/capture/substitutions';
+import { scoreFromEvents } from '@/lib/capture/score';
 import { timeoutWindow } from '@/lib/capture/timeouts';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -57,6 +59,24 @@ type PlaySuccess = {
   opponentScore?: number;
   groupId?: string;
 };
+
+/** A logged play keeps its own clock. The live game clock and possession stay put; the score still moves. */
+function gameMomentPatch(
+  backfill: boolean | undefined,
+  patch: {
+    team_score?: number;
+    opponent_score?: number;
+    possession?: CaptureSide | null;
+    clock_running?: boolean;
+    clock_remaining_ms?: number;
+  },
+) {
+  if (!backfill) return patch;
+  const next: { team_score?: number; opponent_score?: number } = {};
+  if (patch.team_score !== undefined) next.team_score = patch.team_score;
+  if (patch.opponent_score !== undefined) next.opponent_score = patch.opponent_score;
+  return next;
+}
 
 function reboundRow(
   base: Record<string, unknown>,
@@ -94,16 +114,21 @@ async function commitFoul(
     opponent_score: number | null;
   },
 ): Promise<PlaySuccess | { error: string }> {
-  if (play.periodNumber !== (game.current_period || 1)) return { error: 'foul_period' };
-  if (game.possession !== 'home' && game.possession !== 'away') return { error: 'foul_possession' };
-  const possession = game.possession;
-  if (play.context === 'offensive' && possession !== play.side) return { error: 'foul_shape' };
-  if (play.kind === 'personal' && play.context !== 'offensive' && possession === play.side) {
-    return { error: 'foul_shape' };
-  }
   if (play.context === 'shot_made' || play.context === 'shot_missed') return { error: 'foul_shape' };
 
   const otherSide = otherCaptureSide(play.side);
+  const liveBall = game.possession === 'home' || game.possession === 'away' ? game.possession : null;
+  if (!play.backfill) {
+    if (play.periodNumber !== (game.current_period || 1)) return { error: 'foul_period' };
+    if (!liveBall) return { error: 'foul_possession' };
+    if (play.context === 'offensive' && liveBall !== play.side) return { error: 'foul_shape' };
+    if (play.kind === 'personal' && play.context !== 'offensive' && liveBall === play.side) {
+      return { error: 'foul_shape' };
+    }
+  }
+  const possession: CaptureSide | null = play.backfill
+    ? (play.context === 'offensive' ? play.side : play.kind === 'personal' ? otherSide : liveBall)
+    : liveBall;
   const attackRightFirst = game.attack_right_first !== false;
 
   const cutoff = {
@@ -314,23 +339,26 @@ async function commitFoul(
     team_score: teamScore,
     opponent_score: opponentScore,
   };
-  if (!liveRebound) {
+  if (!play.backfill && !liveRebound) {
     patch.clock_running = false;
     patch.clock_remaining_ms = clock;
   }
-  if (possessionChanged) patch.possession = nextPossession;
+  if (!play.backfill && possessionChanged) patch.possession = nextPossession;
 
-  const { error: updateError } = await supabase.from('games').update(patch).eq('id', play.gameId);
-  if (updateError) {
-    await supabase.from('game_events').delete().eq('play_group_id', groupId);
-    return { error: 'foul_invalid' };
+  const moment = gameMomentPatch(play.backfill, patch);
+  if (Object.keys(moment).length) {
+    const { error: updateError } = await supabase.from('games').update(moment).eq('id', play.gameId);
+    if (updateError) {
+      await supabase.from('game_events').delete().eq('play_group_id', groupId);
+      return { error: 'foul_invalid' };
+    }
   }
 
   return {
     id: inserted[0].id as string,
     groupId,
     possession: nextPossession,
-    possessionChanged,
+    possessionChanged: play.backfill ? false : possessionChanged,
     teamScore,
     opponentScore,
   };
@@ -350,8 +378,8 @@ async function commitMade(
   },
 ): Promise<PlaySuccess | { error: string }> {
   if (game.status === 'final') return { error: 'made_final' };
-  if (play.periodNumber !== (game.current_period || 1)) return { error: 'made_period' };
-  if (game.possession !== play.side) return { error: 'made_possession' };
+  if (!play.backfill && play.periodNumber !== (game.current_period || 1)) return { error: 'made_period' };
+  if (!play.backfill && game.possession !== play.side) return { error: 'made_possession' };
 
   const attackRightFirst = game.attack_right_first !== false;
   const attacksRight = offenseAttacksRight(play.side, play.periodNumber, attackRightFirst);
@@ -547,15 +575,15 @@ async function commitMade(
     opponent_score: opponentScore,
     possession: nextPossession,
   };
-  if (madeStopsClock(!!play.foulerId) && !liveRebound) {
+  if (!play.backfill && madeStopsClock(!!play.foulerId) && !liveRebound) {
     patch.clock_running = false;
     patch.clock_remaining_ms = clock;
   }
 
-  const { error: updateError } = await supabase
-    .from('games')
-    .update(patch)
-    .eq('id', play.gameId);
+  const moment = gameMomentPatch(play.backfill, patch);
+  const { error: updateError } = Object.keys(moment).length
+    ? await supabase.from('games').update(moment).eq('id', play.gameId)
+    : { error: null };
   if (updateError) {
     await supabase.from('game_events').delete().eq('play_group_id', groupId);
     return { error: 'made_invalid' };
@@ -565,7 +593,7 @@ async function commitMade(
     id: inserted[0].id as string,
     groupId,
     possession: nextPossession,
-    possessionChanged: true,
+    possessionChanged: !play.backfill,
     teamScore,
     opponentScore,
   };
@@ -586,8 +614,8 @@ async function commitMiss(
   },
 ): Promise<PlaySuccess | { error: string }> {
   if (game.status === 'final') return { error: 'miss_final' };
-  if (play.periodNumber !== (game.current_period || 1)) return { error: 'miss_period' };
-  if (game.possession !== play.side) return { error: 'miss_possession' };
+  if (!play.backfill && play.periodNumber !== (game.current_period || 1)) return { error: 'miss_period' };
+  if (!play.backfill && game.possession !== play.side) return { error: 'miss_possession' };
 
   const attackRightFirst = game.attack_right_first !== false;
   const attacksRight = offenseAttacksRight(play.side, play.periodNumber, attackRightFirst);
@@ -792,15 +820,15 @@ async function commitMiss(
     opponent_score: opponentScore,
     possession: nextPossession,
   };
-  if ((missStopsClock(!!play.foulerId) || deadBall) && !liveRebound) {
+  if (!play.backfill && (missStopsClock(!!play.foulerId) || deadBall) && !liveRebound) {
     patch.clock_running = false;
     patch.clock_remaining_ms = clock;
   }
 
-  const { error: updateError } = await supabase
-    .from('games')
-    .update(patch)
-    .eq('id', play.gameId);
+  const moment = gameMomentPatch(play.backfill, patch);
+  const { error: updateError } = Object.keys(moment).length
+    ? await supabase.from('games').update(moment).eq('id', play.gameId)
+    : { error: null };
   if (updateError) {
     await supabase.from('game_events').delete().eq('play_group_id', groupId);
     return { error: 'miss_invalid' };
@@ -810,7 +838,7 @@ async function commitMiss(
     id: inserted[0].id as string,
     groupId,
     possession: nextPossession,
-    possessionChanged: true,
+    possessionChanged: !play.backfill,
     teamScore,
     opponentScore,
   };
@@ -827,7 +855,7 @@ async function commitSubstitution(
   if (new Set(swapIds).size !== swapIds.length || swaps.some((swap) => swap.outId === swap.inId)) {
     return { error: 'substitution_shape' };
   }
-  if (play.periodNumber !== (game.current_period || 1)) return { error: 'substitution_period' };
+  if (!play.backfill && play.periodNumber !== (game.current_period || 1)) return { error: 'substitution_period' };
 
   const { data: priorEvents, error: priorError } = await supabase
     .from('game_events')
@@ -937,7 +965,7 @@ async function commitTimeout(
   play: TimeoutPlayInput,
   game: { current_period: number | null; status: string | null },
 ): Promise<PlaySuccess | { error: string }> {
-  if ((game.current_period || 1) !== play.periodNumber) return { error: 'timeout_period' };
+  if (!play.backfill && (game.current_period || 1) !== play.periodNumber) return { error: 'timeout_period' };
   if (game.status === 'final') return { error: 'timeout_final' };
   const periodLength = play.periodNumber <= 4 ? 600000 : 300000;
   if (play.clockRemainingMs > periodLength) return { error: 'timeout_clock' };
@@ -972,16 +1000,18 @@ async function commitTimeout(
     return { error: timeoutErrorCode(insertError?.message ?? 'timeout_invalid') };
   }
 
-  const { error: updateError } = await supabase
-    .from('games')
-    .update({
-      clock_running: false,
-      clock_remaining_ms: play.clockRemainingMs,
-    })
-    .eq('id', play.gameId);
-  if (updateError) {
-    await supabase.from('game_events').delete().eq('id', inserted.id);
-    return { error: 'timeout_invalid' };
+  if (!play.backfill) {
+    const { error: updateError } = await supabase
+      .from('games')
+      .update({
+        clock_running: false,
+        clock_remaining_ms: play.clockRemainingMs,
+      })
+      .eq('id', play.gameId);
+    if (updateError) {
+      await supabase.from('game_events').delete().eq('id', inserted.id);
+      return { error: 'timeout_invalid' };
+    }
   }
 
   return { id: inserted.id as string };
@@ -1078,14 +1108,24 @@ export async function commitCapturePlay(
     return { error: slotError };
   }
 
+  if (game.status === 'final') {
+    if (play.play === 'foul') return { error: 'foul_final' };
+    if (play.play === 'made') return { error: 'made_final' };
+    if (play.play === 'miss') return { error: 'miss_final' };
+    if (play.play === 'substitution') return { error: 'substitution_final' };
+    if (play.play === 'timeout') return { error: 'timeout_final' };
+    return { error: 'turnover_final' };
+  }
+
   if (play.play === 'foul') return commitFoul(supabase, user.id, play, game);
   if (play.play === 'made') return commitMade(supabase, user.id, play, game);
   if (play.play === 'miss') return commitMiss(supabase, user.id, play, game);
   if (play.play === 'substitution') return commitSubstitution(supabase, user.id, play, game);
   if (play.play === 'timeout') return commitTimeout(supabase, user.id, play, game);
 
-  if (game.possession !== play.side) return { error: 'turnover_possession' };
-  if ((game.current_period || 1) !== play.periodNumber) return { error: 'turnover_period' };
+  if (game.status === 'final') return { error: 'turnover_final' };
+  if (!play.backfill && game.possession !== play.side) return { error: 'turnover_possession' };
+  if (!play.backfill && (game.current_period || 1) !== play.periodNumber) return { error: 'turnover_period' };
 
   if (play.play === 'turnover') {
     const cutoff = {
@@ -1158,25 +1198,101 @@ export async function commitCapturePlay(
     return { error: turnoverErrorCode(insertError?.message ?? 'turnover_invalid') };
   }
 
-  const patch: { possession: CaptureSide; clock_running?: boolean; clock_remaining_ms?: number } = {
-    possession: otherSide,
-  };
-  if (stopsClock) {
-    patch.clock_running = false;
-    patch.clock_remaining_ms = play.clockRemainingMs;
-  }
+  if (!play.backfill) {
+    const patch: { possession: CaptureSide; clock_running?: boolean; clock_remaining_ms?: number } = {
+      possession: otherSide,
+    };
+    if (stopsClock) {
+      patch.clock_running = false;
+      patch.clock_remaining_ms = play.clockRemainingMs;
+    }
 
-  const { error: updateError } = await supabase
-    .from('games')
-    .update(patch)
-    .eq('id', play.gameId);
+    const { error: updateError } = await supabase
+      .from('games')
+      .update(patch)
+      .eq('id', play.gameId);
 
-  if (updateError) {
-    await supabase.from('game_events').delete().eq('id', inserted.id);
-    return { error: 'turnover_invalid' };
+    if (updateError) {
+      await supabase.from('game_events').delete().eq('id', inserted.id);
+      return { error: 'turnover_invalid' };
+    }
   }
 
   return { id: inserted.id as string };
+}
+
+export async function deleteCapturePlay(
+  input: unknown,
+): Promise<{ teamScore: number; opponentScore: number; openingTipCleared: boolean } | { error: string }> {
+  const parsed = deleteCapturePlaySchema.safeParse(input);
+  if (!parsed.success) return { error: 'delete_invalid' };
+
+  const { user, error } = await getAuthenticatedUser();
+  if (error || !user) return { error: 'delete_slot' };
+  const token = (await cookies()).get('sb-access-token')?.value;
+  if (!token) return { error: 'delete_slot' };
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    accessToken: async () => token,
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+
+  const { gameId, eventId } = parsed.data;
+  const { data: game, error: gameError } = await supabase
+    .from('games')
+    .select('team_id, status')
+    .eq('id', gameId)
+    .single();
+  if (gameError || !game) return { error: 'delete_invalid' };
+  if (game.status === 'final') return { error: 'delete_final' };
+
+  const { data: team, error: teamError } = await supabase
+    .from('teams')
+    .select('club_id')
+    .eq('id', game.team_id)
+    .single();
+  if (teamError || !team) return { error: 'delete_invalid' };
+
+  const { data: roles, error: rolesError } = await supabase
+    .from('profile_roles')
+    .select('role, club_id')
+    .eq('profile_id', user.id);
+  if (rolesError || !userManagesClub(roles ?? [], team.club_id)) return { error: 'delete_slot' };
+
+  const { data: event, error: eventError } = await supabase
+    .from('game_events')
+    .select('id, play_group_id')
+    .eq('id', eventId)
+    .eq('game_id', gameId)
+    .maybeSingle();
+  if (eventError) return { error: 'delete_invalid' };
+  if (!event) return { error: 'delete_missing' };
+
+  const removal = event.play_group_id
+    ? supabase.from('game_events').delete().eq('game_id', gameId).eq('play_group_id', event.play_group_id)
+    : supabase.from('game_events').delete().eq('game_id', gameId).eq('id', event.id);
+  const { error: deleteError } = await removal;
+  if (deleteError) return { error: 'delete_invalid' };
+
+  const { data: remaining, error: remainingError } = await supabase
+    .from('game_events')
+    .select('event_type, made, points, player_id, opponent_player_id')
+    .eq('game_id', gameId);
+  if (remainingError) return { error: 'delete_invalid' };
+
+  const rows = remaining ?? [];
+  const score = scoreFromEvents(rows);
+  const openingTipCleared = !rows.some((row) => row.event_type === 'jump');
+  const patch: { team_score: number; opponent_score: number; opening_tip_winner?: null } = {
+    team_score: score.home,
+    opponent_score: score.away,
+  };
+  if (openingTipCleared) patch.opening_tip_winner = null;
+  const { error: scoreError } = await supabase.from('games').update(patch).eq('id', gameId);
+  if (scoreError) return { error: 'delete_invalid' };
+
+  return { teamScore: score.home, opponentScore: score.away, openingTipCleared };
 }
 
 export async function placeMadeShotPoint(

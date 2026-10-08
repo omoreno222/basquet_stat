@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import Image from 'next/image';
-import { Pencil } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import { inkOn } from '@/lib/colors';
 import type { ClockFace } from '@/lib/capture/clock-run';
 import { readCourtOrientation } from '@/lib/capture/court-orientation';
@@ -21,6 +21,9 @@ export interface CaptureBoardPlayer {
 
 export interface CaptureLogItem {
   id: string;
+  period: number;
+  /** Remaining clock, used to find the start of a quarter in the newest-first log. */
+  clockMs: number;
   periodLabel: string;
   clock: string;
   title: string;
@@ -33,6 +36,11 @@ export interface CaptureLogItem {
   canPlaceShot?: boolean;
   canEditJump?: boolean;
   canEditFoulReceived?: boolean;
+  /** Event the pencil opens when this card is a sibling of the editable play. */
+  shotEditId?: string;
+  jumpEditId?: string;
+  foulEditId?: string;
+  canDelete?: boolean;
 }
 
 interface CaptureBoardProps {
@@ -49,10 +57,6 @@ interface CaptureBoardProps {
   canControlClock: boolean;
   onAdjustClock: (unit: 'minute' | 'second' | 'tenth', delta: number) => void;
   onToggleClock: () => void;
-  /** Period, digits, and start/stop stay off after this period has closed at 0:00. */
-  hideClock?: boolean;
-  /** Deferred logging: names, score, court, and the log. Plays are added from the log. */
-  logOnly?: boolean;
   /** Shown instead of start clock while the opening tip has not been taken. */
   idleClockLabel?: string;
   homePlayers: CaptureBoardPlayer[];
@@ -87,14 +91,14 @@ interface CaptureBoardProps {
   /** Red warning under the capture message, while the clock runs with no play open. */
   hintUrgent?: string;
   hintUrgentKey?: number;
-  deferredNote?: string;
+  closedBadge?: string;
   closeGameLabel?: string;
   onCloseGame?: () => void;
   onStepBack?: () => void;
   onCancelDelete?: () => void;
   logItems: CaptureLogItem[];
-  onUndo: () => void;
-  canUndo: boolean;
+  onDeletePlay?: (id: string) => void;
+  deletePlayLabel?: string;
   onAddLog?: () => void;
   addLogLabel?: string;
   onPlaceShot?: (id: string) => void;
@@ -119,6 +123,8 @@ interface CaptureBoardProps {
   onBack?: () => void;
   homeCoaches?: { name: string }[];
   awayCoach?: { name: string } | null;
+  /** Shown above eliminated players, and only when that list is not empty. */
+  outLabel: string;
   onHomeCoach?: () => void;
   onAwayCoach?: () => void;
   onEditAwayBench?: () => void;
@@ -395,6 +401,7 @@ function SideBench({
   color,
   compact = false,
   coaches,
+  outLabel,
   onCoach,
   onSelect,
   onEdit,
@@ -404,12 +411,15 @@ function SideBench({
   color: string;
   compact?: boolean;
   coaches?: { name: string }[];
+  outLabel: string;
   onCoach?: () => void;
   onSelect?: (playerId: string) => void;
   onEdit?: () => void;
   editLabel?: string;
 }) {
   const roster = [...players].sort((a, b) => a.jersey - b.jersey || a.name.localeCompare(b.name));
+  const available = roster.filter((player) => !player.eliminated);
+  const eliminated = roster.filter((player) => player.eliminated);
   const coachPill = `col-span-2 flex w-full items-center justify-center overflow-hidden rounded-md border-2 border-black px-1 text-center text-[11px] font-black leading-tight shadow-md ${LABEL_SHADOW} ${
     compact ? 'h-8' : 'h-10'
   }`;
@@ -431,8 +441,8 @@ function SideBench({
           </svg>
         </button>
       ) : null}
-      {roster.map((player) => {
-        const canEnter = !!onSelect && !player.onCourt && !player.eliminated;
+      {available.map((player) => {
+        const canEnter = !!onSelect && !player.onCourt;
         return (
           <JerseyChip
             key={player.id}
@@ -457,6 +467,23 @@ function SideBench({
           </div>
         );
       })}
+      {eliminated.length > 0 ? (
+        <>
+          <p className="col-span-2 mt-1 text-center text-[11px] font-black tracking-wider text-neutral-500">
+            {outLabel}
+          </p>
+          {eliminated.map((player) => (
+            <div key={player.id} className="min-w-0 opacity-70">
+              <JerseyChip
+                player={player}
+                color={color}
+                compact={compact}
+                wide
+              />
+            </div>
+          ))}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -540,7 +567,7 @@ function HintBar({
   hint,
   hintUrgent,
   hintUrgentKey = 0,
-  deferredNote,
+  closedBadge,
   closeGameLabel,
   onCloseGame,
   cancelDeleteLabel,
@@ -560,7 +587,7 @@ function HintBar({
   hint: string;
   hintUrgent?: string;
   hintUrgentKey?: number;
-  deferredNote?: string;
+  closedBadge?: string;
   closeGameLabel?: string;
   onCloseGame?: () => void;
   cancelDeleteLabel: string;
@@ -597,9 +624,12 @@ function HintBar({
         {stepBackLabel}
       </button>
       <div className="flex min-w-0 flex-1 flex-col items-center justify-center">
-        {hint || deferredNote ? (
-          <p className="line-clamp-2 w-full text-center text-sm font-semibold leading-snug text-neutral-800" title={hint || deferredNote}>
-            {hint || deferredNote}
+        {closedBadge ? (
+          <p className="rounded bg-neutral-900 px-2 py-1 text-center text-xs font-black text-white">{closedBadge}</p>
+        ) : null}
+        {hint ? (
+          <p className="line-clamp-2 w-full text-center text-sm font-semibold leading-snug text-neutral-800" title={hint}>
+            {hint}
           </p>
         ) : null}
         {hintUrgent ? (
@@ -943,7 +973,6 @@ function TeamNamePlate({
   clockViolationsEnabled,
   timeoutEnabled,
   color,
-  plain = false,
 }: {
   side: 'home' | 'away';
   name: string;
@@ -962,7 +991,6 @@ function TeamNamePlate({
   clockViolationsEnabled: boolean;
   timeoutEnabled: boolean;
   color: string;
-  plain?: boolean;
 }) {
   const stripe = (
     <span aria-hidden="true" className="relative z-10 w-5 shrink-0 self-stretch" style={{ backgroundColor: color }} />
@@ -992,14 +1020,14 @@ function TeamNamePlate({
 
   return (
     <div
-      onClick={plain ? undefined : selectPossession}
+      onClick={selectPossession}
       className={`relative flex min-w-0 flex-1 items-stretch overflow-hidden bg-white shadow-sm ${
-        !plain && canSet && !active ? 'cursor-pointer' : 'cursor-default'
+        canSet && !active ? 'cursor-pointer' : 'cursor-default'
       }`}
     >
-      {!plain && active ? <PossessionWash color={color} /> : null}
+      {active ? <PossessionWash color={color} /> : null}
       {align === 'start' ? stripe : null}
-      {!plain && align === 'start' ? <PossessionDot active={active} /> : null}
+      {align === 'start' ? <PossessionDot active={active} /> : null}
       <div className={`relative z-10 flex min-w-0 flex-1 flex-col justify-center gap-1 px-2 py-1 ${towardScore ? 'items-end' : 'items-start'}`}>
         <div className="flex w-full min-w-0 items-center gap-2">
           {onFlipCourt ? (
@@ -1018,9 +1046,9 @@ function TeamNamePlate({
             </span>
           </span>
         </div>
-        {plain ? null : clockButtons}
+        {clockButtons}
       </div>
-      {!plain && align === 'end' ? <PossessionDot active={active} /> : null}
+      {align === 'end' ? <PossessionDot active={active} /> : null}
       {align === 'end' ? stripe : null}
     </div>
   );
@@ -1243,12 +1271,16 @@ function scoreCardBackground(tone: string) {
   return inkOn(tone) === '#171717' ? '#d5dde8' : `color-mix(in srgb, ${tone} 20%, #e5e5e5)`;
 }
 
+function logCopy(text: string) {
+  return text.replaceAll('ª', 'a');
+}
+
 function ActionLog({
   items,
   homeColor,
   awayColor,
-  onUndo,
-  canUndo,
+  onDelete,
+  deleteLabel,
   onAdd,
   addLabel,
   onPlaceShot,
@@ -1261,8 +1293,8 @@ function ActionLog({
   items: CaptureLogItem[];
   homeColor: string;
   awayColor: string;
-  onUndo: () => void;
-  canUndo: boolean;
+  onDelete?: (id: string) => void;
+  deleteLabel?: string;
   onAdd?: () => void;
   addLabel?: string;
   onPlaceShot?: (id: string) => void;
@@ -1272,79 +1304,118 @@ function ActionLog({
   onEditFoulReceived?: (id: string) => void;
   editFoulReceivedLabel?: string;
 }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const quartersInLog = new Set(items.flatMap((item) => (
+    item.period >= 1 && item.period <= 4 ? [item.period] : []
+  )));
+
+  function scrollToQuarter(period: number) {
+    const list = listRef.current;
+    if (!list) return;
+    const nodes = [...list.querySelectorAll<HTMLElement>(`[data-period="${period}"]`)];
+    if (nodes.length === 0) return;
+    const maxClock = Math.max(...nodes.map((node) => Number(node.dataset.clockMs)));
+    const start = nodes.find((node) => Number(node.dataset.clockMs) === maxClock) ?? nodes[nodes.length - 1];
+    list.scrollTo({ top: Math.max(0, start.offsetTop - 6), behavior: 'smooth' });
+  }
+
   return (
-    <aside className="ml-1 flex h-full min-h-0 w-52 shrink-0 flex-col overflow-hidden rounded-lg border border-neutral-300 bg-white shadow-sm">
-      <header className="flex items-center justify-between gap-1 bg-black px-2 py-1.5 shadow-md">
-        <span className="truncate text-[11px] font-black tracking-wider text-amber-300">ACTION LOG</span>
+    <aside className="ml-1 flex h-full min-h-0 w-56 shrink-0 flex-col overflow-hidden rounded-lg border border-neutral-300 bg-white shadow-sm">
+      <header className="flex shrink-0 items-center gap-1 bg-black px-1.5 py-1 shadow-md">
+        <span className="shrink-0 text-[11px] font-black tracking-wide text-amber-300">LOG</span>
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-0.5">
+          {[1, 2, 3, 4].map((quarter) => {
+            const ready = quartersInLog.has(quarter);
+            return (
+              <button
+                key={quarter}
+                type="button"
+                disabled={!ready}
+                onClick={() => scrollToQuarter(quarter)}
+                aria-label={`Q${quarter}`}
+                className={`flex h-7 shrink-0 items-center justify-center rounded px-1 text-[10px] font-black leading-none ${ready ? 'bg-amber-300 text-black' : 'cursor-default text-neutral-600'}`}
+              >
+                Q{quarter}
+              </button>
+            );
+          })}
+        </div>
         {onAdd ? (
           <button
             type="button"
             onClick={onAdd}
             aria-label={addLabel}
-            className="flex h-11 w-11 shrink-0 items-center justify-center text-2xl font-black leading-none text-amber-300"
+            className="flex h-9 w-9 shrink-0 items-center justify-center text-2xl font-black leading-none text-amber-300"
           >
             +
           </button>
         ) : null}
       </header>
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
+      <div ref={listRef} className="relative flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
         {items.length === 0 ? (
           <p className="px-2 py-3 text-[11px] text-neutral-400">No actions yet</p>
         ) : (
           items.map((item) => {
             const tone = scoreTone(item, homeColor, awayColor);
             const canEdit = (item.canPlaceShot && onPlaceShot) || (item.canEditJump && onEditJump) || (item.canEditFoulReceived && onEditFoulReceived);
+            const canDelete = item.canDelete && onDelete;
+            const title = logCopy(item.title);
+            const detail = logCopy(item.detail);
             return (
             <div
               key={item.id}
-              className={`relative rounded-lg px-2 py-1.5 ${tone ? '' : 'bg-neutral-200'}`}
+              data-period={item.period}
+              data-clock-ms={item.clockMs}
+              className={`flex w-full min-w-0 shrink-0 overflow-hidden rounded-lg ${tone ? '' : 'bg-neutral-200'}`}
               style={tone ? { backgroundColor: scoreCardBackground(tone) } : undefined}
             >
-              {canEdit ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (item.canPlaceShot && onPlaceShot) onPlaceShot(item.id);
-                    else if (item.canEditJump && onEditJump) onEditJump(item.id);
-                    else onEditFoulReceived?.(item.id);
-                  }}
-                  aria-label={item.canPlaceShot ? placeShotLabel : item.canEditJump ? editJumpLabel : editFoulReceivedLabel}
-                  className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center text-neutral-700"
-                >
-                  <Pencil className="h-3 w-3" aria-hidden="true" />
-                </button>
-              ) : null}
-              <div className={canEdit ? 'pr-4' : undefined}>
-                <div className="text-[10px] font-bold text-neutral-400">
-                  {item.periodLabel} {item.clock}
-                </div>
-                <div className="flex items-start gap-1.5">
+              <div className="min-w-0 flex-1 py-1.5 pl-2">
+                <div className="flex items-center justify-between gap-1 text-[10px] font-bold leading-none text-black">
+                  <span className="shrink-0">{item.periodLabel} {item.clock}</span>
                   {item.homePoints !== undefined && item.awayPoints !== undefined ? (
-                    <span className="mt-px flex shrink-0 items-center gap-2">
+                    <span className="flex shrink-0 items-center gap-1">
                       <ScoreFigure value={item.homePoints} color={homeColor} marked={item.scoreSide === 'home'} />
                       <ScoreFigure value={item.awayPoints} color={awayColor} marked={item.scoreSide === 'away'} />
                     </span>
                   ) : null}
-                  <div className="min-w-0 text-[11px] font-black leading-tight text-[rgb(0,0,255)]">{item.title}</div>
                 </div>
+                <div className="mt-0.5 text-[11px] font-black leading-tight text-[rgb(0,0,255)]">{title}</div>
+                {detail ? (
+                  <div className="whitespace-pre-line text-[11px] leading-tight text-neutral-600">{detail}</div>
+                ) : null}
               </div>
-              {item.detail ? (
-                <div className="whitespace-pre-line text-[11px] leading-tight text-neutral-600">{item.detail}</div>
+              {canEdit || canDelete ? (
+                <div className="flex w-8 shrink-0 flex-col items-center justify-between self-stretch">
+                  {canEdit ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (item.canPlaceShot && onPlaceShot) onPlaceShot(item.shotEditId ?? item.id);
+                        else if (item.canEditJump && onEditJump) onEditJump(item.jumpEditId ?? item.id);
+                        else onEditFoulReceived?.(item.foulEditId ?? item.id);
+                      }}
+                      aria-label={item.canPlaceShot ? placeShotLabel : item.canEditJump ? editJumpLabel : editFoulReceivedLabel}
+                      className="flex h-7 w-8 items-center justify-center text-neutral-700"
+                    >
+                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  ) : <span />}
+                  {canDelete ? (
+                    <button
+                      type="button"
+                      onClick={() => onDelete(item.id)}
+                      aria-label={deleteLabel}
+                      className="flex h-7 w-8 items-center justify-center text-neutral-700"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
             </div>
             );
           })
         )}
-      </div>
-      <div className="border-t border-neutral-200 p-1.5">
-        <button
-          type="button"
-          onClick={onUndo}
-          disabled={!canUndo}
-          className="w-full rounded-lg bg-black py-2 text-[11px] font-black tracking-wider text-amber-300 shadow-md hover:text-white disabled:opacity-40"
-        >
-          Undo last
-        </button>
       </div>
     </aside>
   );
@@ -1364,8 +1435,6 @@ export function CaptureBoard({
   canControlClock,
   onAdjustClock,
   onToggleClock,
-  hideClock = false,
-  logOnly = false,
   idleClockLabel,
   homePlayers,
   awayPlayers,
@@ -1398,14 +1467,14 @@ export function CaptureBoard({
   hint,
   hintUrgent,
   hintUrgentKey,
-  deferredNote,
+  closedBadge,
   closeGameLabel,
   onCloseGame,
   onStepBack,
   onCancelDelete,
   logItems,
-  onUndo,
-  canUndo,
+  onDeletePlay,
+  deletePlayLabel,
   onAddLog,
   addLogLabel,
   onPlaceShot,
@@ -1429,6 +1498,7 @@ export function CaptureBoard({
   onBack,
   homeCoaches,
   awayCoach,
+  outLabel,
   onHomeCoach,
   onAwayCoach,
   onEditAwayBench,
@@ -1544,7 +1614,7 @@ export function CaptureBoard({
             hint={hint}
             hintUrgent={hintUrgent}
             hintUrgentKey={hintUrgentKey}
-            deferredNote={deferredNote}
+            closedBadge={closedBadge}
             closeGameLabel={closeGameLabel}
             onCloseGame={onCloseGame}
             cancelDeleteLabel={cancelDeleteLabel}
@@ -1561,10 +1631,6 @@ export function CaptureBoard({
         </div>
       </div>
     );
-
-    if (logOnly) {
-      return <div className="flex h-full min-h-0 min-w-0 flex-1">{courtPane}</div>;
-    }
 
     return (
     <div
@@ -1644,6 +1710,7 @@ export function CaptureBoard({
           color={homeColor}
           compact={compact}
           coaches={homeCoaches}
+          outLabel={outLabel}
           onCoach={onHomeCoach}
           onSelect={benchPickSide === 'home' ? (playerId) => onBenchPlayer('home', playerId) : undefined}
         />
@@ -1683,6 +1750,7 @@ export function CaptureBoard({
           color={awayColor}
           compact={compact}
           coaches={awayCoach ? [awayCoach] : []}
+          outLabel={outLabel}
           onCoach={onAwayCoach}
           onEdit={onEditAwayBench}
           editLabel={editBenchLabel}
@@ -1704,83 +1772,55 @@ export function CaptureBoard({
                 <FlipCourtButton onFlipCourt={onFlipCourt} />
               </div>
             ) : null}
-            {logOnly ? (
-              <div
-                title={homeName}
-                className="relative flex min-w-0 flex-1 items-stretch overflow-hidden bg-white text-left text-xl font-bold text-neutral-900"
-              >
-                <span aria-hidden="true" className="relative z-10 w-5 shrink-0" style={{ backgroundColor: homeColor }} />
-                <span className="relative flex min-w-0 flex-1 items-center gap-2 px-2">
-                  {homeLogoUrl ? <TeamLogo url={homeLogoUrl} className="relative z-10 h-8 w-8" /> : null}
-                  <span className="relative z-10 truncate">{homeName}</span>
-                </span>
-              </div>
-            ) : (
-              <button
-                type="button"
-                title={homeName}
-                onClick={() => {
-                  if (!canSetPossession || possession === 'home') return;
-                  onSetPossession('home');
-                }}
-                className="relative flex min-w-0 flex-1 items-stretch overflow-hidden bg-white text-left text-xl font-bold text-neutral-900"
-              >
-                <span aria-hidden="true" className="relative z-10 w-5 shrink-0" style={{ backgroundColor: homeColor }} />
-                <span className="relative flex min-w-0 flex-1 items-center gap-2 px-2">
-                  {possession === 'home' ? <PossessionWash color={homeColor} /> : null}
-                  {homeLogoUrl ? <TeamLogo url={homeLogoUrl} className="relative z-10 h-8 w-8" /> : null}
-                  <span className="relative z-10 truncate">{homeName}</span>
-                </span>
-              </button>
-            )}
+            <button
+              type="button"
+              title={homeName}
+              onClick={() => {
+                if (!canSetPossession || possession === 'home') return;
+                onSetPossession('home');
+              }}
+              className="relative flex min-w-0 flex-1 items-stretch overflow-hidden bg-white text-left text-xl font-bold text-neutral-900"
+            >
+              <span aria-hidden="true" className="relative z-10 w-5 shrink-0" style={{ backgroundColor: homeColor }} />
+              <span className="relative flex min-w-0 flex-1 items-center gap-2 px-2">
+                {possession === 'home' ? <PossessionWash color={homeColor} /> : null}
+                {homeLogoUrl ? <TeamLogo url={homeLogoUrl} className="relative z-10 h-8 w-8" /> : null}
+                <span className="relative z-10 truncate">{homeName}</span>
+              </span>
+            </button>
             <div className="flex w-14 shrink-0 items-center justify-center bg-blue-700 text-3xl font-black tabular-nums text-white">
               {homeScore}
             </div>
-            {hideClock ? null : (
-              <ScoreboardClock
-                dense
-                periodLabel={periodLabel}
-                subscribeClock={subscribeClock}
-                getClockFace={getClockFace}
-                clockRunning={clockRunning}
-                canControlClock={canControlClock}
-                onAdjustClock={onAdjustClock}
-                onToggleClock={onToggleClock}
-                idleClockLabel={idleClockLabel}
-              />
-            )}
+            <ScoreboardClock
+              dense
+              periodLabel={periodLabel}
+              subscribeClock={subscribeClock}
+              getClockFace={getClockFace}
+              clockRunning={clockRunning}
+              canControlClock={canControlClock}
+              onAdjustClock={onAdjustClock}
+              onToggleClock={onToggleClock}
+              idleClockLabel={idleClockLabel}
+            />
             <div className="flex w-14 shrink-0 items-center justify-center bg-blue-700 text-3xl font-black tabular-nums text-white">
               {awayScore}
             </div>
-            {logOnly ? (
-              <div
-                title={awayName}
-                className="relative flex min-w-0 flex-1 items-stretch overflow-hidden bg-white text-right text-xl font-bold text-neutral-900"
-              >
-                <span className="relative flex min-w-0 flex-1 items-center justify-end px-2">
-                  <span className="relative z-10 truncate">{awayName}</span>
-                </span>
-                <span aria-hidden="true" className="relative z-10 w-5 shrink-0" style={{ backgroundColor: awayColor }} />
-              </div>
-            ) : (
-              <button
-                type="button"
-                title={awayName}
-                onClick={() => {
-                  if (!canSetPossession || possession === 'away') return;
-                  onSetPossession('away');
-                }}
-                className="relative flex min-w-0 flex-1 items-stretch overflow-hidden bg-white text-right text-xl font-bold text-neutral-900"
-              >
-                <span className="relative flex min-w-0 flex-1 items-center justify-end px-2">
-                  {possession === 'away' ? <PossessionWash color={awayColor} /> : null}
-                  <span className="relative z-10 truncate">{awayName}</span>
-                </span>
-                <span aria-hidden="true" className="relative z-10 w-5 shrink-0" style={{ backgroundColor: awayColor }} />
-              </button>
-            )}
+            <button
+              type="button"
+              title={awayName}
+              onClick={() => {
+                if (!canSetPossession || possession === 'away') return;
+                onSetPossession('away');
+              }}
+              className="relative flex min-w-0 flex-1 items-stretch overflow-hidden bg-white text-right text-xl font-bold text-neutral-900"
+            >
+              <span className="relative flex min-w-0 flex-1 items-center justify-end px-2">
+                {possession === 'away' ? <PossessionWash color={awayColor} /> : null}
+                <span className="relative z-10 truncate">{awayName}</span>
+              </span>
+              <span aria-hidden="true" className="relative z-10 w-5 shrink-0" style={{ backgroundColor: awayColor }} />
+            </button>
           </div>
-          {logOnly ? null : (
           <div className="mb-3 flex shrink-0 items-center justify-between gap-1 overflow-x-auto px-1 pt-1 sm:mb-4 md:mb-5">
             <div className="flex min-w-0 flex-1 items-center gap-1">
               <PossessionDot active={possession === 'home'} />
@@ -1813,15 +1853,14 @@ export function CaptureBoard({
               <PossessionDot active={possession === 'away'} />
             </div>
           </div>
-          )}
           <div className="flex min-h-0 flex-1 gap-1 px-1 pb-1">
             {floor(true)}
             <ActionLog
               items={logItems}
               homeColor={homeColor}
               awayColor={awayColor}
-              onUndo={onUndo}
-              canUndo={canUndo}
+              onDelete={onDeletePlay}
+              deleteLabel={deletePlayLabel}
               onAdd={onAddLog}
               addLabel={addLogLabel}
               onPlaceShot={onPlaceShot}
@@ -1854,26 +1893,23 @@ export function CaptureBoard({
           clockViolationsEnabled={clockViolationsEnabled}
           timeoutEnabled={timeoutEnabled}
           color={homeColor}
-          plain={logOnly}
         />
 
         <div className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center bg-blue-700 text-white shadow-sm">
           <span className="text-4xl font-black tabular-nums leading-none">{homeScore}</span>
         </div>
 
-        {hideClock ? null : (
-          <ScoreboardClock
-            dense={false}
-            periodLabel={periodLabel}
-            subscribeClock={subscribeClock}
-            getClockFace={getClockFace}
-            clockRunning={clockRunning}
-            canControlClock={canControlClock}
-            onAdjustClock={onAdjustClock}
-            onToggleClock={onToggleClock}
-            idleClockLabel={idleClockLabel}
-          />
-        )}
+        <ScoreboardClock
+          dense={false}
+          periodLabel={periodLabel}
+          subscribeClock={subscribeClock}
+          getClockFace={getClockFace}
+          clockRunning={clockRunning}
+          canControlClock={canControlClock}
+          onAdjustClock={onAdjustClock}
+          onToggleClock={onToggleClock}
+          idleClockLabel={idleClockLabel}
+        />
 
         <div className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center bg-blue-700 text-white shadow-sm">
           <span className="text-4xl font-black tabular-nums leading-none">{awayScore}</span>
@@ -1895,7 +1931,6 @@ export function CaptureBoard({
           clockViolationsEnabled={clockViolationsEnabled}
           timeoutEnabled={timeoutEnabled}
           color={awayColor}
-          plain={logOnly}
         />
       </div>
 
@@ -1905,8 +1940,8 @@ export function CaptureBoard({
           items={logItems}
           homeColor={homeColor}
           awayColor={awayColor}
-          onUndo={onUndo}
-          canUndo={canUndo}
+          onDelete={onDeletePlay}
+          deleteLabel={deletePlayLabel}
           onAdd={onAddLog}
           addLabel={addLogLabel}
           onPlaceShot={onPlaceShot}

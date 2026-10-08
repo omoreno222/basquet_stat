@@ -96,6 +96,7 @@ export interface Game {
   status: GameStatus;
   clock_running: boolean;
   clock_remaining_ms: number;
+  clock_synced_at: string | null;
   current_period: number;
   possession: 'home' | 'away' | null;
   opening_tip_winner?: 'home' | 'away' | null;

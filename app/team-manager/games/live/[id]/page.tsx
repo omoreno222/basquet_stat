@@ -6,5 +6,5 @@ export default async function LiveCapturePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <CaptureScreen gameId={id} mode="live" />;
+  return <CaptureScreen gameId={id} />;
 }

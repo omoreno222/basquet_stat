@@ -55,7 +55,7 @@ export function PeriodInboundModal({
               <button
                 type="button"
                 onClick={onNo}
-                className="flex-1 bg-neutral-200 py-3 text-sm font-bold text-neutral-800 hover:bg-neutral-300"
+                className="flex-1 border-2 border-neutral-900 bg-white py-3 text-sm font-black text-neutral-900 hover:bg-neutral-100"
                 style={{ minHeight: '48px' }}
               >
                 {noLabel}
@@ -63,7 +63,7 @@ export function PeriodInboundModal({
               <button
                 type="button"
                 onClick={onYes}
-                className="flex-1 bg-neutral-900 py-3 text-sm font-black text-white hover:bg-black"
+                className="flex-1 border-2 border-neutral-900 bg-white py-3 text-sm font-black text-neutral-900 hover:bg-neutral-100"
                 style={{ minHeight: '48px' }}
               >
                 {yesLabel}

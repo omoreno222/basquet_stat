@@ -10,7 +10,7 @@ import { Profile, Game } from '@/lib/types';
 import { Club } from '@/types/database';
 import { ClubLogo } from '@/components/ClubLogo';
 import { TeamManagerNavPills } from '@/components/NavPills';
-import { userCanLogDeferred } from '@/lib/live-access';
+import { userManagesClub } from '@/lib/live-access';
 import { useLocaleTranslations } from '@/lib/use-locale-translations';
 
 interface GameWithTeam extends Game {
@@ -168,10 +168,10 @@ export default function TeamManagerDashboard() {
                     >
                       {t('trke_eval_open', 'Evaluation')}
                     </Link>
-                    {userCanLogDeferred(roles, game.teams?.clubs?.id ?? null) ? (
+                    {userManagesClub(roles, game.teams?.clubs?.id ?? null) ? (
                       <Link
-                        href={`/team-manager/games/deferred/${game.id}`}
-                        aria-label={t('trke_deferred_open', 'Log from video')}
+                        href={`/team-manager/games/live/${game.id}`}
+                        aria-label={t('trke_capture_open', 'Open the court')}
                         className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded border border-gray-300 bg-white text-gray-900 hover:bg-gray-100 dark:border-white/20 dark:bg-gray-950 dark:text-gray-100"
                       >
                         <ChartColumn className="h-5 w-5" aria-hidden="true" />
