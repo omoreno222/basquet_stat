@@ -36,10 +36,18 @@ export interface CaptureLogItem {
   canPlaceShot?: boolean;
   canEditJump?: boolean;
   canEditFoulReceived?: boolean;
+  canEditMiss?: boolean;
+  canEditFreeThrows?: boolean;
+  canEditSubstitution?: boolean;
+  canEditRebound?: boolean;
   /** Event the pencil opens when this card is a sibling of the editable play. */
   shotEditId?: string;
   jumpEditId?: string;
   foulEditId?: string;
+  missEditId?: string;
+  freeThrowEditId?: string;
+  substitutionEditId?: string;
+  reboundEditId?: string;
   canDelete?: boolean;
 }
 
@@ -107,14 +115,20 @@ interface CaptureBoardProps {
   editJumpLabel?: string;
   onEditFoulReceived?: (id: string) => void;
   editFoulReceivedLabel?: string;
+  onEditMiss?: (id: string) => void;
+  editMissLabel?: string;
+  onEditFreeThrows?: (id: string) => void;
+  editFreeThrowsLabel?: string;
+  onEditSubstitution?: (id: string) => void;
+  editSubstitutionLabel?: string;
+  onEditRebound?: (id: string) => void;
+  editReboundLabel?: string;
   court: ReactNode;
   homeAttacksRight: boolean;
   /** Up to three letters drawn in the away attack mark. */
   awayMark: string;
   attackMarkHomeLabel: string;
   attackMarkAwayLabel: string;
-  nextLabel?: string;
-  onNextPeriod?: () => void;
   quintetoLabel?: string;
   onQuinteto?: () => void;
   onFlipCourt?: () => void;
@@ -573,8 +587,6 @@ function HintBar({
   cancelDeleteLabel,
   onStepBack,
   onCancelDelete,
-  nextLabel,
-  onNextPeriod,
   quintetoLabel,
   onQuinteto,
   onBack,
@@ -593,8 +605,6 @@ function HintBar({
   cancelDeleteLabel: string;
   onStepBack?: () => void;
   onCancelDelete?: () => void;
-  nextLabel?: string;
-  onNextPeriod?: () => void;
   quintetoLabel?: string;
   onQuinteto?: () => void;
   onBack?: () => void;
@@ -667,15 +677,6 @@ function HintBar({
           style={{ minHeight: '48px' }}
         >
           {quintetoLabel}
-        </button>
-      ) : null}
-      {onNextPeriod ? (
-        <button
-          type="button"
-          onClick={onNextPeriod}
-          className={`shrink-0 whitespace-nowrap rounded-lg bg-white px-3 py-1.5 text-[11px] font-black tracking-wide text-black shadow-md ${LABEL_SHADOW}`}
-        >
-          {nextLabel}
         </button>
       ) : null}
       {rightMark}
@@ -1289,6 +1290,14 @@ function ActionLog({
   editJumpLabel,
   onEditFoulReceived,
   editFoulReceivedLabel,
+  onEditMiss,
+  editMissLabel,
+  onEditFreeThrows,
+  editFreeThrowsLabel,
+  onEditSubstitution,
+  editSubstitutionLabel,
+  onEditRebound,
+  editReboundLabel,
 }: {
   items: CaptureLogItem[];
   homeColor: string;
@@ -1303,6 +1312,14 @@ function ActionLog({
   editJumpLabel?: string;
   onEditFoulReceived?: (id: string) => void;
   editFoulReceivedLabel?: string;
+  onEditMiss?: (id: string) => void;
+  editMissLabel?: string;
+  onEditFreeThrows?: (id: string) => void;
+  editFreeThrowsLabel?: string;
+  onEditSubstitution?: (id: string) => void;
+  editSubstitutionLabel?: string;
+  onEditRebound?: (id: string) => void;
+  editReboundLabel?: string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const quartersInLog = new Set(items.flatMap((item) => (
@@ -1357,7 +1374,13 @@ function ActionLog({
         ) : (
           items.map((item) => {
             const tone = scoreTone(item, homeColor, awayColor);
-            const canEdit = (item.canPlaceShot && onPlaceShot) || (item.canEditJump && onEditJump) || (item.canEditFoulReceived && onEditFoulReceived);
+            const canEdit = (item.canPlaceShot && onPlaceShot)
+              || (item.canEditJump && onEditJump)
+              || (item.canEditFoulReceived && onEditFoulReceived)
+              || (item.canEditMiss && onEditMiss)
+              || (item.canEditFreeThrows && onEditFreeThrows)
+              || (item.canEditSubstitution && onEditSubstitution)
+              || (item.canEditRebound && onEditRebound);
             const canDelete = item.canDelete && onDelete;
             const title = logCopy(item.title);
             const detail = logCopy(item.detail);
@@ -1392,9 +1415,21 @@ function ActionLog({
                       onClick={() => {
                         if (item.canPlaceShot && onPlaceShot) onPlaceShot(item.shotEditId ?? item.id);
                         else if (item.canEditJump && onEditJump) onEditJump(item.jumpEditId ?? item.id);
-                        else onEditFoulReceived?.(item.foulEditId ?? item.id);
+                        else if (item.canEditFoulReceived && onEditFoulReceived) onEditFoulReceived(item.foulEditId ?? item.id);
+                        else if (item.canEditMiss && onEditMiss) onEditMiss(item.missEditId ?? item.id);
+                        else if (item.canEditFreeThrows && onEditFreeThrows) onEditFreeThrows(item.freeThrowEditId ?? item.id);
+                        else if (item.canEditSubstitution && onEditSubstitution) onEditSubstitution(item.substitutionEditId ?? item.id);
+                        else onEditRebound?.(item.reboundEditId ?? item.id);
                       }}
-                      aria-label={item.canPlaceShot ? placeShotLabel : item.canEditJump ? editJumpLabel : editFoulReceivedLabel}
+                      aria-label={
+                        item.canPlaceShot ? placeShotLabel
+                          : item.canEditJump ? editJumpLabel
+                            : item.canEditFoulReceived ? editFoulReceivedLabel
+                              : item.canEditMiss ? editMissLabel
+                                : item.canEditFreeThrows ? editFreeThrowsLabel
+                                  : item.canEditSubstitution ? editSubstitutionLabel
+                                    : editReboundLabel
+                      }
                       className="flex h-7 w-8 items-center justify-center text-neutral-700"
                     >
                       <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1483,13 +1518,19 @@ export function CaptureBoard({
   editJumpLabel,
   onEditFoulReceived,
   editFoulReceivedLabel,
+  onEditMiss,
+  editMissLabel,
+  onEditFreeThrows,
+  editFreeThrowsLabel,
+  onEditSubstitution,
+  editSubstitutionLabel,
+  onEditRebound,
+  editReboundLabel,
   court,
   homeAttacksRight,
   awayMark,
   attackMarkHomeLabel,
   attackMarkAwayLabel,
-  nextLabel,
-  onNextPeriod,
   quintetoLabel,
   onQuinteto,
   onFlipCourt,
@@ -1620,8 +1661,6 @@ export function CaptureBoard({
             cancelDeleteLabel={cancelDeleteLabel}
             onStepBack={onStepBack}
             onCancelDelete={onCancelDelete}
-            nextLabel={nextLabel}
-            onNextPeriod={onNextPeriod}
             quintetoLabel={quintetoLabel}
             onQuinteto={onQuinteto}
             onBack={onBack}
@@ -1869,6 +1908,14 @@ export function CaptureBoard({
               editJumpLabel={editJumpLabel}
               onEditFoulReceived={onEditFoulReceived}
               editFoulReceivedLabel={editFoulReceivedLabel}
+              onEditMiss={onEditMiss}
+              editMissLabel={editMissLabel}
+              onEditFreeThrows={onEditFreeThrows}
+              editFreeThrowsLabel={editFreeThrowsLabel}
+              onEditSubstitution={onEditSubstitution}
+              editSubstitutionLabel={editSubstitutionLabel}
+              onEditRebound={onEditRebound}
+              editReboundLabel={editReboundLabel}
             />
           </div>
         </>
@@ -1950,6 +1997,14 @@ export function CaptureBoard({
           editJumpLabel={editJumpLabel}
           onEditFoulReceived={onEditFoulReceived}
           editFoulReceivedLabel={editFoulReceivedLabel}
+          onEditMiss={onEditMiss}
+          editMissLabel={editMissLabel}
+          onEditFreeThrows={onEditFreeThrows}
+          editFreeThrowsLabel={editFreeThrowsLabel}
+          onEditSubstitution={onEditSubstitution}
+          editSubstitutionLabel={editSubstitutionLabel}
+          onEditRebound={onEditRebound}
+          editReboundLabel={editReboundLabel}
         />
       </div>
         </>

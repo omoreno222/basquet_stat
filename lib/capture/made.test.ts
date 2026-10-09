@@ -3,6 +3,11 @@ import {
   commitCapturePlaySchema,
   madeAssistRequired,
   madeStopsClock,
+  editFreeThrowsSchema,
+  editMissedShotSchema,
+  editReboundPlayerSchema,
+  editSubstitutionSchema,
+  placeMadeShotPointSchema,
   shotInPaint,
   shotOnAttackingHalf,
   shotValueFromWorld,
@@ -106,9 +111,65 @@ describe('made play schema', () => {
     expect(commitCapturePlaySchema.safeParse(made({ foulerId, foulKind: 'personal', throws: [] })).success).toBe(false);
   });
 
-  it('stops the clock only when the basket includes a personal foul', () => {
-    expect(madeStopsClock(false)).toBe(false);
+  it('stops the clock on every made basket', () => {
+    expect(madeStopsClock(false)).toBe(true);
     expect(madeStopsClock(true)).toBe(true);
+  });
+
+  it('requires a shooter when a missed shot is edited and keeps the free-throw count', () => {
+    const shot = {
+      gameId: id,
+      eventId: other,
+      coordX: 0.9,
+      coordY: 0.5,
+      shooterId: id,
+    };
+    expect(editMissedShotSchema.safeParse(shot).success).toBe(true);
+    expect(editMissedShotSchema.safeParse({ ...shot, shooterId: null }).success).toBe(false);
+    expect(editFreeThrowsSchema.safeParse({
+      gameId: id,
+      eventId: other,
+      marks: ['made', 'miss'],
+    }).success).toBe(true);
+    expect(editFreeThrowsSchema.safeParse({
+      gameId: id,
+      eventId: other,
+      marks: ['made', 'miss', 'made', 'miss'],
+    }).success).toBe(false);
+    expect(editSubstitutionSchema.safeParse({
+      gameId: id,
+      eventId: other,
+      swaps: [{ eventId: other, outId: id, inId: '33333333-3333-4333-8333-333333333333' }],
+    }).success).toBe(true);
+    expect(editSubstitutionSchema.safeParse({
+      gameId: id,
+      eventId: other,
+      swaps: [],
+    }).success).toBe(false);
+    expect(editReboundPlayerSchema.safeParse({
+      gameId: id,
+      eventId: other,
+      playerId: id,
+    }).success).toBe(true);
+    expect(editReboundPlayerSchema.safeParse({
+      gameId: id,
+      eventId: other,
+      playerId: null,
+    }).success).toBe(false);
+  });
+
+  it('requires a shooter when the basket spot is edited', () => {
+    const input = {
+      gameId: id,
+      eventId: other,
+      coordX: 0.9,
+      coordY: 0.5,
+      assistId: null as string | null,
+      shooterId: id,
+    };
+    expect(placeMadeShotPointSchema.safeParse(input).success).toBe(true);
+    expect(placeMadeShotPointSchema.safeParse({ ...input, shooterId: null }).success).toBe(false);
+    expect(placeMadeShotPointSchema.safeParse({ ...input, shooterId: undefined }).success).toBe(false);
   });
 
   it('rejects an assist or foul charged to the shooter', () => {

@@ -20,7 +20,11 @@ import {
   offenseAttacksRight,
   otherCaptureSide,
   editFoulReceivedSchema,
+  editFreeThrowsSchema,
   editJumpSchema,
+  editMissedShotSchema,
+  editReboundPlayerSchema,
+  editSubstitutionSchema,
   placeMadeShotPointSchema,
   shotInPaint,
   shotOnAttackingHalf,
@@ -1294,6 +1298,8 @@ export async function placeMadeShotPoint(
   teamScore: number;
   opponentScore: number;
   playGroupId: string;
+  playerId: string | null;
+  opponentPlayerId: string | null;
   assist: { id: string; playerId: string | null; opponentPlayerId: string | null; createdAt: string } | null;
 } | { error: string }> {
   const parsed = placeMadeShotPointSchema.safeParse(input);
@@ -1310,7 +1316,7 @@ export async function placeMadeShotPoint(
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
 
-  const { gameId, eventId, coordX, coordY, assistId } = parsed.data;
+  const { gameId, eventId, coordX, coordY, assistId, shooterId } = parsed.data;
   const { data: game, error: gameError } = await supabase
     .from('games')
     .select('team_id, attack_right_first, team_score, opponent_score')
@@ -1354,8 +1360,9 @@ export async function placeMadeShotPoint(
 
   const shotValue = shotValueFromWorld(coordX, coordY, attacksRight);
   const inPaint = shotInPaint(coordX, coordY, attacksRight);
-  const shooterId = side === 'home' ? event.player_id : event.opponent_player_id;
-  if (!shooterId || assistId === shooterId) return { error: 'shot_point_assist' };
+  const currentShooterId = side === 'home' ? event.player_id : event.opponent_player_id;
+  if (!currentShooterId) return { error: 'shot_point_invalid' };
+  if (assistId === shooterId) return { error: 'shot_point_assist' };
 
   const cutoff = {
     period_number: event.period_number,
@@ -1387,6 +1394,9 @@ export async function placeMadeShotPoint(
   const courtIds = side === 'home'
     ? onCourtBefore(homeStart, rows, event.period_number, 'home', cutoff)
     : onCourtBefore(awayStart, rows, event.period_number, 'away', cutoff);
+  const sameShooter = shooterId === currentShooterId;
+  const shooterOnCourt = courtIds.includes(shooterId) && !playerEliminatedBefore(rows, shooterId, side, cutoff);
+  if (!sameShooter && !shooterOnCourt) return { error: 'shot_point_player' };
   const mates = courtIds.filter((id) => id !== shooterId && !playerEliminatedBefore(rows, id, side, cutoff));
   if (assistId && !mates.includes(assistId)) return { error: 'shot_point_assist' };
   if (madeAssistRequired(shotValue, inPaint, mates.length) && !assistId) return { error: 'shot_point_assist' };
@@ -1394,10 +1404,19 @@ export async function placeMadeShotPoint(
   const stored = storedCourtPoint(coordX, coordY, offenseAttacksRight('home', event.period_number, attackRightFirst));
   const previousPoints = event.points === 3 ? 3 : 2;
   const playGroupId = (event.play_group_id as string | null) ?? crypto.randomUUID();
+  const playerId = side === 'home' ? shooterId : null;
+  const opponentPlayerId = side === 'away' ? shooterId : null;
 
   const { error: shotError } = await supabase
     .from('game_events')
-    .update({ points: shotValue, coord_x: stored.x, coord_y: stored.y, play_group_id: playGroupId })
+    .update({
+      points: shotValue,
+      coord_x: stored.x,
+      coord_y: stored.y,
+      play_group_id: playGroupId,
+      player_id: playerId,
+      opponent_player_id: opponentPlayerId,
+    })
     .eq('id', eventId)
     .eq('game_id', gameId);
   if (shotError) return { error: 'shot_point_invalid' };
@@ -1410,6 +1429,8 @@ export async function placeMadeShotPoint(
         coord_x: event.coord_x,
         coord_y: event.coord_y,
         play_group_id: event.play_group_id,
+        player_id: event.player_id,
+        opponent_player_id: event.opponent_player_id,
       })
       .eq('id', eventId);
     if (!event.play_group_id) return;
@@ -1584,6 +1605,8 @@ export async function placeMadeShotPoint(
     teamScore,
     opponentScore,
     playGroupId,
+    playerId,
+    opponentPlayerId,
     assist: assistOut,
   };
 }
@@ -1703,7 +1726,12 @@ export async function editJump(
 
 export async function editFoulReceived(
   input: unknown,
-): Promise<{ homePlayerId: string | null; awayPlayerId: string | null } | { error: string }> {
+): Promise<{
+  homePlayerId: string | null;
+  awayPlayerId: string | null;
+  offenderHomeId: string | null;
+  offenderAwayId: string | null;
+} | { error: string }> {
   const parsed = editFoulReceivedSchema.safeParse(input);
   if (!parsed.success) return { error: 'foul_received_invalid' };
 
@@ -1718,7 +1746,7 @@ export async function editFoulReceived(
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
 
-  const { gameId, eventId, playerId } = parsed.data;
+  const { gameId, eventId, playerId, offenderId } = parsed.data;
   const { data: game, error: gameError } = await supabase
     .from('games')
     .select('team_id')
@@ -1741,7 +1769,7 @@ export async function editFoulReceived(
 
   const { data: event, error: eventError } = await supabase
     .from('game_events')
-    .select('id, event_type, foul_side')
+    .select('id, event_type, foul_side, coach_technical_side, player_id, opponent_player_id, period_number, clock_remaining_ms, created_at')
     .eq('id', eventId)
     .eq('game_id', gameId)
     .single();
@@ -1749,6 +1777,44 @@ export async function editFoulReceived(
     ? event.foul_side
     : null;
   if (eventError || !event || event.event_type !== 'foul' || !side) return { error: 'foul_received_invalid' };
+  if (playerId && playerId === offenderId) return { error: 'foul_received_invalid' };
+
+  const coach = event.coach_technical_side === 'home' || event.coach_technical_side === 'away';
+  const currentOffender = side === 'home' ? event.player_id : event.opponent_player_id;
+  if (coach) {
+    if (offenderId) return { error: 'foul_player' };
+  } else if (!offenderId) {
+    return { error: 'foul_player' };
+  } else if (offenderId !== currentOffender) {
+    const cutoff = {
+      period_number: event.period_number as number,
+      clock_remaining_ms: event.clock_remaining_ms as number,
+      created_at: event.created_at as string | null,
+    };
+    const { data: lineup, error: lineupError } = await supabase
+      .from('game_period_lineups')
+      .select('side, position_index, player_id, opponent_player_id')
+      .eq('game_id', gameId)
+      .eq('period_number', event.period_number);
+    if (lineupError) return { error: 'foul_received_invalid' };
+    const { data: history, error: historyError } = await supabase
+      .from('game_events')
+      .select('id, event_type, foul_type, coach_technical_side, player_id, opponent_player_id, player_out_id, opponent_player_out_id, turnover_type, turnover_side, period_number, clock_remaining_ms, created_at')
+      .eq('game_id', gameId);
+    if (historyError) return { error: 'foul_received_invalid' };
+    const rows = history ?? [];
+    const starters = (lineup ?? [])
+      .filter((row) => row.side === side && (side === 'home' ? row.player_id : row.opponent_player_id))
+      .sort((a, b) => a.position_index - b.position_index)
+      .map((row) => (side === 'home' ? row.player_id : row.opponent_player_id) as string);
+    const courtIds = onCourtBefore(starters, rows, event.period_number, side, cutoff);
+    if (!courtIds.includes(offenderId) || playerEliminatedBefore(rows, offenderId, side, cutoff)) {
+      return { error: 'foul_player' };
+    }
+  }
+
+  const offenderHomeId = !coach && side === 'home' ? offenderId : null;
+  const offenderAwayId = !coach && side === 'away' ? offenderId : null;
 
   let homePlayerId: string | null = null;
   let awayPlayerId: string | null = null;
@@ -1780,10 +1846,582 @@ export async function editFoulReceived(
     .update({
       foul_received_player_id: homePlayerId,
       foul_received_opponent_player_id: awayPlayerId,
+      player_id: offenderHomeId,
+      opponent_player_id: offenderAwayId,
     })
     .eq('id', eventId)
     .eq('game_id', gameId);
   if (updateError) return { error: 'foul_received_invalid' };
 
-  return { homePlayerId, awayPlayerId };
+  return { homePlayerId, awayPlayerId, offenderHomeId, offenderAwayId };
+}
+
+export async function editMissedShot(
+  input: unknown,
+): Promise<{
+  points: 2 | 3;
+  coordX: number;
+  coordY: number;
+  playerId: string | null;
+  opponentPlayerId: string | null;
+} | { error: string }> {
+  const parsed = editMissedShotSchema.safeParse(input);
+  if (!parsed.success) return { error: 'miss_point_invalid' };
+
+  const { user, error } = await getAuthenticatedUser();
+  if (error || !user) return { error: 'miss_point_slot' };
+  const token = (await cookies()).get('sb-access-token')?.value;
+  if (!token) return { error: 'miss_point_slot' };
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    accessToken: async () => token,
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+
+  const { gameId, eventId, coordX, coordY, shooterId } = parsed.data;
+  const { data: game, error: gameError } = await supabase
+    .from('games')
+    .select('team_id, attack_right_first')
+    .eq('id', gameId)
+    .single();
+  if (gameError || !game) return { error: 'miss_point_invalid' };
+
+  const { data: team, error: teamError } = await supabase
+    .from('teams')
+    .select('club_id')
+    .eq('id', game.team_id)
+    .single();
+  const { data: roles, error: rolesError } = await supabase
+    .from('profile_roles')
+    .select('role, club_id')
+    .eq('profile_id', user.id);
+  if (teamError || !team || rolesError || !userManagesClub(roles ?? [], team.club_id)) {
+    return { error: 'miss_point_slot' };
+  }
+
+  const { data: event, error: eventError } = await supabase
+    .from('game_events')
+    .select('id, event_type, made, points, player_id, opponent_player_id, period_number, play_group_id, coord_x, coord_y, clock_remaining_ms, created_at')
+    .eq('id', eventId)
+    .eq('game_id', gameId)
+    .single();
+  if (eventError || !event || event.event_type !== 'shot' || event.made !== false) {
+    return { error: 'miss_point_invalid' };
+  }
+
+  const side: CaptureSide | null = event.player_id
+    ? 'home'
+    : event.opponent_player_id
+      ? 'away'
+      : null;
+  if (!side || (event.player_id && event.opponent_player_id)) return { error: 'miss_point_invalid' };
+  const currentShooterId = side === 'home' ? event.player_id : event.opponent_player_id;
+  if (!currentShooterId) return { error: 'miss_point_invalid' };
+
+  const attackRightFirst = game.attack_right_first !== false;
+  const attacksRight = offenseAttacksRight(side, event.period_number, attackRightFirst);
+  if (!shotOnAttackingHalf(coordX, attacksRight)) return { error: 'miss_point_half' };
+  const shotValue = shotValueFromWorld(coordX, coordY, attacksRight);
+
+  const cutoff = {
+    period_number: event.period_number as number,
+    clock_remaining_ms: event.clock_remaining_ms as number,
+    created_at: event.created_at as string | null,
+  };
+  const { data: lineup, error: lineupError } = await supabase
+    .from('game_period_lineups')
+    .select('side, position_index, player_id, opponent_player_id')
+    .eq('game_id', gameId)
+    .eq('period_number', event.period_number);
+  if (lineupError) return { error: 'miss_point_invalid' };
+  const { data: history, error: historyError } = await supabase
+    .from('game_events')
+    .select('id, event_type, foul_type, foul_context, free_throws_awarded, coach_technical_side, player_id, opponent_player_id, player_out_id, opponent_player_out_id, turnover_type, turnover_side, period_number, clock_remaining_ms, created_at, play_group_id')
+    .eq('game_id', gameId);
+  if (historyError) return { error: 'miss_point_invalid' };
+  const rows = history ?? [];
+  const starters = (lineup ?? [])
+    .filter((row) => row.side === side && (side === 'home' ? row.player_id : row.opponent_player_id))
+    .sort((a, b) => a.position_index - b.position_index)
+    .map((row) => (side === 'home' ? row.player_id : row.opponent_player_id) as string);
+  const courtIds = onCourtBefore(starters, rows, event.period_number, side, cutoff);
+  const sameShooter = shooterId === currentShooterId;
+  const shooterOnCourt = courtIds.includes(shooterId) && !playerEliminatedBefore(rows, shooterId, side, cutoff);
+  if (!sameShooter && !shooterOnCourt) return { error: 'miss_point_player' };
+
+  const group = event.play_group_id
+    ? rows.filter((row) => row.play_group_id === event.play_group_id)
+    : [];
+  const fouler = group.find((row) => row.event_type === 'foul' && row.foul_context === 'shot_missed');
+  const foulerId = fouler
+    ? (fouler.player_id ?? fouler.opponent_player_id ?? null)
+    : null;
+  if (foulerId && foulerId === shooterId) return { error: 'miss_point_player' };
+  const lockedValue = fouler
+    && (fouler.foul_type === 'disruptive' || fouler.foul_type === 'flagrant' || fouler.foul_type === 'disqualifying')
+    && fouler.free_throws_awarded !== shotValue;
+  if (lockedValue) return { error: 'miss_point_value' };
+
+  const stored = storedCourtPoint(coordX, coordY, offenseAttacksRight('home', event.period_number, attackRightFirst));
+  const playerId = side === 'home' ? shooterId : null;
+  const opponentPlayerId = side === 'away' ? shooterId : null;
+  const { error: shotError } = await supabase
+    .from('game_events')
+    .update({
+      points: shotValue,
+      coord_x: stored.x,
+      coord_y: stored.y,
+      player_id: playerId,
+      opponent_player_id: opponentPlayerId,
+    })
+    .eq('id', eventId)
+    .eq('game_id', gameId);
+  if (shotError) return { error: 'miss_point_invalid' };
+
+  if (fouler?.id && event.play_group_id) {
+    const { error: foulError } = await supabase
+      .from('game_events')
+      .update({ shot_value: shotValue })
+      .eq('game_id', gameId)
+      .eq('play_group_id', event.play_group_id)
+      .eq('event_type', 'foul')
+      .eq('foul_context', 'shot_missed');
+    if (foulError) {
+      await supabase.from('game_events').update({
+        points: event.points,
+        coord_x: event.coord_x,
+        coord_y: event.coord_y,
+        player_id: event.player_id,
+        opponent_player_id: event.opponent_player_id,
+      }).eq('id', eventId);
+      return { error: 'miss_point_invalid' };
+    }
+  }
+
+  return { points: shotValue, coordX: stored.x, coordY: stored.y, playerId, opponentPlayerId };
+}
+
+export async function editFreeThrows(
+  input: unknown,
+): Promise<{
+  marks: { id: string; made: boolean; points: number }[];
+  teamScore: number;
+  opponentScore: number;
+} | { error: string }> {
+  const parsed = editFreeThrowsSchema.safeParse(input);
+  if (!parsed.success) return { error: 'ft_edit_invalid' };
+
+  const { user, error } = await getAuthenticatedUser();
+  if (error || !user) return { error: 'ft_edit_slot' };
+  const token = (await cookies()).get('sb-access-token')?.value;
+  if (!token) return { error: 'ft_edit_slot' };
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    accessToken: async () => token,
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+
+  const { gameId, eventId, marks } = parsed.data;
+  const { data: game, error: gameError } = await supabase
+    .from('games')
+    .select('team_id, team_score, opponent_score')
+    .eq('id', gameId)
+    .single();
+  if (gameError || !game) return { error: 'ft_edit_invalid' };
+
+  const { data: team, error: teamError } = await supabase
+    .from('teams')
+    .select('club_id')
+    .eq('id', game.team_id)
+    .single();
+  const { data: roles, error: rolesError } = await supabase
+    .from('profile_roles')
+    .select('role, club_id')
+    .eq('profile_id', user.id);
+  if (teamError || !team || rolesError || !userManagesClub(roles ?? [], team.club_id)) {
+    return { error: 'ft_edit_slot' };
+  }
+
+  const { data: event, error: eventError } = await supabase
+    .from('game_events')
+    .select('id, event_type, play_group_id')
+    .eq('id', eventId)
+    .eq('game_id', gameId)
+    .single();
+  if (eventError || !event || event.event_type !== 'free_throw') return { error: 'ft_edit_invalid' };
+
+  const groupQuery = supabase
+    .from('game_events')
+    .select('id, event_type, made, points, player_id, opponent_player_id, foul_type, foul_context, created_at, play_group_id')
+    .eq('game_id', gameId);
+  const { data: groupRows, error: groupError } = event.play_group_id
+    ? await groupQuery.eq('play_group_id', event.play_group_id)
+    : await groupQuery.eq('id', eventId);
+  if (groupError || !groupRows) return { error: 'ft_edit_invalid' };
+
+  const throws = groupRows
+    .filter((row) => row.event_type === 'free_throw')
+    .sort((a, b) => {
+      const aAt = String(a.created_at ?? '');
+      const bAt = String(b.created_at ?? '');
+      if (aAt !== bAt) return aAt < bAt ? -1 : 1;
+      return String(a.id) < String(b.id) ? -1 : 1;
+    });
+  if (throws.length !== marks.length || !throws.some((row) => row.id === eventId)) {
+    return { error: 'ft_edit_invalid' };
+  }
+
+  const foul = groupRows.find((row) => row.event_type === 'foul');
+  const shot = groupRows.find((row) => row.event_type === 'shot');
+  const source = shot?.made === true ? 'made' : shot ? 'miss' : 'foul';
+  const needsRebound = freeThrowNeedsRebound({
+    source,
+    kind: foul?.foul_type ?? undefined,
+    context: foul?.foul_context ?? undefined,
+    throws: marks,
+  });
+  const hasRebound = groupRows.some((row) => row.event_type === 'rebound');
+  if (needsRebound && !hasRebound) return { error: 'ft_edit_rebound' };
+
+  let homeDelta = 0;
+  let awayDelta = 0;
+  const nextMarks: { id: string; made: boolean; points: number }[] = [];
+  for (let index = 0; index < throws.length; index += 1) {
+    const row = throws[index];
+    const made = marks[index] === 'made';
+    const points = made ? 1 : 0;
+    const was = row.made ? 1 : 0;
+    const delta = points - was;
+    if (row.player_id) homeDelta += delta;
+    else if (row.opponent_player_id) awayDelta += delta;
+    else return { error: 'ft_edit_invalid' };
+    nextMarks.push({ id: row.id as string, made, points });
+  }
+
+  const previous = throws.map((row) => ({
+    id: row.id as string,
+    made: row.made,
+    points: row.points,
+  }));
+  for (const mark of nextMarks) {
+    const { error: updateError } = await supabase
+      .from('game_events')
+      .update({ made: mark.made, points: mark.points })
+      .eq('id', mark.id)
+      .eq('game_id', gameId);
+    if (updateError) {
+      for (const prior of previous) {
+        await supabase.from('game_events').update({ made: prior.made, points: prior.points }).eq('id', prior.id);
+      }
+      return { error: 'ft_edit_invalid' };
+    }
+  }
+
+  const teamScore = (game.team_score ?? 0) + homeDelta;
+  const opponentScore = (game.opponent_score ?? 0) + awayDelta;
+  if (homeDelta !== 0 || awayDelta !== 0) {
+    const { error: scoreError } = await supabase
+      .from('games')
+      .update({ team_score: teamScore, opponent_score: opponentScore })
+      .eq('id', gameId);
+    if (scoreError) {
+      for (const prior of previous) {
+        await supabase.from('game_events').update({ made: prior.made, points: prior.points }).eq('id', prior.id);
+      }
+      return { error: 'ft_edit_invalid' };
+    }
+  }
+
+  return { marks: nextMarks, teamScore, opponentScore };
+}
+
+export async function editSubstitution(
+  input: unknown,
+): Promise<{
+  swaps: {
+    id: string;
+    playerId: string | null;
+    opponentPlayerId: string | null;
+    playerOutId: string | null;
+    opponentPlayerOutId: string | null;
+  }[];
+} | { error: string }> {
+  const parsed = editSubstitutionSchema.safeParse(input);
+  if (!parsed.success) return { error: 'substitution_invalid' };
+
+  const { user, error } = await getAuthenticatedUser();
+  if (error || !user) return { error: 'substitution_slot' };
+  const token = (await cookies()).get('sb-access-token')?.value;
+  if (!token) return { error: 'substitution_slot' };
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    accessToken: async () => token,
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+
+  const { gameId, eventId, swaps } = parsed.data;
+  const ids = swaps.flatMap((swap) => [swap.eventId, swap.outId, swap.inId]);
+  if (new Set(swaps.map((swap) => swap.eventId)).size !== swaps.length) return { error: 'substitution_shape' };
+  if (new Set(ids).size !== ids.length || swaps.some((swap) => swap.outId === swap.inId)) {
+    return { error: 'substitution_shape' };
+  }
+
+  const { data: game, error: gameError } = await supabase
+    .from('games')
+    .select('team_id')
+    .eq('id', gameId)
+    .single();
+  if (gameError || !game) return { error: 'substitution_invalid' };
+
+  const { data: team, error: teamError } = await supabase
+    .from('teams')
+    .select('club_id')
+    .eq('id', game.team_id)
+    .single();
+  const { data: roles, error: rolesError } = await supabase
+    .from('profile_roles')
+    .select('role, club_id')
+    .eq('profile_id', user.id);
+  if (teamError || !team || rolesError || !userManagesClub(roles ?? [], team.club_id)) {
+    return { error: 'substitution_slot' };
+  }
+
+  const { data: event, error: eventError } = await supabase
+    .from('game_events')
+    .select('id, event_type, play_group_id, period_number, clock_remaining_ms, created_at, player_id, player_out_id, opponent_player_id, opponent_player_out_id')
+    .eq('id', eventId)
+    .eq('game_id', gameId)
+    .single();
+  if (eventError || !event || event.event_type !== 'substitution') return { error: 'substitution_invalid' };
+
+  const groupQuery = supabase
+    .from('game_events')
+    .select('id, event_type, play_group_id, period_number, clock_remaining_ms, created_at, player_id, player_out_id, opponent_player_id, opponent_player_out_id')
+    .eq('game_id', gameId)
+    .eq('event_type', 'substitution');
+  const { data: groupRows, error: groupError } = event.play_group_id
+    ? await groupQuery.eq('play_group_id', event.play_group_id)
+    : await groupQuery.eq('id', eventId);
+  if (groupError || !groupRows?.length) return { error: 'substitution_invalid' };
+
+  const ordered = [...groupRows].sort((a, b) => {
+    const aAt = String(a.created_at ?? '');
+    const bAt = String(b.created_at ?? '');
+    if (aAt !== bAt) return aAt < bAt ? -1 : 1;
+    return String(a.id) < String(b.id) ? -1 : 1;
+  });
+  if (ordered.length !== swaps.length) return { error: 'substitution_shape' };
+  const byId = new Map(ordered.map((row) => [row.id as string, row]));
+  if (swaps.some((swap) => !byId.has(swap.eventId))) return { error: 'substitution_shape' };
+
+  const home = ordered.every((row) => row.player_id && row.player_out_id && !row.opponent_player_id && !row.opponent_player_out_id);
+  const away = ordered.every((row) => row.opponent_player_id && row.opponent_player_out_id && !row.player_id && !row.player_out_id);
+  if (home === away) return { error: 'substitution_shape' };
+  const side: CaptureSide = home ? 'home' : 'away';
+  const first = ordered[0];
+  const cutoff = {
+    period_number: first.period_number as number,
+    clock_remaining_ms: first.clock_remaining_ms as number,
+    created_at: first.created_at as string | null,
+  };
+
+  const { data: lineup, error: lineupError } = await supabase
+    .from('game_period_lineups')
+    .select('side, position_index, player_id, opponent_player_id')
+    .eq('game_id', gameId)
+    .eq('period_number', first.period_number);
+  if (lineupError) return { error: 'substitution_invalid' };
+  const { data: history, error: historyError } = await supabase
+    .from('game_events')
+    .select('id, event_type, foul_type, coach_technical_side, player_id, opponent_player_id, player_out_id, opponent_player_out_id, turnover_type, turnover_side, period_number, clock_remaining_ms, created_at')
+    .eq('game_id', gameId);
+  if (historyError) return { error: 'substitution_invalid' };
+  const rows = history ?? [];
+  const starters = (lineup ?? [])
+    .filter((row) => row.side === side && (side === 'home' ? row.player_id : row.opponent_player_id))
+    .sort((a, b) => a.position_index - b.position_index)
+    .map((row) => (side === 'home' ? row.player_id : row.opponent_player_id) as string);
+  const court = [...onCourtBefore(starters, rows, first.period_number, side, cutoff)];
+  const orderedSwaps = ordered.map((row) => swaps.find((swap) => swap.eventId === row.id)!);
+  for (const swap of orderedSwaps) {
+    const index = court.indexOf(swap.outId);
+    if (index === -1) return { error: 'substitution_out' };
+    if (court.includes(swap.inId)) return { error: 'substitution_in' };
+    if (playerEliminatedBefore(rows, swap.inId, side, cutoff)) return { error: 'substitution_eliminated' };
+    court[index] = swap.inId;
+  }
+
+  const incoming = orderedSwaps.map((swap) => swap.inId);
+  if (side === 'home') {
+    const { data: squadRows, error: squadError } = await supabase
+      .from('game_squads')
+      .select('player_id')
+      .eq('game_id', gameId);
+    if (squadError) return { error: 'substitution_invalid' };
+    const squad = new Set((squadRows ?? []).map((row) => row.player_id as string));
+    const { data: roster, error: rosterError } = await supabase
+      .from('players')
+      .select('id, team_id')
+      .in('id', incoming);
+    if (rosterError) return { error: 'substitution_invalid' };
+    const allowed = new Set(
+      (roster ?? [])
+        .filter((player) => player.team_id === game.team_id)
+        .map((player) => player.id as string),
+    );
+    const dressed = (id: string) => allowed.has(id) && (squad.size === 0 || squad.has(id));
+    if (incoming.some((id) => !dressed(id))) return { error: 'substitution_in' };
+  } else {
+    const { data: opponents, error: opponentsError } = await supabase
+      .from('game_opponent_players')
+      .select('id, is_coach')
+      .eq('game_id', gameId)
+      .in('id', incoming);
+    if (opponentsError) return { error: 'substitution_invalid' };
+    const available = new Set(
+      (opponents ?? []).filter((player) => !player.is_coach).map((player) => player.id as string),
+    );
+    if (incoming.some((id) => !available.has(id))) return { error: 'substitution_in' };
+  }
+
+  const previous = ordered.map((row) => ({
+    id: row.id as string,
+    player_id: row.player_id,
+    player_out_id: row.player_out_id,
+    opponent_player_id: row.opponent_player_id,
+    opponent_player_out_id: row.opponent_player_out_id,
+  }));
+  const written: string[] = [];
+  for (const swap of orderedSwaps) {
+    const patch = side === 'home'
+      ? { player_id: swap.inId, player_out_id: swap.outId, opponent_player_id: null, opponent_player_out_id: null }
+      : { player_id: null, player_out_id: null, opponent_player_id: swap.inId, opponent_player_out_id: swap.outId };
+    const { error: updateError } = await supabase
+      .from('game_events')
+      .update(patch)
+      .eq('id', swap.eventId)
+      .eq('game_id', gameId);
+    if (updateError) {
+      for (const prior of previous.filter((row) => written.includes(row.id))) {
+        await supabase.from('game_events').update({
+          player_id: prior.player_id,
+          player_out_id: prior.player_out_id,
+          opponent_player_id: prior.opponent_player_id,
+          opponent_player_out_id: prior.opponent_player_out_id,
+        }).eq('id', prior.id);
+      }
+      return { error: 'substitution_invalid' };
+    }
+    written.push(swap.eventId);
+  }
+
+  return {
+    swaps: orderedSwaps.map((swap) => ({
+      id: swap.eventId,
+      playerId: side === 'home' ? swap.inId : null,
+      opponentPlayerId: side === 'away' ? swap.inId : null,
+      playerOutId: side === 'home' ? swap.outId : null,
+      opponentPlayerOutId: side === 'away' ? swap.outId : null,
+    })),
+  };
+}
+
+export async function editReboundPlayer(
+  input: unknown,
+): Promise<{ playerId: string | null; opponentPlayerId: string | null } | { error: string }> {
+  const parsed = editReboundPlayerSchema.safeParse(input);
+  if (!parsed.success) return { error: 'rebound_invalid' };
+
+  const { user, error } = await getAuthenticatedUser();
+  if (error || !user) return { error: 'rebound_slot' };
+  const token = (await cookies()).get('sb-access-token')?.value;
+  if (!token) return { error: 'rebound_slot' };
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    accessToken: async () => token,
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+
+  const { gameId, eventId, playerId } = parsed.data;
+  const { data: game, error: gameError } = await supabase
+    .from('games')
+    .select('team_id, status')
+    .eq('id', gameId)
+    .single();
+  if (gameError || !game) return { error: 'rebound_invalid' };
+  if (game.status === 'final') return { error: 'rebound_final' };
+
+  const { data: team, error: teamError } = await supabase
+    .from('teams')
+    .select('club_id')
+    .eq('id', game.team_id)
+    .single();
+  const { data: roles, error: rolesError } = await supabase
+    .from('profile_roles')
+    .select('role, club_id')
+    .eq('profile_id', user.id);
+  if (teamError || !team || rolesError || !userManagesClub(roles ?? [], team.club_id)) {
+    return { error: 'rebound_slot' };
+  }
+
+  const { data: event, error: eventError } = await supabase
+    .from('game_events')
+    .select('id, event_type, player_id, opponent_player_id, rebound_side, period_number, clock_remaining_ms, created_at')
+    .eq('id', eventId)
+    .eq('game_id', gameId)
+    .single();
+  const side: CaptureSide | null = event?.player_id && !event.opponent_player_id
+    ? 'home'
+    : event?.opponent_player_id && !event.player_id
+      ? 'away'
+      : null;
+  if (eventError || !event || event.event_type !== 'rebound' || !side || event.rebound_side) {
+    return { error: 'rebound_invalid' };
+  }
+
+  const currentId = side === 'home' ? event.player_id : event.opponent_player_id;
+  if (playerId !== currentId) {
+    const cutoff = {
+      period_number: event.period_number as number,
+      clock_remaining_ms: event.clock_remaining_ms as number,
+      created_at: event.created_at as string | null,
+    };
+    const { data: lineup, error: lineupError } = await supabase
+      .from('game_period_lineups')
+      .select('side, position_index, player_id, opponent_player_id')
+      .eq('game_id', gameId)
+      .eq('period_number', event.period_number);
+    if (lineupError) return { error: 'rebound_invalid' };
+    const { data: history, error: historyError } = await supabase
+      .from('game_events')
+      .select('id, event_type, foul_type, coach_technical_side, player_id, opponent_player_id, player_out_id, opponent_player_out_id, turnover_type, turnover_side, period_number, clock_remaining_ms, created_at')
+      .eq('game_id', gameId);
+    if (historyError) return { error: 'rebound_invalid' };
+    const rows = history ?? [];
+    const starters = (lineup ?? [])
+      .filter((row) => row.side === side && (side === 'home' ? row.player_id : row.opponent_player_id))
+      .sort((a, b) => a.position_index - b.position_index)
+      .map((row) => (side === 'home' ? row.player_id : row.opponent_player_id) as string);
+    const courtIds = onCourtBefore(starters, rows, event.period_number, side, cutoff);
+    if (!courtIds.includes(playerId) || playerEliminatedBefore(rows, playerId, side, cutoff)) {
+      return { error: 'rebound_player' };
+    }
+  }
+
+  const homePlayerId = side === 'home' ? playerId : null;
+  const awayPlayerId = side === 'away' ? playerId : null;
+  if (playerId !== currentId) {
+    const { error: updateError } = await supabase
+      .from('game_events')
+      .update({ player_id: homePlayerId, opponent_player_id: awayPlayerId })
+      .eq('id', eventId)
+      .eq('game_id', gameId);
+    if (updateError) return { error: 'rebound_invalid' };
+  }
+
+  return { playerId: homePlayerId, opponentPlayerId: awayPlayerId };
 }

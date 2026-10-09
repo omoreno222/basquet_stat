@@ -23,6 +23,7 @@ const ARC_X = COURT_LENGTH - THREE_MEET;
 const MAKE = '#16a34a';
 const MISS = '#dc2626';
 const DOT_R = 10;
+const X_ARM = 8;
 
 export function EvalShotChart({
   side,
@@ -93,16 +94,20 @@ export function EvalShotChart({
           />
           <circle cx={RIM_X} cy={RIM_Y} r="22.5" fill="none" stroke="#ff4444" strokeWidth="3" />
           <line x1={COURT_LENGTH - 120} y1={RIM_Y - 90} x2={COURT_LENGTH - 120} y2={RIM_Y + 90} stroke="#ffffff" strokeWidth="6" />
-          {marks.map((mark, index) => (
-            <circle
-              key={`${mark.x}-${mark.y}-${mark.made}-${index}`}
-              cx={mark.x * COURT_LENGTH}
-              cy={mark.y * COURT_WIDTH}
-              r={DOT_R}
-              fill={mark.made ? MAKE : MISS}
-              opacity="0.7"
-            />
-          ))}
+          {marks.map((mark, index) => {
+            const cx = mark.x * COURT_LENGTH;
+            const cy = mark.y * COURT_WIDTH;
+            const key = `${mark.x}-${mark.y}-${mark.made}-${index}`;
+            if (mark.made) {
+              return <circle key={key} cx={cx} cy={cy} r={DOT_R} fill={MAKE} opacity="0.7" />;
+            }
+            return (
+              <g key={key}>
+                <line x1={cx - X_ARM} y1={cy - X_ARM} x2={cx + X_ARM} y2={cy + X_ARM} stroke={MISS} strokeWidth="3" strokeLinecap="round" />
+                <line x1={cx - X_ARM} y1={cy + X_ARM} x2={cx + X_ARM} y2={cy - X_ARM} stroke={MISS} strokeWidth="3" strokeLinecap="round" />
+              </g>
+            );
+          })}
         </g>
       </svg>
       <figcaption className="mt-2 flex items-center justify-center gap-4 text-xs text-gray-600 dark:text-gray-300">
@@ -111,7 +116,7 @@ export function EvalShotChart({
           {madeLabel}
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: MISS }} />
+          <span className="font-black leading-none text-red-600" aria-hidden="true">×</span>
           {missLabel}
         </span>
       </figcaption>

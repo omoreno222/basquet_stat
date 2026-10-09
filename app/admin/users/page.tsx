@@ -65,7 +65,11 @@ export default function UsersPage() {
 
   async function loadData() {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) {
+      setError('Not authenticated');
+      setLoading(false);
+      return;
+    }
 
     const { data: currentUserRoles, error: rolesError } = await supabase
       .from('profile_roles')

@@ -1,25 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 
 type Translate = (key: string, fallback: string) => string;
-
-const ASSIST_TICK_MS = 150;
-
-function Tick() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-12 w-12 shrink-0">
-      <path
-        d="M5 13l4 4L19 7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
 export interface MadeAssistPlayer {
   id: string;
@@ -84,6 +67,7 @@ export function MadeAssistPopup({
   saving,
   stepBackLabel,
   cancelDeleteLabel,
+  onBegin,
   onPick,
   onNone,
   onStepBack,
@@ -95,28 +79,34 @@ export function MadeAssistPopup({
   saving: boolean;
   stepBackLabel: string;
   cancelDeleteLabel: string;
-  onPick: (playerId: string) => void;
-  onNone: () => void;
+  /** Lock the play before the menu paints closed. Return false to ignore the tap. */
+  onBegin?: () => boolean;
+  onPick: (playerId: string) => boolean | void;
+  onNone: () => boolean | void;
   onStepBack: () => void;
   onCancel: () => void;
 }) {
-  const [pickedId, setPickedId] = useState<string | null>(null);
-  const closeTimer = useRef<number | null>(null);
-  const locked = saving || pickedId !== null;
-
-  useEffect(() => () => {
-    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
-  }, []);
+  const picked = useRef(false);
+  const [closed, setClosed] = useState(false);
+  const locked = saving || closed;
 
   function choose(playerId: string | null) {
-    if (locked) return;
-    setPickedId(playerId ?? 'none');
-    closeTimer.current = window.setTimeout(() => {
-      closeTimer.current = null;
-      if (playerId) onPick(playerId);
-      else onNone();
-    }, ASSIST_TICK_MS);
+    if (locked || picked.current) return;
+    if (onBegin && !onBegin()) return;
+    picked.current = true;
+    setClosed(true);
+    // The capture screen redraws the whole board when the assist is saved.
+    // Paint this menu gone first, then do that redraw.
+    window.setTimeout(() => {
+      const accepted = playerId ? onPick(playerId) : onNone();
+      if (accepted === false) {
+        picked.current = false;
+        setClosed(false);
+      }
+    }, 0);
   }
+
+  if (closed) return null;
 
   return (
     <PopupFrame
@@ -131,16 +121,13 @@ export function MadeAssistPopup({
       <div className="grid grid-cols-2 gap-2">
         {players.map((player) => {
           const photo = player.avatarUrl || null;
-          const picked = pickedId === player.id;
           return (
             <button
               key={player.id}
               type="button"
               disabled={locked}
               onClick={() => choose(player.id)}
-              className={`relative overflow-hidden bg-neutral-900 text-left text-white hover:bg-black ${
-                locked && !picked ? 'opacity-40' : ''
-              } ${photo ? 'p-2' : 'px-3 py-4'}`}
+              className={`relative overflow-hidden bg-neutral-900 text-left text-white hover:bg-black ${photo ? 'p-2' : 'px-3 py-4'}`}
               style={{ minHeight: '64px' }}
             >
               {photo ? (
@@ -150,11 +137,6 @@ export function MadeAssistPopup({
                 <span className="block text-2xl font-black tabular-nums leading-none">#{player.jersey}</span>
                 <span className="mt-1 block truncate text-sm font-semibold">{player.name}</span>
               </span>
-              {picked ? (
-                <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-amber-300">
-                  <Tick />
-                </span>
-              ) : null}
             </button>
           );
         })}
@@ -164,14 +146,10 @@ export function MadeAssistPopup({
           type="button"
           disabled={locked}
           onClick={() => choose(null)}
-          className={`mt-3 flex w-full items-center justify-center gap-2 py-3 text-sm font-black ${
-            pickedId === 'none'
-              ? 'bg-neutral-900 text-amber-300'
-              : 'bg-neutral-200 text-neutral-900 hover:bg-neutral-300'
-          } ${locked && pickedId !== 'none' ? 'opacity-40' : ''}`}
+          className="mt-3 flex w-full items-center justify-center gap-2 bg-neutral-200 py-3 text-sm font-black text-neutral-900 hover:bg-neutral-300"
           style={{ minHeight: '56px' }}
         >
-          {pickedId === 'none' ? <Tick /> : t('trke_made_no_assist', 'No assist')}
+          {t('trke_made_no_assist', 'No assist')}
         </button>
       ) : null}
     </PopupFrame>

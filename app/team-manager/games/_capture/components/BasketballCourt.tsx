@@ -11,7 +11,11 @@ interface BasketballCourtProps {
     made: boolean;
     points: number;
     label?: string;
+    /** Team kit color, already normalized to #rrggbb. */
+    color: string;
   }>;
+  /** Shown the instant a shot is tapped, until the saved event arrives. */
+  pendingShot?: { x: number; y: number; made: boolean; label: string; color: string } | null;
   /** Live tap while recording a turnover. Not drawn from saved events. */
   placement?: { x: number; y: number } | null;
   className?: string;
@@ -70,9 +74,57 @@ function attackMarkLayout(x: number, y: number, pointRight: boolean) {
   };
 }
 
+const MISS_INK = '#171717';
+
+function ShotSpot({
+  x,
+  y,
+  made,
+  label,
+  color,
+  courtLength,
+  courtWidth,
+}: {
+  x: number;
+  y: number;
+  made: boolean;
+  label: string;
+  color: string;
+  courtLength: number;
+  courtWidth: number;
+}) {
+  const markerX = x * courtLength;
+  const markerY = y * courtWidth;
+  return (
+    <g>
+      <circle
+        cx={markerX}
+        cy={markerY}
+        r="28"
+        fill={made ? color : 'none'}
+        stroke={made ? 'none' : color}
+        strokeWidth={made ? 0 : 4}
+      />
+      <text
+        x={markerX}
+        y={markerY + 2}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill={made ? inkOn(color) : MISS_INK}
+        fontSize={label.length > 1 ? 22 : 28}
+        fontWeight="bold"
+        style={made ? { textShadow: '0 0 4px rgba(0,0,0,0.8)' } : undefined}
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
 export function BasketballCourt({ 
   onCourtTap, 
   shotMarkers = [],
+  pendingShot = null,
   placement = null,
   className = '',
   attackingRight = true,
@@ -568,32 +620,29 @@ export function BasketballCourt({
         </g>
       ) : null}
 
-      {/* Shot markers - enhanced visibility */}
-      {shotMarkers.map((marker) => {
-        const markerX = marker.x * COURT_LENGTH;
-        const markerY = marker.y * COURT_WIDTH;
-        const color = marker.made ? '#10b981' : '#ef4444';
-        const label = marker.label ?? String(marker.points);
-        
-        return (
-          <g key={marker.id}>
-            <circle cx={markerX} cy={markerY} r="35" fill="#000" opacity="0.3" />
-            <circle cx={markerX} cy={markerY} r="28" fill={color} opacity="0.95" stroke="#fff" strokeWidth="4" />
-            <text
-              x={markerX}
-              y={markerY + 2}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fill="#fff"
-              fontSize={label.length > 1 ? 22 : 28}
-              fontWeight="bold"
-              style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}
-            >
-              {label}
-            </text>
-          </g>
-        );
-      })}
+      {shotMarkers.map((marker) => (
+        <ShotSpot
+          key={marker.id}
+          x={marker.x}
+          y={marker.y}
+          made={marker.made}
+          label={marker.label ?? String(marker.points)}
+          color={marker.color}
+          courtLength={COURT_LENGTH}
+          courtWidth={COURT_WIDTH}
+        />
+      ))}
+      {pendingShot ? (
+        <ShotSpot
+          x={pendingShot.x}
+          y={pendingShot.y}
+          made={pendingShot.made}
+          label={pendingShot.label}
+          color={pendingShot.color}
+          courtLength={COURT_LENGTH}
+          courtWidth={COURT_WIDTH}
+        />
+      ) : null}
     </svg>
   );
 }

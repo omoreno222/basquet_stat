@@ -249,9 +249,9 @@ export function madeAssistRequired(points: 2 | 3, inPaint: boolean, teammatesOnC
   return points === 2 && inPaint && teammatesOnCourt > 0;
 }
 
-/** A personal on the basket stops the clock. A clean make leaves it running. */
-export function madeStopsClock(personal: boolean): boolean {
-  return personal;
+/** Every made basket stops the clock. The other team inbounds. */
+export function madeStopsClock(_personal?: boolean): boolean {
+  return true;
 }
 
 export function storedCourtPoint(worldX: number, worldY: number, attackingRight: boolean) {
@@ -598,6 +598,7 @@ export const placeMadeShotPointSchema = z.object({
   coordX: z.number().finite().min(0).max(1),
   coordY: z.number().finite().min(0).max(1),
   assistId: z.string().uuid().nullable(),
+  shooterId: z.string().uuid(),
 });
 
 export type PlaceMadeShotPointInput = z.infer<typeof placeMadeShotPointSchema>;
@@ -619,9 +620,48 @@ export const editFoulReceivedSchema = z.object({
   gameId: z.string().uuid(),
   eventId: z.string().uuid(),
   playerId: z.string().uuid().nullable(),
+  offenderId: z.string().uuid().nullable(),
 });
 
 export type EditFoulReceivedInput = z.infer<typeof editFoulReceivedSchema>;
+
+export const editMissedShotSchema = z.object({
+  gameId: z.string().uuid(),
+  eventId: z.string().uuid(),
+  coordX: z.number().finite().min(0).max(1),
+  coordY: z.number().finite().min(0).max(1),
+  shooterId: z.string().uuid(),
+});
+
+export type EditMissedShotInput = z.infer<typeof editMissedShotSchema>;
+
+export const editFreeThrowsSchema = z.object({
+  gameId: z.string().uuid(),
+  eventId: z.string().uuid(),
+  marks: z.array(z.enum(['made', 'miss'])).min(1).max(3),
+});
+
+export type EditFreeThrowsInput = z.infer<typeof editFreeThrowsSchema>;
+
+export const editSubstitutionSchema = z.object({
+  gameId: z.string().uuid(),
+  eventId: z.string().uuid(),
+  swaps: z.array(z.object({
+    eventId: z.string().uuid(),
+    outId: z.string().uuid(),
+    inId: z.string().uuid(),
+  })).min(1).max(5),
+});
+
+export type EditSubstitutionInput = z.infer<typeof editSubstitutionSchema>;
+
+export const editReboundPlayerSchema = z.object({
+  gameId: z.string().uuid(),
+  eventId: z.string().uuid(),
+  playerId: z.string().uuid(),
+});
+
+export type EditReboundPlayerInput = z.infer<typeof editReboundPlayerSchema>;
 
 export const deleteCapturePlaySchema = z.object({
   gameId: z.string().uuid(),

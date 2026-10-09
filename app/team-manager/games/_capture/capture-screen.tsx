@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { startTransition, useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
@@ -20,11 +21,15 @@ import { FoulSituationModal } from './components/FoulSituationModal';
 import { CaptureNoticeModal } from './components/CaptureNoticeModal';
 import { DeferredSequencePopup, type DeferredPlayer, type DeferredSequenceInput } from './components/DeferredSequencePopup';
 import { ShotPointPopup } from './components/ShotPointPopup';
+import { MissPointPopup } from './components/MissPointPopup';
 import { JumpEditPopup } from './components/JumpEditPopup';
 import { FoulReceivedPopup } from './components/FoulReceivedPopup';
+import { FreeThrowEditPopup, type FreeThrowEditMark } from './components/FreeThrowEditPopup';
+import { SubstitutionEditPopup } from './components/SubstitutionEditPopup';
+import { ReboundPlayerPopup } from './components/ReboundPlayerPopup';
 import { MadeAssistPopup } from './components/MadeShotPopups';
 import { PeriodInboundModal } from './components/PeriodInboundModal';
-import { commitCapturePlay, deleteCapturePlay, editFoulReceived, editJump, placeMadeShotPoint } from './actions';
+import { commitCapturePlay, deleteCapturePlay, editFoulReceived, editFreeThrows, editJump, editMissedShot, editReboundPlayer, editSubstitution, placeMadeShotPoint } from './actions';
 import { freeThrowNeedsRebound } from '@/lib/capture/free-throws';
 import { foulNextPossession, madeNextPossession } from '@/lib/capture/next-possession';
 import {
@@ -73,13 +78,14 @@ import {
   type ShotFoulKind,
   type TurnoverReason,
 } from '@/lib/capture/plays';
-import { normalizeHexColor } from '@/lib/colors';
+import { DEFAULT_OPPONENT_COLOR, normalizeHexColor } from '@/lib/colors';
 import { gameSquadSchema, incorporatePlayerSchema, openingTipWinnerSchema, opponentBenchAddSchema, opponentRosterSchema, periodLineupSchema, schemaError } from '@/lib/form-schemas';
 import { userCanEditGame, userManagesClub } from '@/lib/live-access';
 import { canStartPeriod, isEliminated, minimumToStart } from '@/lib/period-lineup';
 import { boardFlowFallback, boardFlowKey, formatBoardNote, nextBoardFlow, type BoardFlow } from '@/lib/capture/board-note';
 import { readCourtOrientation } from '@/lib/capture/court-orientation';
 import { nextClockFromRemote } from '@/lib/capture/clock-sync';
+import { acceptGameUpdate } from '@/lib/capture/realtime-game';
 import { clockFace, displayedRemaining, liveRemaining, sameClockFace, type ClockFace } from '@/lib/capture/clock-run';
 import { periodInbound } from '@/lib/capture/period-inbound';
 import { onCourtAfterSubs, onCourtBefore, playerEliminatedBefore } from '@/lib/capture/substitutions';
@@ -92,6 +98,10 @@ const TIMEOUT_TICK_MS = 300;
 
 function opponentShirt(player: GameOpponentPlayer) {
   return player.jersey_number ?? 0;
+}
+
+function scoredFreeThrows(marks: readonly FreeThrowMark[]) {
+  return marks.reduce((total, mark) => total + (mark === 'made' ? 1 : 0), 0);
 }
 
 function readTipWinner(value: unknown): 'home' | 'away' | null {
@@ -252,9 +262,17 @@ const emptyLogEdit = {
   canPlaceShot: false,
   canEditJump: false,
   canEditFoulReceived: false,
+  canEditMiss: false,
+  canEditFreeThrows: false,
+  canEditSubstitution: false,
+  canEditRebound: false,
   shotEditId: undefined as string | undefined,
   jumpEditId: undefined as string | undefined,
   foulEditId: undefined as string | undefined,
+  missEditId: undefined as string | undefined,
+  freeThrowEditId: undefined as string | undefined,
+  substitutionEditId: undefined as string | undefined,
+  reboundEditId: undefined as string | undefined,
 };
 
 function captureLogEdit(event: GameEvent, events: GameEvent[]) {
@@ -274,6 +292,21 @@ function captureLogEdit(event: GameEvent, events: GameEvent[]) {
   }
   if (event.event_type === 'foul' && (event.foul_side === 'home' || event.foul_side === 'away')) {
     return { ...emptyLogEdit, canEditFoulReceived: true, foulEditId: event.id };
+  }
+  if (event.event_type === 'shot' && event.made === false) {
+    return { ...emptyLogEdit, canEditMiss: true, missEditId: event.id };
+  }
+  if (event.event_type === 'free_throw') {
+    return { ...emptyLogEdit, canEditFreeThrows: true, freeThrowEditId: event.id };
+  }
+  if (event.event_type === 'substitution') {
+    return { ...emptyLogEdit, canEditSubstitution: true, substitutionEditId: event.id };
+  }
+  if (
+    event.event_type === 'rebound'
+    && ((event.player_id && !event.opponent_player_id) || (event.opponent_player_id && !event.player_id))
+  ) {
+    return { ...emptyLogEdit, canEditRebound: true, reboundEditId: event.id };
   }
   if (madeShot) {
     return { ...emptyLogEdit, canPlaceShot: true, shotEditId: madeShot.id };
@@ -324,8 +357,12 @@ export default function CaptureScreen({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sequenceOpen, setSequenceOpen] = useState(false);
   const [shotPointId, setShotPointId] = useState<string | null>(null);
+  const [missEditId, setMissEditId] = useState<string | null>(null);
   const [jumpEditId, setJumpEditId] = useState<string | null>(null);
   const [foulReceivedId, setFoulReceivedId] = useState<string | null>(null);
+  const [freeThrowEditId, setFreeThrowEditId] = useState<string | null>(null);
+  const [substitutionEditId, setSubstitutionEditId] = useState<string | null>(null);
+  const [reboundEditId, setReboundEditId] = useState<string | null>(null);
   const [events, setEvents] = useState<GameEvent[]>([]);
   
   // Game state
@@ -341,6 +378,21 @@ export default function CaptureScreen({
   const commitTail = useRef(Promise.resolve());
   const [teamScore, setTeamScore] = useState(0);
   const [opponentScore, setOpponentScore] = useState(0);
+  const shownScore = useRef({ home: 0, away: 0 });
+  const serverScore = useRef({ home: 0, away: 0 });
+  const scoreTicket = useRef(0);
+  const scoreAhead = useRef(0);
+  /** Confirmed score kept on screen until a realtime row carries the same numbers. */
+  const scoreLatch = useRef<{ home: number; away: number } | null>(null);
+  const latestRowScore = useRef<{ home: number; away: number } | null>(null);
+  const lastGameUpdatedAt = useRef<string | null>(null);
+  const [pendingShot, setPendingShot] = useState<{
+    x: number;
+    y: number;
+    made: boolean;
+    label: string;
+    side: 'home' | 'away';
+  } | null>(null);
   const [attackRightFirst, setAttackRightFirst] = useState(true);
   const [tableOnBottom, setTableOnBottom] = useState(true);
   const [logoInverted, setLogoInverted] = useState(false);
@@ -412,6 +464,7 @@ export default function CaptureScreen({
   const [shotPaint, setShotPaint] = useState(false);
   const [shotSaving, setShotSaving] = useState(false);
   const shotSavingRef = useRef(false);
+  const assistClosingRef = useRef(false);
   const shotPersonalRef = useRef(false);
   const shotWasRunningRef = useRef(false);
   const shotClockAtRef = useRef<number | null>(null);
@@ -486,7 +539,7 @@ export default function CaptureScreen({
   // After this tablet starts, stops, or edits the clock, its on-screen
   // value wins over the row Postgres echoes back.
   const clockOwnedRef = useRef(false);
-  const requestPeriodEndRef = useRef<(source: 'clock' | 'next') => void>(() => {});
+  const requestPeriodEndRef = useRef<() => void>(() => {});
   const noticeOpenRef = useRef(false);
   const periodEndBusyRef = useRef(false);
   const teamScoreRef = useRef(0);
@@ -540,7 +593,7 @@ export default function CaptureScreen({
       setClockRunning(false);
       setClockRemaining(0);
       publishFace();
-      requestPeriodEndRef.current('clock');
+      requestPeriodEndRef.current();
       void updateGameStateRef.current({ clock_running: false, clock_remaining_ms: 0 });
     }, 50);
   }
@@ -702,8 +755,15 @@ export default function CaptureScreen({
       possessionRef.current = gameData.possession === 'away' ? 'away' : 'home';
       serverPossession.current = possessionRef.current;
       setPossession(possessionRef.current);
-      setTeamScore(gameData.team_score || 0);
-      setOpponentScore(gameData.opponent_score || 0);
+      const loadedHome = gameData.team_score || 0;
+      const loadedAway = gameData.opponent_score || 0;
+      if (scoreAhead.current === 0 && !scoreLatch.current) {
+        serverScore.current = { home: loadedHome, away: loadedAway };
+        shownScore.current = { home: loadedHome, away: loadedAway };
+        setTeamScore(loadedHome);
+        setOpponentScore(loadedAway);
+        if (gameData.updated_at) lastGameUpdatedAt.current = gameData.updated_at;
+      }
       setAttackRightFirst(gameData.attack_right_first ?? true);
       const tipWinner = readTipWinner(gameData.opening_tip_winner);
       openingTipWinnerRef.current = tipWinner;
@@ -879,6 +939,9 @@ export default function CaptureScreen({
             .single();
 
           if (data) {
+            if (data.event_type === 'shot' && data.coord_x != null && data.coord_y != null) {
+              setPendingShot(null);
+            }
             setEvents(prev => {
               if (prev.some((event) => event.id === data.id)) return prev;
               return [data, ...prev];
@@ -913,6 +976,25 @@ export default function CaptureScreen({
         (payload: { new: Game }) => {
           if (payload.new) {
             const newData = payload.new;
+            if (!acceptGameUpdate(lastGameUpdatedAt.current, newData.updated_at)) return;
+            if (newData.updated_at) lastGameUpdatedAt.current = newData.updated_at;
+            const rowHome = Number(newData.team_score);
+            const rowAway = Number(newData.opponent_score);
+            const rowScore = Number.isFinite(rowHome) && Number.isFinite(rowAway)
+              ? { home: rowHome, away: rowAway }
+              : null;
+            if (rowScore) latestRowScore.current = rowScore;
+            const latch = scoreLatch.current;
+            const holdScore = !rowScore
+              || scoreAhead.current > 0
+              || (latch != null && (latch.home !== rowScore.home || latch.away !== rowScore.away));
+            if (!holdScore && rowScore) {
+              serverScore.current = rowScore;
+              shownScore.current = rowScore;
+              scoreLatch.current = null;
+              setTeamScore(rowScore.home);
+              setOpponentScore(rowScore.away);
+            }
             if (!clockOwnedRef.current) {
               const clock = nextClockFromRemote(
                 {
@@ -936,14 +1018,13 @@ export default function CaptureScreen({
             }
             if (
               possessionAhead.current === 0
+              && scoreLatch.current == null
               && (newData.possession === 'home' || newData.possession === 'away' || newData.possession === null)
             ) {
               possessionRef.current = newData.possession;
               serverPossession.current = newData.possession;
               setPossession(newData.possession);
             }
-            setTeamScore(newData.team_score);
-            setOpponentScore(newData.opponent_score);
             if (newData.attack_right_first !== undefined) {
               setAttackRightFirst(newData.attack_right_first);
             }
@@ -955,7 +1036,11 @@ export default function CaptureScreen({
 
             setGame((prev) => {
               const merged = { ...prev, ...newData } as Game;
-              if (possessionAhead.current > 0 && prev) merged.possession = prev.possession;
+              if ((possessionAhead.current > 0 || scoreLatch.current) && prev) merged.possession = prev.possession;
+              if (holdScore && prev) {
+                merged.team_score = prev.team_score;
+                merged.opponent_score = prev.opponent_score;
+              }
               return merged;
             });
           }
@@ -1235,6 +1320,52 @@ export default function CaptureScreen({
     applyPossession(next);
   }
 
+  function publishScore(home: number, away: number) {
+    shownScore.current = { home, away };
+    setTeamScore(home);
+    setOpponentScore(away);
+    setGame((prev) => (prev ? { ...prev, team_score: home, opponent_score: away } : prev));
+  }
+
+  function applyScore(side: 'home' | 'away', points: number) {
+    scoreTicket.current += 1;
+    publishScore(
+      shownScore.current.home + (side === 'home' ? points : 0),
+      shownScore.current.away + (side === 'away' ? points : 0),
+    );
+    return scoreTicket.current;
+  }
+
+  function confirmScore(ticket: number, home: number, away: number) {
+    serverScore.current = { home, away };
+    if (scoreTicket.current !== ticket) return;
+    publishScore(home, away);
+    const seen = latestRowScore.current;
+    scoreLatch.current = seen && seen.home === home && seen.away === away ? null : { home, away };
+  }
+
+  function revertScore(ticket: number) {
+    if (scoreTicket.current !== ticket) return;
+    scoreLatch.current = null;
+    publishScore(serverScore.current.home, serverScore.current.away);
+  }
+
+  function adoptServerScore(home: number, away: number) {
+    serverScore.current = { home, away };
+    if (scoreAhead.current > 0) return;
+    scoreLatch.current = null;
+    publishScore(home, away);
+  }
+
+  function shooterLabel(side: 'home' | 'away', playerId: string) {
+    if (side === 'home') {
+      const player = players.find((item) => item.id === playerId);
+      return player ? String(player.jersey_number) : '';
+    }
+    const player = opponentPlayers.find((item) => item.id === playerId);
+    return player ? String(opponentShirt(player)) : '';
+  }
+
   function enqueueCommit<T>(work: () => Promise<T>): Promise<T> {
     const run = commitTail.current.then(work, work);
     commitTail.current = run.then(() => undefined, () => undefined);
@@ -1274,20 +1405,20 @@ export default function CaptureScreen({
     shotWasRunningRef.current = false;
     shotClockAtRef.current = null;
     shotLiveReboundRef.current = false;
+    assistClosingRef.current = false;
   }
 
   function cancelShot(resumeClock = true) {
-    if (shotSavingRef.current) return;
+    if (shotSavingRef.current || assistClosingRef.current) return;
     if (shotLiveReboundRef.current && shotClockAtRef.current != null) {
       freezeClockAt(shotClockAtRef.current);
       shotLiveReboundRef.current = false;
     }
     const wasRunning = shotWasRunningRef.current;
     const clockAt = shotClockAtRef.current;
-    const personal = shotPersonalRef.current;
     clearShotUi();
     showNote(null);
-    if (resumeClock && personal && wasRunning && clockAt != null) {
+    if (resumeClock && wasRunning && clockAt != null) {
       holdClock(true, clockAt);
       void updateGameState({ clock_running: true, clock_remaining_ms: clockAt });
     }
@@ -1325,7 +1456,7 @@ export default function CaptureScreen({
   }
 
   function stepShotBack() {
-    if (shotSavingRef.current || !shotStep) return;
+    if (shotSavingRef.current || assistClosingRef.current || !shotStep) return;
     if (shotStep === 'ft_rebound') {
       if (shotClockAtRef.current != null) freezeClockAt(shotClockAtRef.current);
       shotLiveReboundRef.current = false;
@@ -1390,7 +1521,10 @@ export default function CaptureScreen({
     rebounderId: string | null;
     unknownRebound?: boolean;
   }) {
-    if (shotSavingRef.current || !shotSide || !tapCoordinates || !shotShooterId || shotPoints == null) return;
+    if (shotSavingRef.current || !shotSide || !tapCoordinates || !shotShooterId || shotPoints == null) {
+      assistClosingRef.current = false;
+      return;
+    }
     const side = shotSide;
     const shotPoint = tapCoordinates;
     const shooterId = shotShooterId;
@@ -1408,13 +1542,26 @@ export default function CaptureScreen({
       liveRebound,
       reboundSide: rosterSide(extra.rebounderId, extra.unknownRebound === true),
     });
+    const scored = (shotPoints ?? 0) + scoredFreeThrows(extra.throws);
+    let scoreTicketId = 0;
     shotSavingRef.current = true;
-    setShotSaving(true);
-    const ticket = applyPossession(nextPossession);
     possessionAhead.current += 1;
-    clearShotUi();
+    if (scored > 0) scoreAhead.current += 1;
+    const ticket = flushSync(() => {
+      const nextTicket = applyPossession(nextPossession);
+      if (scored > 0) scoreTicketId = applyScore(side, scored);
+      setPendingShot({
+        x: shotPoint.x,
+        y: shotPoint.y,
+        made: true,
+        label: shooterLabel(side, shooterId) || String(shotPoints ?? 0),
+        side,
+      });
+      clearShotUi();
+      setShotSaving(false);
+      return nextTicket;
+    });
     shotSavingRef.current = false;
-    setShotSaving(false);
     try {
       const result = await enqueueCommit(() => commitCapturePlay({
         play: 'made',
@@ -1435,6 +1582,8 @@ export default function CaptureScreen({
       if ('error' in result) {
         showNote(madeErrorText(result.error));
         revertToServer(ticket);
+        if (scoreTicketId) revertScore(scoreTicketId);
+        setPendingShot(null);
         if (liveRebound) freezeClockAt(clockAtPlay);
         return;
       }
@@ -1447,24 +1596,28 @@ export default function CaptureScreen({
             player_out:players!game_events_player_out_id_fkey(full_name, jersey_number, avatar_url)
           `)
           .eq('play_group_id', result.groupId);
-        if (data) {
-          const added = [...data].sort(newerCaptureEvent);
-          setEvents((prev) => {
-            const ids = new Set(prev.map((event) => event.id));
-            const fresh = added.filter((event) => !ids.has(event.id));
-            return fresh.length ? [...fresh, ...prev] : prev;
-          });
-        }
+        startTransition(() => {
+          setPendingShot(null);
+          if (data) {
+            const added = [...data].sort(newerCaptureEvent);
+            setEvents((prev) => {
+              const ids = new Set(prev.map((event) => event.id));
+              const fresh = added.filter((event) => !ids.has(event.id));
+              return fresh.length ? [...fresh, ...prev] : prev;
+            });
+          }
+        });
+      } else {
+        setPendingShot(null);
       }
       noteServerPossession(result.possession ?? null);
       confirmPossession(ticket, result.possession ?? null);
-      if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
-      if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
+      if (scoreTicketId && typeof result.teamScore === 'number' && typeof result.opponentScore === 'number') {
+        confirmScore(scoreTicketId, result.teamScore, result.opponentScore);
+      }
       const outcome = liveRebound
         ? t('trke_ft_rebound_go', 'Rebound. The clock is running.')
-        : !extra.foulerId
-          ? t('trke_made_hint_scored', 'Basket.')
-          : t('trke_foul_hint_inbound', 'Inbound. Press start clock.');
+        : t('trke_foul_hint_inbound', 'Inbound. Press start clock.');
       const leaving = playersSentOff([{
         side: otherCaptureSide(side),
         playerId: extra.foulerId,
@@ -1474,23 +1627,40 @@ export default function CaptureScreen({
     } catch {
       showNote(t('trke_made_hint_error', 'Could not save the basket'));
       revertToServer(ticket);
+      if (scoreTicketId) revertScore(scoreTicketId);
+      setPendingShot(null);
       if (liveRebound) freezeClockAt(clockAtPlay);
     } finally {
       possessionAhead.current = Math.max(0, possessionAhead.current - 1);
+      if (scoreTicketId) scoreAhead.current = Math.max(0, scoreAhead.current - 1);
     }
   }
 
+  function beginMadeAssist() {
+    if (assistClosingRef.current || shotSavingRef.current) return false;
+    if (shotStep !== 'assist' || !shotSide || !shotShooterId || !tapCoordinates || shotPoints == null) return false;
+    assistClosingRef.current = true;
+    return true;
+  }
+
   function chooseMadeAssist(assistId: string | null) {
-    if (shotSavingRef.current || shotStep !== 'assist' || !shotSide || !shotShooterId) return;
-    if (assistId === shotShooterId) return;
-    if (assistId && !courtRoster(shotSide).some((player) => player.id === assistId)) return;
+    if (shotSavingRef.current || shotStep !== 'assist' || !shotSide || !shotShooterId || !tapCoordinates || shotPoints == null) {
+      assistClosingRef.current = false;
+      return false;
+    }
+    if (assistId === shotShooterId || (assistId && !courtRoster(shotSide).some((player) => player.id === assistId))) {
+      assistClosingRef.current = false;
+      return false;
+    }
     setShotAssistId(assistId);
     if (!shotPersonalRef.current) {
       void saveMade({ assistId, foulerId: null, foulKind: null, throws: [], rebounderId: null });
-      return;
+      return true;
     }
+    assistClosingRef.current = false;
     setShotStep('fouler');
     showNote(t('trke_made_hint_fouler', 'Choose who committed the foul'));
+    return true;
   }
 
   function confirmMadeFreeThrows(result: FreeThrowSequenceResult) {
@@ -1515,7 +1685,7 @@ export default function CaptureScreen({
   }
 
   function selectShotCourtPlayer(side: CaptureSide, playerId: string) {
-    if (shotSavingRef.current || !shotSide) return;
+    if (shotSavingRef.current || assistClosingRef.current || !shotSide) return;
     if (!courtRoster(side).some((player) => player.id === playerId)) return;
     if (playerIsOut(playerId, side)) {
       showNote(t('trke_foul_hint_eliminated', 'That player is already eliminated'));
@@ -1548,7 +1718,7 @@ export default function CaptureScreen({
   }
 
   function chooseShotFoulKind(kind: ShotFoulKind) {
-    if (shotSavingRef.current || shotStep !== 'kind' || !shotFoulerId) return;
+    if (shotSavingRef.current || assistClosingRef.current || shotStep !== 'kind' || !shotFoulerId) return;
     setShotFoulKind(kind);
     setShotThrowCount(1);
     setShotLiveMarks([]);
@@ -1678,13 +1848,26 @@ export default function CaptureScreen({
       lastThrow: playedThrows[playedThrows.length - 1] ?? null,
       foulKind: draft.personal ? draft.foulKind : null,
     });
+    const scored = scoredFreeThrows(playedThrows);
+    let scoreTicketId = 0;
     missSavingRef.current = true;
-    setMissSaving(true);
-    const ticket = applyPossession(nextPossession);
     possessionAhead.current += 1;
-    clearMissUi();
+    if (scored > 0) scoreAhead.current += 1;
+    const ticket = flushSync(() => {
+      const nextTicket = applyPossession(nextPossession);
+      if (scored > 0) scoreTicketId = applyScore(draft.side, scored);
+      setPendingShot({
+        x: coord.x,
+        y: coord.y,
+        made: false,
+        label: shooterLabel(draft.side, shooterId) || String(draft.points ?? 0),
+        side: draft.side,
+      });
+      clearMissUi();
+      setMissSaving(false);
+      return nextTicket;
+    });
     missSavingRef.current = false;
-    setMissSaving(false);
     try {
       const result = await enqueueCommit(() => commitCapturePlay({
         play: 'miss',
@@ -1704,6 +1887,8 @@ export default function CaptureScreen({
       if ('error' in result) {
         showNote(missErrorText(result.error));
         revertToServer(ticket);
+        if (scoreTicketId) revertScore(scoreTicketId);
+        setPendingShot(null);
         if (liveRebound) freezeClockAt(clockAtPlay);
         return;
       }
@@ -1716,19 +1901,25 @@ export default function CaptureScreen({
             player_out:players!game_events_player_out_id_fkey(full_name, jersey_number, avatar_url)
           `)
           .eq('play_group_id', result.groupId);
-        if (data) {
-          const added = [...data].sort(newerCaptureEvent);
-          setEvents((prev) => {
-            const ids = new Set(prev.map((event) => event.id));
-            const fresh = added.filter((event) => !ids.has(event.id));
-            return fresh.length ? [...fresh, ...prev] : prev;
-          });
-        }
+        startTransition(() => {
+          setPendingShot(null);
+          if (data) {
+            const added = [...data].sort(newerCaptureEvent);
+            setEvents((prev) => {
+              const ids = new Set(prev.map((event) => event.id));
+              const fresh = added.filter((event) => !ids.has(event.id));
+              return fresh.length ? [...fresh, ...prev] : prev;
+            });
+          }
+        });
+      } else {
+        setPendingShot(null);
       }
       noteServerPossession(result.possession ?? null);
       confirmPossession(ticket, result.possession ?? null);
-      if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
-      if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
+      if (scoreTicketId && typeof result.teamScore === 'number' && typeof result.opponentScore === 'number') {
+        confirmScore(scoreTicketId, result.teamScore, result.opponentScore);
+      }
       const outcome = liveRebound
         ? t('trke_ft_rebound_go', 'Rebound. The clock is running.')
         : !draft.personal
@@ -1743,9 +1934,12 @@ export default function CaptureScreen({
     } catch {
       showNote(t('trke_miss_hint_error', 'Could not save the miss'));
       revertToServer(ticket);
+      if (scoreTicketId) revertScore(scoreTicketId);
+      setPendingShot(null);
       if (liveRebound) freezeClockAt(clockAtPlay);
     } finally {
       possessionAhead.current = Math.max(0, possessionAhead.current - 1);
+      if (scoreTicketId) scoreAhead.current = Math.max(0, scoreAhead.current - 1);
     }
   }
 
@@ -2298,8 +2492,16 @@ export default function CaptureScreen({
       reboundSide: rosterSide(draft.rebounderId, draft.unknownRebound === true),
     });
     if (!liveRebound) holdClock(false, clockAtPlay);
+    const ftPoints = scoredFreeThrows(draft.throws);
+    const scoreSide = otherCaptureSide(draft.side);
+    let scoreTicketId = 0;
+    if (ftPoints > 0) scoreAhead.current += 1;
     foulSavingRef.current = true;
-    const ticket = decided.changed ? applyPossession(decided.possession) : possessionTicket.current;
+    const ticket = flushSync(() => {
+      const nextTicket = decided.changed ? applyPossession(decided.possession) : possessionTicket.current;
+      if (ftPoints > 0) scoreTicketId = applyScore(scoreSide, ftPoints);
+      return nextTicket;
+    });
     possessionAhead.current += 1;
     clearFoulUi();
     foulSavingRef.current = false;
@@ -2328,6 +2530,7 @@ export default function CaptureScreen({
       if ('error' in result) {
         showNote(foulErrorText(result.error));
         if (decided.changed) revertToServer(ticket);
+        if (scoreTicketId) revertScore(scoreTicketId);
         undoClock();
         return;
       }
@@ -2352,8 +2555,9 @@ export default function CaptureScreen({
         noteServerPossession(result.possession ?? null);
         confirmPossession(ticket, result.possession ?? null);
       } else if (decided.changed) revertToServer(ticket);
-      if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
-      if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
+      if (scoreTicketId && typeof result.teamScore === 'number' && typeof result.opponentScore === 'number') {
+        confirmScore(scoreTicketId, result.teamScore, result.opponentScore);
+      }
       const outcome = liveRebound
         ? t('trke_ft_rebound_go', 'Rebound. The clock is running.')
         : !result.possessionChanged
@@ -2377,9 +2581,11 @@ export default function CaptureScreen({
     } catch {
       showNote(t('trke_foul_hint_error', 'Could not save the foul'));
       if (decided.changed) revertToServer(ticket);
+      if (scoreTicketId) revertScore(scoreTicketId);
       undoClock();
     } finally {
       possessionAhead.current = Math.max(0, possessionAhead.current - 1);
+      if (scoreTicketId) scoreAhead.current = Math.max(0, scoreAhead.current - 1);
     }
   }
 
@@ -3232,17 +3438,13 @@ export default function CaptureScreen({
     }
   }
 
-  function requestPeriodEnd(source: 'clock' | 'next') {
+  function requestPeriodEnd() {
     if (noticeOpenRef.current || periodEndBusyRef.current) return;
     if (gameStatusRef.current === 'final') return;
-    if (source === 'next') {
-      if (shotStep || miss || turnoverStep || foulStep) return;
-      if (blockUntilReady()) return;
-    }
     const period = currentPeriodRef.current;
-    if (source === 'clock' && shotStep) cancelShot(false);
-    if (source === 'clock' && miss) cancelMiss(false);
-    if (source === 'clock' && period < 4) {
+    if (shotStep) cancelShot(false);
+    if (miss) cancelMiss(false);
+    if (period < 4) {
       openCaptureNotice({ kind: 'period_ended' });
       return;
     }
@@ -3302,10 +3504,6 @@ export default function CaptureScreen({
     }
   }
 
-  function nextPeriod() {
-    requestPeriodEnd('next');
-  }
-
   async function assignPossession(side: 'home' | 'away') {
     if (gameStatusRef.current === 'final' || shotStep || miss || turnoverStep || foulStep) return;
     if (possession === side) return;
@@ -3356,14 +3554,10 @@ export default function CaptureScreen({
     setEvents((prev) => prev.filter((event) => (
       groupId ? event.play_group_id !== groupId : event.id !== eventId
     )));
-    setTeamScore(result.teamScore);
-    setOpponentScore(result.opponentScore);
-    setGame((prev) => (prev ? {
-      ...prev,
-      team_score: result.teamScore,
-      opponent_score: result.opponentScore,
-      ...(result.openingTipCleared ? { opening_tip_winner: null } : {}),
-    } : prev));
+    adoptServerScore(result.teamScore, result.opponentScore);
+    if (result.openingTipCleared) {
+      setGame((prev) => (prev ? { ...prev, opening_tip_winner: null } : prev));
+    }
     if (result.openingTipCleared) {
       openingTipWinnerRef.current = null;
       setOpeningTipWinner(null);
@@ -3423,6 +3617,12 @@ export default function CaptureScreen({
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  const homeMarkerColor = normalizeHexColor(
+    game.kit_color === 'secondary' ? game.teams?.clubs?.secondary_color : game.teams?.clubs?.primary_color,
+    '#171717',
+  );
+  const awayMarkerColor = normalizeHexColor(game.opponent_color);
+
   const shotMarkerLabel = (event: GameEvent) => {
     if (event.player) return String(event.player.jersey_number);
     if (event.player_id) {
@@ -3444,6 +3644,11 @@ export default function CaptureScreen({
         x: homeRight ? event.coord_x! : 1 - event.coord_x!,
         y: event.coord_y!,
       };
+      const home = Boolean(event.player_id);
+      const away = Boolean(event.opponent_player_id);
+      let color = DEFAULT_OPPONENT_COLOR;
+      if (home && !away) color = homeMarkerColor;
+      if (away && !home) color = awayMarkerColor;
       return {
         id: event.id,
         x: world.x,
@@ -3451,6 +3656,7 @@ export default function CaptureScreen({
         made: event.made ?? false,
         points: event.points || 0,
         label: shotMarkerLabel(event),
+        color,
       };
     });
 
@@ -3768,14 +3974,8 @@ export default function CaptureScreen({
           return added.length ? [...added, ...prev] : prev;
         });
       }
-      if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
-      if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
-      if (typeof result.teamScore === 'number' || typeof result.opponentScore === 'number') {
-        setGame((prev) => (prev ? {
-          ...prev,
-          ...(typeof result.teamScore === 'number' ? { team_score: result.teamScore } : {}),
-          ...(typeof result.opponentScore === 'number' ? { opponent_score: result.opponentScore } : {}),
-        } : prev));
+      if (typeof result.teamScore === 'number' && typeof result.opponentScore === 'number') {
+        adoptServerScore(result.teamScore, result.opponentScore);
       }
       showNote(t('trke_log_added', 'Play added to the log'), null);
       return null;
@@ -3799,7 +3999,12 @@ export default function CaptureScreen({
     setSequenceOpen(false);
   }
 
-  async function saveShotPoint(coordX: number, coordY: number, assistPlayerId: string | null): Promise<string | null> {
+  async function saveShotPoint(
+    coordX: number,
+    coordY: number,
+    assistPlayerId: string | null,
+    shooterId: string,
+  ): Promise<string | null> {
     if (!shotPointId) return t('trke_shot_point_error', 'Could not save the shot spot');
     const result = await placeMadeShotPoint({
       gameId,
@@ -3807,10 +4012,12 @@ export default function CaptureScreen({
       coordX,
       coordY,
       assistId: assistPlayerId,
+      shooterId,
     });
     if ('error' in result) {
       if (result.error === 'shot_point_half') return t('trke_made_hint_half', 'That point is not on the attacking half');
       if (result.error === 'shot_point_assist') return t('trke_made_hint_assist', 'Choose the assist');
+      if (result.error === 'shot_point_player') return t('trke_shot_point_player', 'Choose a teammate who was on the court');
       return t('trke_shot_point_error', 'Could not save the shot spot');
     }
     setEvents((prev) => {
@@ -3821,12 +4028,18 @@ export default function CaptureScreen({
       ));
       const next = withoutAssist.map((event) => {
         if (event.id === shotPointId) {
+          const homePlayer = result.playerId
+            ? players.find((player) => player.id === result.playerId)
+            : undefined;
           return {
             ...event,
             points: result.points,
             coord_x: result.coordX,
             coord_y: result.coordY,
             play_group_id: result.playGroupId,
+            player_id: result.playerId ?? undefined,
+            opponent_player_id: result.opponentPlayerId,
+            player: homePlayer,
           };
         }
         if (
@@ -3863,9 +4076,7 @@ export default function CaptureScreen({
       }
       return next;
     });
-    setTeamScore(result.teamScore);
-    setOpponentScore(result.opponentScore);
-    setGame((prev) => (prev ? { ...prev, team_score: result.teamScore, opponent_score: result.opponentScore } : prev));
+    adoptServerScore(result.teamScore, result.opponentScore);
     showNote(t('trke_shot_point_saved', 'Shot spot saved'), null);
     return null;
   }
@@ -3904,25 +4115,149 @@ export default function CaptureScreen({
     return null;
   }
 
-  async function saveFoulReceived(playerId: string | null): Promise<string | null> {
+  async function saveFoulReceived(input: { receiverId: string | null; offenderId: string | null }): Promise<string | null> {
     if (!foulReceivedId) return t('trke_foul_received_error', 'Could not save who received the foul');
-    const result = await editFoulReceived({ gameId, eventId: foulReceivedId, playerId });
-    if ('error' in result) return t('trke_foul_received_error', 'Could not save who received the foul');
-    setEvents((prev) => prev.map((event) => (
-      event.id === foulReceivedId
-        ? {
-          ...event,
-          foul_received_player_id: result.homePlayerId,
-          foul_received_opponent_player_id: result.awayPlayerId,
-        }
-        : event
-    )));
+    const result = await editFoulReceived({
+      gameId,
+      eventId: foulReceivedId,
+      playerId: input.receiverId,
+      offenderId: input.offenderId,
+    });
+    if ('error' in result) {
+      if (result.error === 'foul_player') return t('trke_shot_point_player', 'Choose a teammate who was on the court');
+      return t('trke_foul_received_error', 'Could not save who received the foul');
+    }
+    setEvents((prev) => prev.map((event) => {
+      if (event.id !== foulReceivedId) return event;
+      const homePlayer = result.offenderHomeId
+        ? players.find((player) => player.id === result.offenderHomeId)
+        : undefined;
+      return {
+        ...event,
+        foul_received_player_id: result.homePlayerId,
+        foul_received_opponent_player_id: result.awayPlayerId,
+        player_id: result.offenderHomeId ?? undefined,
+        opponent_player_id: result.offenderAwayId,
+        player: homePlayer,
+      };
+    }));
     showNote(t('trke_foul_received_saved', 'Saved'), null);
     return null;
   }
 
+  async function saveMissPoint(coordX: number, coordY: number, shooterId: string): Promise<string | null> {
+    if (!missEditId) return t('trke_miss_point_error', 'Could not save the missed shot');
+    const result = await editMissedShot({ gameId, eventId: missEditId, coordX, coordY, shooterId });
+    if ('error' in result) {
+      if (result.error === 'miss_point_half') return t('trke_made_hint_half', 'That point is not on the attacking half');
+      if (result.error === 'miss_point_player') return t('trke_shot_point_player', 'Choose a teammate who was on the court');
+      if (result.error === 'miss_point_value') return t('trke_miss_point_value', 'That spot changes the shot value, and the free throws would no longer match');
+      return t('trke_miss_point_error', 'Could not save the missed shot');
+    }
+    setEvents((prev) => {
+      const groupId = prev.find((item) => item.id === missEditId)?.play_group_id;
+      return prev.map((event) => {
+        if (event.id === missEditId) {
+          const homePlayer = result.playerId
+            ? players.find((player) => player.id === result.playerId)
+            : undefined;
+          return {
+            ...event,
+            points: result.points,
+            coord_x: result.coordX,
+            coord_y: result.coordY,
+            player_id: result.playerId ?? undefined,
+            opponent_player_id: result.opponentPlayerId,
+            player: homePlayer,
+          };
+        }
+        if (
+          groupId
+          && event.play_group_id === groupId
+          && event.event_type === 'foul'
+          && event.foul_context === 'shot_missed'
+        ) {
+          return { ...event, shot_value: result.points };
+        }
+        return event;
+      });
+    });
+    showNote(t('trke_miss_point_saved', 'Missed shot saved'), null);
+    return null;
+  }
+
+  async function saveFreeThrowEdit(marks: FreeThrowEditMark[]): Promise<string | null> {
+    if (!freeThrowEditId) return t('trke_ft_edit_error', 'Could not save the free throws');
+    const result = await editFreeThrows({ gameId, eventId: freeThrowEditId, marks });
+    if ('error' in result) {
+      if (result.error === 'ft_edit_rebound') return t('trke_ft_edit_rebound', 'The last miss needs a rebound, and none was recorded');
+      return t('trke_ft_edit_error', 'Could not save the free throws');
+    }
+    const saved = new Map(result.marks.map((mark) => [mark.id, mark]));
+    setEvents((prev) => prev.map((event) => {
+      const mark = saved.get(event.id);
+      return mark ? { ...event, made: mark.made, points: mark.points } : event;
+    }));
+    adoptServerScore(result.teamScore, result.opponentScore);
+    showNote(t('trke_ft_edit_saved', 'Free throws saved'), null);
+    return null;
+  }
+
+  async function saveSubstitutionEdit(pairs: { eventId: string; outId: string; inId: string }[]): Promise<string | null> {
+    if (!substitutionEditId) return t('trke_sub_edit_error', 'Could not save the substitution');
+    const result = await editSubstitution({ gameId, eventId: substitutionEditId, swaps: pairs });
+    if ('error' in result) {
+      if (result.error === 'substitution_out' || result.error === 'substitution_in' || result.error === 'substitution_eliminated') {
+        return t('trke_sub_edit_players', 'Choose who was on the court and who came in from the bench');
+      }
+      return t('trke_sub_edit_error', 'Could not save the substitution');
+    }
+    const saved = new Map(result.swaps.map((swap) => [swap.id, swap]));
+    setEvents((prev) => prev.map((event) => {
+      const swap = saved.get(event.id);
+      if (!swap) return event;
+      const homeIn = swap.playerId ? players.find((player) => player.id === swap.playerId) : undefined;
+      const homeOut = swap.playerOutId ? players.find((player) => player.id === swap.playerOutId) : undefined;
+      return {
+        ...event,
+        player_id: swap.playerId ?? undefined,
+        opponent_player_id: swap.opponentPlayerId,
+        player_out_id: swap.playerOutId ?? undefined,
+        opponent_player_out_id: swap.opponentPlayerOutId,
+        player: homeIn,
+        player_out: homeOut,
+      };
+    }));
+    showNote(t('trke_sub_edit_saved', 'Substitution saved'), null);
+    return null;
+  }
+
+  async function saveReboundPlayer(playerId: string): Promise<string | null> {
+    if (!reboundEditId) return t('trke_rebound_error', 'Could not save the rebound');
+    const result = await editReboundPlayer({ gameId, eventId: reboundEditId, playerId });
+    if ('error' in result) {
+      if (result.error === 'rebound_final') return t('trke_deferred_closed', 'This game is closed');
+      if (result.error === 'rebound_player') return t('trke_shot_point_player', 'Choose a teammate who was on the court');
+      return t('trke_rebound_error', 'Could not save the rebound');
+    }
+    setEvents((prev) => prev.map((event) => {
+      if (event.id !== reboundEditId) return event;
+      const homePlayer = result.playerId
+        ? players.find((player) => player.id === result.playerId)
+        : undefined;
+      return {
+        ...event,
+        player_id: result.playerId ?? undefined,
+        opponent_player_id: result.opponentPlayerId,
+        player: homePlayer,
+      };
+    }));
+    showNote(t('trke_rebound_saved', 'Rebound saved'), null);
+    return null;
+  }
+
   function handleBoardAction(side: 'home' | 'away', action: CaptureBoardAction) {
-    if (shotSavingRef.current || missSavingRef.current || turnoverSavingRef.current || foulSavingRef.current || subSavingRef.current) return;
+    if (assistClosingRef.current || shotSavingRef.current || missSavingRef.current || turnoverSavingRef.current || foulSavingRef.current || subSavingRef.current) return;
     if (subSide) return;
     if (miss) {
       if (side === miss.side && action === pendingAction) cancelMiss();
@@ -4281,9 +4616,17 @@ export default function CaptureScreen({
       canPlaceShot: row.canPlaceShot,
       canEditJump: row.canEditJump,
       canEditFoulReceived: row.canEditFoulReceived,
+      canEditMiss: row.canEditMiss,
+      canEditFreeThrows: row.canEditFreeThrows,
+      canEditSubstitution: row.canEditSubstitution,
+      canEditRebound: row.canEditRebound,
       shotEditId: row.shotEditId,
       jumpEditId: row.jumpEditId,
       foulEditId: row.foulEditId,
+      missEditId: row.missEditId,
+      freeThrowEditId: row.freeThrowEditId,
+      substitutionEditId: row.substitutionEditId,
+      reboundEditId: row.reboundEditId,
       canDelete: row.canDelete,
     }));
 
@@ -4519,11 +4862,8 @@ export default function CaptureScreen({
           benchPickSide={null}
           onBenchPlayer={() => undefined}
           selectedCourtId={null}
-          homeColor={normalizeHexColor(
-            game.kit_color === 'secondary' ? game.teams?.clubs?.secondary_color : game.teams?.clubs?.primary_color,
-            '#171717',
-          )}
-          awayColor={normalizeHexColor(game.opponent_color)}
+          homeColor={homeMarkerColor}
+          awayColor={awayMarkerColor}
           hint={actionHint}
           hintUrgent={
             markEventAlarm
@@ -4554,9 +4894,15 @@ export default function CaptureScreen({
           onEditJump={logEdits ? setJumpEditId : undefined}
           editJumpLabel={t('trke_jump_edit', 'Edit jump')}
           onEditFoulReceived={logEdits ? setFoulReceivedId : undefined}
-          editFoulReceivedLabel={t('trke_foul_received_edit', 'Who received the foul')}
-          nextLabel="Next"
-          onNextPeriod={() => { void nextPeriod(); }}
+          editFoulReceivedLabel={t('trke_foul_edit', 'Edit foul')}
+          onEditMiss={logEdits ? setMissEditId : undefined}
+          editMissLabel={t('trke_miss_point_edit', 'Edit missed shot')}
+          onEditFreeThrows={logEdits ? setFreeThrowEditId : undefined}
+          editFreeThrowsLabel={t('trke_ft_edit', 'Edit free throws')}
+          onEditSubstitution={logEdits ? setSubstitutionEditId : undefined}
+          editSubstitutionLabel={t('trke_sub_edit', 'Edit substitution')}
+          onEditRebound={logEdits ? setReboundEditId : undefined}
+          editReboundLabel={t('trke_rebound_edit', 'Who took the rebound')}
           quintetoLabel={t('trke_quinteto', 'Quinteto')}
           onQuinteto={
             game.status !== 'final' && currentPeriod > 1 && !periodAlreadyStarted(currentPeriod)
@@ -4592,6 +4938,13 @@ export default function CaptureScreen({
             <BasketballCourt
               onCourtTap={game.status === 'final' ? undefined : handleCourtTap}
               shotMarkers={shotMarkers}
+              pendingShot={pendingShot ? {
+                x: pendingShot.x,
+                y: pendingShot.y,
+                made: pendingShot.made,
+                label: pendingShot.label,
+                color: pendingShot.side === 'home' ? homeMarkerColor : awayMarkerColor,
+              } : null}
               placement={(turnoverStep || foulStep || (shotStep && shotStep !== 'court') || (miss && miss.step !== 'court')) && tapCoordinates ? tapCoordinates : null}
               attackingRight={attacking}
               isOffense={isOffense}
@@ -4730,6 +5083,7 @@ export default function CaptureScreen({
           saving={shotSaving}
           stepBackLabel={t('trke_step_back', 'Step back')}
           cancelDeleteLabel={t('trke_cancel_delete', 'Cancel and delete')}
+          onBegin={beginMadeAssist}
           onPick={(playerId) => chooseMadeAssist(playerId)}
           onNone={() => chooseMadeAssist(null)}
           onStepBack={stepShotBack}
@@ -4960,6 +5314,7 @@ export default function CaptureScreen({
         const side = event?.player_id ? 'home' : event?.opponent_player_id ? 'away' : null;
         if (!event || !side) return null;
         const shooterId = side === 'home' ? event.player_id : event.opponent_player_id;
+        if (!shooterId) return null;
         const starters = periodLineups
           .filter((row) => row.period_number === event.period_number && row.side === side)
           .sort((a, b) => a.position_index - b.position_index)
@@ -4967,13 +5322,17 @@ export default function CaptureScreen({
             const id = side === 'home' ? row.player_id : row.opponent_player_id;
             return id ? [id] : [];
           });
-        const teammates = onCourtBefore(starters, events, event.period_number, side, event).flatMap((id) => {
-          if (!shooterId || id === shooterId || playerEliminatedBefore(events, id, side, event)) return [];
+        const courtIds = onCourtBefore(starters, events, event.period_number, side, event);
+        const rosterIds = courtIds.includes(shooterId) ? courtIds : [...courtIds, shooterId];
+        const courtPlayers = rosterIds.flatMap((id) => {
+          if (id !== shooterId && playerEliminatedBefore(events, id, side, event)) return [];
           if (side === 'home') {
             const player = players.find((item) => item.id === id);
+            if (!player && id !== shooterId) return [];
             return [{ id, jersey: player?.jersey_number ?? 0, name: player?.full_name ?? '' }];
           }
           const player = opponentPlayers.find((item) => item.id === id && !item.is_coach);
+          if (!player && id !== shooterId) return [];
           return [{
             id,
             jersey: player ? opponentShirt(player) : 0,
@@ -4995,7 +5354,8 @@ export default function CaptureScreen({
             t={t}
             attackingRight={offenseAttacksRight(side, event.period_number, attackRightFirst)}
             placement={placement}
-            teammates={teammates}
+            players={courtPlayers}
+            shooterId={shooterId}
             assistId={currentAssistId}
             onClose={() => setShotPointId(null)}
             onSubmit={saveShotPoint}
@@ -5032,10 +5392,58 @@ export default function CaptureScreen({
         );
       })() : null}
 
+      {missEditId ? (() => {
+        const event = events.find((item) => item.id === missEditId && item.event_type === 'shot' && item.made === false);
+        const side = event?.player_id ? 'home' : event?.opponent_player_id ? 'away' : null;
+        if (!event || !side) return null;
+        const shooterId = side === 'home' ? event.player_id : event.opponent_player_id;
+        if (!shooterId) return null;
+        const starters = periodLineups
+          .filter((row) => row.period_number === event.period_number && row.side === side)
+          .sort((a, b) => a.position_index - b.position_index)
+          .flatMap((row) => {
+            const id = side === 'home' ? row.player_id : row.opponent_player_id;
+            return id ? [id] : [];
+          });
+        const courtIds = onCourtBefore(starters, events, event.period_number, side, event);
+        const rosterIds = courtIds.includes(shooterId) ? courtIds : [...courtIds, shooterId];
+        const courtPlayers = rosterIds.flatMap((id) => {
+          if (id !== shooterId && playerEliminatedBefore(events, id, side, event)) return [];
+          if (side === 'home') {
+            const player = players.find((item) => item.id === id);
+            if (!player && id !== shooterId) return [];
+            return [{ id, jersey: player?.jersey_number ?? 0, name: player?.full_name ?? '' }];
+          }
+          const player = opponentPlayers.find((item) => item.id === id && !item.is_coach);
+          if (!player && id !== shooterId) return [];
+          return [{
+            id,
+            jersey: player ? opponentShirt(player) : 0,
+            name: player?.name?.trim() || game.opponent_name || '',
+          }];
+        });
+        const homeRight = offenseAttacksRight('home', event.period_number, attackRightFirst);
+        const placement = event.coord_x != null && event.coord_y != null
+          ? { x: homeRight ? event.coord_x : 1 - event.coord_x, y: event.coord_y }
+          : null;
+        return (
+          <MissPointPopup
+            t={t}
+            attackingRight={offenseAttacksRight(side, event.period_number, attackRightFirst)}
+            placement={placement}
+            players={courtPlayers}
+            shooterId={shooterId}
+            onClose={() => setMissEditId(null)}
+            onSubmit={saveMissPoint}
+          />
+        );
+      })() : null}
+
       {foulReceivedId ? (() => {
         const event = events.find((item) => item.id === foulReceivedId && item.event_type === 'foul');
         const side = event?.foul_side === 'home' || event?.foul_side === 'away' ? event.foul_side : null;
         if (!event || !side) return null;
+        const coach = event.coach_technical_side === 'home' || event.coach_technical_side === 'away';
         const receivedPlayers = side === 'home'
           ? opponentPlaying.map((player) => ({
             id: player.id,
@@ -5048,13 +5456,168 @@ export default function CaptureScreen({
         const selected = side === 'home'
           ? event.foul_received_opponent_player_id ?? null
           : event.foul_received_player_id ?? null;
+        const currentOffender = side === 'home' ? event.player_id : event.opponent_player_id;
+        const offenders = coach || !currentOffender ? undefined : (() => {
+          const starters = periodLineups
+            .filter((row) => row.period_number === event.period_number && row.side === side)
+            .sort((a, b) => a.position_index - b.position_index)
+            .flatMap((row) => {
+              const id = side === 'home' ? row.player_id : row.opponent_player_id;
+              return id ? [id] : [];
+            });
+          const courtIds = onCourtBefore(starters, events, event.period_number, side, event);
+          const rosterIds = courtIds.includes(currentOffender) ? courtIds : [...courtIds, currentOffender];
+          return rosterIds.flatMap((id) => {
+            if (id !== currentOffender && playerEliminatedBefore(events, id, side, event)) return [];
+            if (side === 'home') {
+              const player = players.find((item) => item.id === id);
+              if (!player && id !== currentOffender) return [];
+              return [{ id, label: player ? `#${player.jersey_number} ${player.full_name}` : id }];
+            }
+            const player = opponentPlayers.find((item) => item.id === id && !item.is_coach);
+            if (!player && id !== currentOffender) return [];
+            return [{
+              id,
+              label: player ? `#${opponentShirt(player)} ${player.name || ''}`.trim() : id,
+            }];
+          });
+        })();
         return (
           <FoulReceivedPopup
             t={t}
             players={receivedPlayers}
             playerId={selected}
+            offenders={offenders}
+            offenderId={currentOffender ?? null}
             onClose={() => setFoulReceivedId(null)}
             onSubmit={saveFoulReceived}
+          />
+        );
+      })() : null}
+
+      {freeThrowEditId ? (() => {
+        const event = events.find((item) => item.id === freeThrowEditId && item.event_type === 'free_throw');
+        if (!event) return null;
+        const group = event.play_group_id
+          ? events.filter((item) => item.event_type === 'free_throw' && item.play_group_id === event.play_group_id)
+          : [event];
+        const ordered = [...group].sort((a, b) => {
+          if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
+          return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+        });
+        const marks = ordered.map((item) => (item.made ? 'made' : 'miss') as FreeThrowEditMark);
+        return (
+          <FreeThrowEditPopup
+            t={t}
+            marks={marks}
+            onClose={() => setFreeThrowEditId(null)}
+            onSubmit={saveFreeThrowEdit}
+          />
+        );
+      })() : null}
+
+      {substitutionEditId ? (() => {
+        const event = events.find((item) => item.id === substitutionEditId && item.event_type === 'substitution');
+        if (!event) return null;
+        const group = event.play_group_id
+          ? events.filter((item) => item.event_type === 'substitution' && item.play_group_id === event.play_group_id)
+          : [event];
+        const ordered = [...group].sort((a, b) => (
+          a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : 1
+        ));
+        const side = ordered.every((item) => item.player_out_id) ? 'home' : 'away';
+        const first = ordered[0];
+        const starters = periodLineups
+          .filter((row) => row.period_number === first.period_number && row.side === side)
+          .sort((a, b) => a.position_index - b.position_index)
+          .flatMap((row) => {
+            const id = side === 'home' ? row.player_id : row.opponent_player_id;
+            return id ? [id] : [];
+          });
+        const courtIds = onCourtBefore(starters, events, first.period_number, side, first);
+        const labelFor = (id: string) => {
+          if (side === 'home') {
+            const player = players.find((item) => item.id === id);
+            return player ? `#${player.jersey_number} ${player.full_name}` : id;
+          }
+          const player = opponentPlayers.find((item) => item.id === id);
+          return player ? `#${opponentShirt(player)} ${player.name || ''}`.trim() : id;
+        };
+        const outIds = [...new Set([
+          ...courtIds,
+          ...ordered.flatMap((item) => {
+            const id = side === 'home' ? item.player_out_id : item.opponent_player_out_id;
+            return id ? [id] : [];
+          }),
+        ])];
+        const bench = side === 'home'
+          ? dressedPlayers().map((player) => player.id)
+          : opponentPlaying.map((player) => player.id);
+        const inIds = [...new Set([
+          ...bench.filter((id) => !courtIds.includes(id) && !playerEliminatedBefore(events, id, side, first)),
+          ...ordered.flatMap((item) => {
+            const id = side === 'home' ? item.player_id : item.opponent_player_id;
+            return id ? [id] : [];
+          }),
+        ])];
+        const pairs = ordered.flatMap((item) => {
+          const outId = side === 'home' ? item.player_out_id : item.opponent_player_out_id;
+          const inId = side === 'home' ? item.player_id : item.opponent_player_id;
+          return outId && inId ? [{ eventId: item.id, outId, inId }] : [];
+        });
+        if (pairs.length !== ordered.length) return null;
+        return (
+          <SubstitutionEditPopup
+            t={t}
+            pairs={pairs}
+            outPlayers={outIds.map((id) => ({ id, label: labelFor(id) }))}
+            inPlayers={inIds.map((id) => ({ id, label: labelFor(id) }))}
+            onClose={() => setSubstitutionEditId(null)}
+            onSubmit={saveSubstitutionEdit}
+          />
+        );
+      })() : null}
+
+      {reboundEditId ? (() => {
+        const event = events.find((item) => item.id === reboundEditId && item.event_type === 'rebound');
+        const side = event?.player_id && !event.opponent_player_id
+          ? 'home'
+          : event?.opponent_player_id && !event.player_id
+            ? 'away'
+            : null;
+        if (!event || !side) return null;
+        const currentId = side === 'home' ? event.player_id : event.opponent_player_id;
+        if (!currentId) return null;
+        const starters = periodLineups
+          .filter((row) => row.period_number === event.period_number && row.side === side)
+          .sort((a, b) => a.position_index - b.position_index)
+          .flatMap((row) => {
+            const id = side === 'home' ? row.player_id : row.opponent_player_id;
+            return id ? [id] : [];
+          });
+        const courtIds = onCourtBefore(starters, events, event.period_number, side, event);
+        const rosterIds = courtIds.includes(currentId) ? courtIds : [...courtIds, currentId];
+        const reboundPlayers = rosterIds.flatMap((id) => {
+          if (id !== currentId && playerEliminatedBefore(events, id, side, event)) return [];
+          if (side === 'home') {
+            const player = players.find((item) => item.id === id);
+            if (!player && id !== currentId) return [];
+            return [{ id, label: player ? `#${player.jersey_number} ${player.full_name}` : id }];
+          }
+          const player = opponentPlayers.find((item) => item.id === id && !item.is_coach);
+          if (!player && id !== currentId) return [];
+          return [{
+            id,
+            label: player ? `#${opponentShirt(player)} ${player.name || ''}`.trim() : id,
+          }];
+        });
+        return (
+          <ReboundPlayerPopup
+            t={t}
+            players={reboundPlayers}
+            playerId={currentId}
+            onClose={() => setReboundEditId(null)}
+            onSubmit={saveReboundPlayer}
           />
         );
       })() : null}
