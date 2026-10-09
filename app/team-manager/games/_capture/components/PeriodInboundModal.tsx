@@ -7,9 +7,11 @@ interface PeriodInboundModalProps {
   noLabel: string;
   flipped: string | null;
   okLabel: string;
+  cancelLabel: string;
   onNo: () => void;
   onYes: () => void;
   onAck: () => void;
+  onCancel: () => void;
 }
 
 export function PeriodInboundModal({
@@ -19,9 +21,11 @@ export function PeriodInboundModal({
   noLabel,
   flipped,
   okLabel,
+  cancelLabel,
   onNo,
   onYes,
   onAck,
+  onCancel,
 }: PeriodInboundModalProps) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
@@ -69,6 +73,14 @@ export function PeriodInboundModal({
                 {yesLabel}
               </button>
             </div>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="mt-2 w-full bg-neutral-200 py-3 text-sm font-bold text-neutral-800 hover:bg-neutral-300"
+              style={{ minHeight: '48px' }}
+            >
+              {cancelLabel}
+            </button>
           </>
         )}
       </div>

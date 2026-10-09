@@ -26,6 +26,7 @@ import { MadeAssistPopup } from './components/MadeShotPopups';
 import { PeriodInboundModal } from './components/PeriodInboundModal';
 import { commitCapturePlay, deleteCapturePlay, editFoulReceived, editJump, placeMadeShotPoint } from './actions';
 import { freeThrowNeedsRebound } from '@/lib/capture/free-throws';
+import { foulNextPossession, madeNextPossession } from '@/lib/capture/next-possession';
 import {
   missChooseFouler,
   missChooseFoulKind,
@@ -35,6 +36,7 @@ import {
   missChooseShooter,
   missCourtTap,
   missStepBack,
+  missNextPossession,
   missStopsClock,
   openMiss,
   type MissDraft,
@@ -85,7 +87,7 @@ import { countTimeouts, periodOutcome, timeoutWindow } from '@/lib/capture/timeo
 import { Profile } from '@/lib/types';
 import type { GameOpponentPlayer } from '@/types/database';
 
-const TURNOVER_REASON_CLOSE_MS = 600;
+const TURNOVER_REASON_CLOSE_MS = 150;
 const TIMEOUT_TICK_MS = 300;
 
 function opponentShirt(player: GameOpponentPlayer) {
@@ -331,6 +333,12 @@ export default function CaptureScreen({
   const [clockRemaining, setClockRemaining] = useState(600000);
   const [currentPeriod, setCurrentPeriod] = useState(1);
   const [possession, setPossession] = useState<'home' | 'away' | null>('home');
+  const possessionRef = useRef<'home' | 'away' | null>('home');
+  const serverPossession = useRef<'home' | 'away' | null>('home');
+  const possessionTicket = useRef(0);
+  const possessionAhead = useRef(0);
+  const captureEpoch = useRef(0);
+  const commitTail = useRef(Promise.resolve());
   const [teamScore, setTeamScore] = useState(0);
   const [opponentScore, setOpponentScore] = useState(0);
   const [attackRightFirst, setAttackRightFirst] = useState(true);
@@ -453,6 +461,7 @@ export default function CaptureScreen({
   const [showSquad, setShowSquad] = useState(false);
   const [showPeriodLineup, setShowPeriodLineup] = useState(false);
   const [showInbound, setShowInbound] = useState(false);
+  const [inboundPausedPeriod, setInboundPausedPeriod] = useState<number | null>(null);
   const [inboundFlipped, setInboundFlipped] = useState<'home' | 'away' | null>(null);
   const [openingTipWinner, setOpeningTipWinner] = useState<'home' | 'away' | null>(null);
   const openingTipWinnerRef = useRef<'home' | 'away' | null>(null);
@@ -690,7 +699,9 @@ export default function CaptureScreen({
         );
         adoptClockRef.current(running, remaining, period, running);
       }
-      setPossession(gameData.possession || 'home');
+      possessionRef.current = gameData.possession === 'away' ? 'away' : 'home';
+      serverPossession.current = possessionRef.current;
+      setPossession(possessionRef.current);
       setTeamScore(gameData.team_score || 0);
       setOpponentScore(gameData.opponent_score || 0);
       setAttackRightFirst(gameData.attack_right_first ?? true);
@@ -923,7 +934,12 @@ export default function CaptureScreen({
               );
               adoptClockRef.current(clock.running, clock.remainingMs, clock.period, false);
             }
-            if (newData.possession === 'home' || newData.possession === 'away' || newData.possession === null) {
+            if (
+              possessionAhead.current === 0
+              && (newData.possession === 'home' || newData.possession === 'away' || newData.possession === null)
+            ) {
+              possessionRef.current = newData.possession;
+              serverPossession.current = newData.possession;
               setPossession(newData.possession);
             }
             setTeamScore(newData.team_score);
@@ -937,7 +953,11 @@ export default function CaptureScreen({
               setOpeningTipWinner(tipWinner);
             }
 
-            setGame((prev) => ({ ...prev, ...newData }) as Game);
+            setGame((prev) => {
+              const merged = { ...prev, ...newData } as Game;
+              if (possessionAhead.current > 0 && prev) merged.possession = prev.possession;
+              return merged;
+            });
           }
         }
       )
@@ -1174,6 +1194,7 @@ export default function CaptureScreen({
       showNote(t('trke_turnover_hint_player', 'Choose the player who lost the ball'), 'turnover');
       return;
     }
+    bumpCapture();
     setTurnoverSide(side);
     setTurnoverStep('court');
     setTurnoverOffenderId(null);
@@ -1185,6 +1206,47 @@ export default function CaptureScreen({
     if (count === 1) return t('trke_ft_awarded_1', '1 free throw');
     if (count === 2) return t('trke_ft_awarded_2', '2 free throws');
     return t('trke_ft_awarded_3', '3 free throws');
+  }
+
+  function applyPossession(next: 'home' | 'away' | null) {
+    possessionTicket.current += 1;
+    possessionRef.current = next;
+    setPossession(next);
+    setGame((prev) => (prev ? { ...prev, possession: next } : prev));
+    return possessionTicket.current;
+  }
+
+  function revertToServer(ticket: number) {
+    if (possessionTicket.current !== ticket) return;
+    applyPossession(serverPossession.current);
+  }
+
+  function noteServerPossession(next: 'home' | 'away' | null) {
+    serverPossession.current = next;
+  }
+
+  function bumpCapture() {
+    captureEpoch.current += 1;
+    return captureEpoch.current;
+  }
+
+  function confirmPossession(ticket: number, next: 'home' | 'away' | null) {
+    if (possessionTicket.current !== ticket || possessionRef.current === next) return;
+    applyPossession(next);
+  }
+
+  function enqueueCommit<T>(work: () => Promise<T>): Promise<T> {
+    const run = commitTail.current.then(work, work);
+    commitTail.current = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  function rosterSide(playerId: string | null, unknown: boolean): 'home' | 'away' | null {
+    if (unknown) return 'away';
+    if (!playerId) return null;
+    if (courtRoster('home').some((player) => player.id === playerId)) return 'home';
+    if (courtRoster('away').some((player) => player.id === playerId)) return 'away';
+    return null;
   }
 
   function shooterHint(points: 2 | 3) {
@@ -1239,6 +1301,7 @@ export default function CaptureScreen({
       showNote(t('trke_made_hint_roster', 'Put players on the court before the basket'), personal ? 'made_personal' : 'made');
       return;
     }
+    bumpCapture();
     const clockAtPlay = clockNow();
     shotWasRunningRef.current = clockRunningRef.current;
     shotClockAtRef.current = clockAtPlay;
@@ -1329,37 +1392,50 @@ export default function CaptureScreen({
   }) {
     if (shotSavingRef.current || !shotSide || !tapCoordinates || !shotShooterId || shotPoints == null) return;
     const side = shotSide;
+    const shotPoint = tapCoordinates;
+    const shooterId = shotShooterId;
     const clockAtPlay = shotClockAtRef.current ?? clockNow();
+    const liveRebound = !!extra.foulerId && freeThrowNeedsRebound({
+      source: 'made',
+      kind: extra.foulKind ?? 'personal',
+      throws: extra.throws,
+    });
+    const nextPossession = madeNextPossession({
+      side,
+      foulKind: extra.foulKind,
+      foulerId: extra.foulerId,
+      throws: extra.throws,
+      liveRebound,
+      reboundSide: rosterSide(extra.rebounderId, extra.unknownRebound === true),
+    });
     shotSavingRef.current = true;
     setShotSaving(true);
+    const ticket = applyPossession(nextPossession);
+    possessionAhead.current += 1;
+    clearShotUi();
+    shotSavingRef.current = false;
+    setShotSaving(false);
     try {
-      const result = await commitCapturePlay({
+      const result = await enqueueCommit(() => commitCapturePlay({
         play: 'made',
         gameId,
         periodNumber: currentPeriod,
         clockRemainingMs: clockAtPlay,
         side,
-        coordX: tapCoordinates.x,
-        coordY: tapCoordinates.y,
-        shooterId: shotShooterId,
+        coordX: shotPoint.x,
+        coordY: shotPoint.y,
+        shooterId,
         assistId: extra.assistId,
         foulerId: extra.foulerId,
         foulKind: extra.foulKind,
         throws: extra.throws,
         rebounderId: extra.rebounderId,
         unknownRebound: extra.unknownRebound === true,
-      });
-      const liveRebound = !!extra.foulerId && freeThrowNeedsRebound({
-        source: 'made',
-        kind: extra.foulKind ?? 'personal',
-        throws: extra.throws,
-      });
+      }));
       if ('error' in result) {
         showNote(madeErrorText(result.error));
-        if (liveRebound && shotClockAtRef.current != null) {
-          freezeClockAt(shotClockAtRef.current);
-          shotLiveReboundRef.current = false;
-        }
+        revertToServer(ticket);
+        if (liveRebound) freezeClockAt(clockAtPlay);
         return;
       }
       if (result.groupId) {
@@ -1380,8 +1456,8 @@ export default function CaptureScreen({
           });
         }
       }
-      setPossession(result.possession ?? null);
-      setGame((prev) => (prev ? { ...prev, possession: result.possession ?? null } : prev));
+      noteServerPossession(result.possession ?? null);
+      confirmPossession(ticket, result.possession ?? null);
       if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
       if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
       const outcome = liveRebound
@@ -1394,21 +1470,13 @@ export default function CaptureScreen({
         playerId: extra.foulerId,
         kind: extra.foulKind,
       }]);
-      clearShotUi();
       showNote(promptFoulOut(leaving) ? foulOutSubNote() : ejectionNote(leaving, outcome));
     } catch {
       showNote(t('trke_made_hint_error', 'Could not save the basket'));
-      if (freeThrowNeedsRebound({
-        source: 'made',
-        kind: extra.foulKind ?? 'personal',
-        throws: extra.throws,
-      }) && shotClockAtRef.current != null) {
-        freezeClockAt(shotClockAtRef.current);
-        shotLiveReboundRef.current = false;
-      }
+      revertToServer(ticket);
+      if (liveRebound) freezeClockAt(clockAtPlay);
     } finally {
-      shotSavingRef.current = false;
-      setShotSaving(false);
+      possessionAhead.current = Math.max(0, possessionAhead.current - 1);
     }
   }
 
@@ -1540,6 +1608,7 @@ export default function CaptureScreen({
       showNote(t('trke_miss_hint_roster', 'Put players on the court before the miss'), personal ? 'miss_personal' : 'miss');
       return;
     }
+    bumpCapture();
     const clockAtPlay = clockNow();
     missWasRunningRef.current = clockRunningRef.current;
     missClockAtRef.current = clockAtPlay;
@@ -1581,10 +1650,12 @@ export default function CaptureScreen({
   }
 
   async function saveMiss(draft: MissDraft, throws: FreeThrowMark[]) {
+    const coord = draft.coord;
+    const shooterId = draft.shooterId;
     if (
       missSavingRef.current
-      || !draft.coord
-      || !draft.shooterId
+      || !coord
+      || !shooterId
       || draft.points == null
     ) return;
     const liveRebound = draft.personal && freeThrowNeedsRebound({
@@ -1599,31 +1670,41 @@ export default function CaptureScreen({
       if (!liveRebound && (draft.rebounderId || unknownRebound)) return;
     } else if (!draft.rebounderId && !unknownRebound) return;
     const clockAtPlay = missClockAtRef.current ?? clockNow();
+    const playedThrows = draft.personal ? throws : [];
+    const nextPossession = missNextPossession({
+      shootingSide: draft.side,
+      reboundSide: draft.reboundSide,
+      personal: draft.personal && !!draft.foulerId,
+      lastThrow: playedThrows[playedThrows.length - 1] ?? null,
+      foulKind: draft.personal ? draft.foulKind : null,
+    });
     missSavingRef.current = true;
     setMissSaving(true);
-    setMiss(draft);
+    const ticket = applyPossession(nextPossession);
+    possessionAhead.current += 1;
+    clearMissUi();
+    missSavingRef.current = false;
+    setMissSaving(false);
     try {
-      const result = await commitCapturePlay({
+      const result = await enqueueCommit(() => commitCapturePlay({
         play: 'miss',
         gameId,
         periodNumber: currentPeriod,
         clockRemainingMs: clockAtPlay,
         side: draft.side,
-        coordX: draft.coord.x,
-        coordY: draft.coord.y,
-        shooterId: draft.shooterId,
+        coordX: coord.x,
+        coordY: coord.y,
+        shooterId,
         rebounderId: liveRebound || !draft.personal ? draft.rebounderId : null,
         unknownRebound: (liveRebound || !draft.personal) && unknownRebound,
         foulerId: draft.personal ? draft.foulerId : null,
         foulKind: draft.personal ? draft.foulKind : null,
-        throws: draft.personal ? throws : [],
-      });
+        throws: playedThrows,
+      }));
       if ('error' in result) {
         showNote(missErrorText(result.error));
-        if (liveRebound && missClockAtRef.current != null) {
-          freezeClockAt(missClockAtRef.current);
-          missLiveReboundRef.current = false;
-        }
+        revertToServer(ticket);
+        if (liveRebound) freezeClockAt(clockAtPlay);
         return;
       }
       if (result.groupId) {
@@ -1644,8 +1725,8 @@ export default function CaptureScreen({
           });
         }
       }
-      setPossession(result.possession ?? null);
-      setGame((prev) => (prev ? { ...prev, possession: result.possession ?? null } : prev));
+      noteServerPossession(result.possession ?? null);
+      confirmPossession(ticket, result.possession ?? null);
       if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
       if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
       const outcome = liveRebound
@@ -1658,17 +1739,13 @@ export default function CaptureScreen({
         playerId: draft.personal ? draft.foulerId : null,
         kind: draft.personal ? draft.foulKind : null,
       }]);
-      clearMissUi();
       showNote(promptFoulOut(leaving) ? foulOutSubNote() : ejectionNote(leaving, outcome));
     } catch {
       showNote(t('trke_miss_hint_error', 'Could not save the miss'));
-      if (liveRebound && missClockAtRef.current != null) {
-        freezeClockAt(missClockAtRef.current);
-        missLiveReboundRef.current = false;
-      }
+      revertToServer(ticket);
+      if (liveRebound) freezeClockAt(clockAtPlay);
     } finally {
-      missSavingRef.current = false;
-      setMissSaving(false);
+      possessionAhead.current = Math.max(0, possessionAhead.current - 1);
     }
   }
 
@@ -1813,34 +1890,54 @@ export default function CaptureScreen({
       setShowTurnoverMenu(true);
       return;
     }
-    const normalized = worldToNormalized(tapCoordinates.x, tapCoordinates.y);
+    const side = turnoverSide;
+    const offenderId = turnoverOffenderId;
+    const point = tapCoordinates;
+    const normalized = worldToNormalized(point.x, point.y);
     const stopsClock = turnoverStopsClock(reason);
-    const nextPossession = otherCaptureSide(turnoverSide);
+    const nextPossession = otherCaptureSide(side);
     const wasRunning = clockRunningRef.current;
     const clockAtPlay = clockNow();
     turnoverSavingRef.current = true;
     setTurnoverSaving(true);
-    setPossession(nextPossession);
+    const ticket = applyPossession(nextPossession);
+    possessionAhead.current += 1;
+    setTurnoverSide(null);
+    setTurnoverStep(null);
+    setTurnoverOffenderId(null);
+    setShowTurnoverMenu(false);
+    setPendingAction(null);
+    setTapCoordinates(null);
+    turnoverSavingRef.current = false;
+    setTurnoverSaving(false);
     if (stopsClock) holdClock(false, clockAtPlay);
+    const epoch = bumpCapture();
+    const reopenTurnover = () => {
+      revertToServer(ticket);
+      if (captureEpoch.current !== epoch) return;
+      setTurnoverSide(side);
+      setTurnoverOffenderId(offenderId);
+      setTapCoordinates(point);
+      setTurnoverStep('reason');
+      setShowTurnoverMenu(true);
+      if (stopsClock && wasRunning) holdClock(true, clockAtPlay);
+    };
     try {
-      const result = await commitCapturePlay({
+      const result = await enqueueCommit(() => commitCapturePlay({
         play: 'turnover',
         gameId,
         periodNumber: currentPeriod,
         clockRemainingMs: clockAtPlay,
         coordX: Math.min(1, Math.max(0, normalized.x)),
         coordY: Math.min(1, Math.max(0, normalized.y)),
-        side: turnoverSide,
+        side,
         reason,
-        offenderId: turnoverOffenderId,
-      });
+        offenderId,
+      }));
       if ('error' in result) {
         const message = t(turnoverHintKey(result.error), turnoverHintFallback(result.error));
         showNote(message);
-        setPossession(turnoverSide);
-        setTurnoverStep('reason');
-        setShowTurnoverMenu(true);
-        if (stopsClock && wasRunning) holdClock(true, clockAtPlay);
+        reopenTurnover();
         return;
       }
       const { data } = await supabase
@@ -1855,26 +1952,16 @@ export default function CaptureScreen({
       if (data) {
         setEvents((prev) => (prev.some((event) => event.id === data.id) ? prev : [data, ...prev]));
       }
-      setPossession(nextPossession);
-      setGame((prev) => (prev ? { ...prev, possession: nextPossession } : prev));
-      setTurnoverSide(null);
-      setTurnoverStep(null);
-      setTurnoverOffenderId(null);
-      setShowTurnoverMenu(false);
-      setPendingAction(null);
-      setTapCoordinates(null);
+      noteServerPossession(nextPossession);
       showNote(stopsClock
         ? t('trke_turnover_hint_saved', 'Turnover saved. Press start clock.')
         : t('trke_turnover_hint_saved_live', 'Turnover saved.'));
     } catch {
       const message = t('trke_turnover_hint_error', 'Could not save the turnover');
       showNote(message);
-      setPossession(turnoverSide);
-      setShowTurnoverMenu(true);
-      if (stopsClock && wasRunning) holdClock(true, clockAtPlay);
+      reopenTurnover();
     } finally {
-      turnoverSavingRef.current = false;
-      setTurnoverSaving(false);
+      possessionAhead.current = Math.max(0, possessionAhead.current - 1);
     }
   }
 
@@ -1908,20 +1995,26 @@ export default function CaptureScreen({
       showNote(t('trke_turnover_hint_wrong_side', 'Only the team with the ball can turn it over'), null);
       return;
     }
+    bumpCapture();
     const wasRunning = clockRunningRef.current;
     const clockAtPlay = clockNow();
-    holdClock(false, clockAtPlay);
+    const nextPossession = otherCaptureSide(side);
     clockViolationRef.current = true;
+    const ticket = applyPossession(nextPossession);
+    possessionAhead.current += 1;
+    holdClock(false, clockAtPlay);
+    clockViolationRef.current = false;
     try {
-      const result = await commitCapturePlay({
+      const result = await enqueueCommit(() => commitCapturePlay({
         play,
         gameId,
         periodNumber: currentPeriod,
         clockRemainingMs: clockAtPlay,
         side,
-      });
+      }));
       if ('error' in result) {
         showNote(t('trke_turnover_hint_error', 'Could not save the turnover'), null);
+        revertToServer(ticket);
         if (wasRunning) holdClock(true, clockAtPlay);
         return;
       }
@@ -1937,7 +2030,7 @@ export default function CaptureScreen({
       if (data) {
         setEvents((prev) => (prev.some((event) => event.id === data.id) ? prev : [data, ...prev]));
       }
-      setPossession(otherCaptureSide(side));
+      noteServerPossession(nextPossession);
       showNote(play === 'shot_clock'
         ? t('trke_shot_clock_hint', '24s violation. Press start clock.')
         : play === 'eight_seconds'
@@ -1945,9 +2038,10 @@ export default function CaptureScreen({
           : t('trke_five_seconds_hint', '5s violation. Press start clock.'), null);
     } catch {
       showNote(t('trke_turnover_hint_error', 'Could not save the turnover'), null);
+      revertToServer(ticket);
       if (wasRunning) holdClock(true, clockAtPlay);
     } finally {
-      clockViolationRef.current = false;
+      possessionAhead.current = Math.max(0, possessionAhead.current - 1);
     }
   }
 
@@ -2002,13 +2096,13 @@ export default function CaptureScreen({
       setEvents((prev) => prev.filter((event) => event.id !== pendingId));
     };
     try {
-      const result = await commitCapturePlay({
+      const result = await enqueueCommit(() => commitCapturePlay({
         play: 'timeout',
         gameId,
         periodNumber: period,
         clockRemainingMs: clockAtPlay,
         side,
-      });
+      }));
       if ('error' in result) {
         dropPending();
         openCaptureNotice({
@@ -2193,17 +2287,35 @@ export default function CaptureScreen({
     });
     const wasRunning = clockRunningRef.current;
     const clockAtPlay = liveRebound ? (foulLiveClockRef.current ?? clockNow()) : clockNow();
+    const point = tapCoordinates;
+    const decided = foulNextPossession({
+      possession,
+      side: draft.side,
+      kind: draft.kind,
+      context: draft.context,
+      throws: draft.throws,
+      liveRebound,
+      reboundSide: rosterSide(draft.rebounderId, draft.unknownRebound === true),
+    });
     if (!liveRebound) holdClock(false, clockAtPlay);
     foulSavingRef.current = true;
+    const ticket = decided.changed ? applyPossession(decided.possession) : possessionTicket.current;
+    possessionAhead.current += 1;
+    clearFoulUi();
+    foulSavingRef.current = false;
+    const undoClock = () => {
+      if (liveRebound) freezeClockAt(clockAtPlay);
+      else if (wasRunning) holdClock(true, clockAtPlay);
+    };
     try {
-      const result = await commitCapturePlay({
+      const result = await enqueueCommit(() => commitCapturePlay({
         play: 'foul',
         gameId,
         periodNumber: currentPeriod,
         clockRemainingMs: clockAtPlay,
         side: draft.side,
-        coordX: draft.coach || !tapCoordinates ? null : tapCoordinates.x,
-        coordY: draft.coach || !tapCoordinates ? null : tapCoordinates.y,
+        coordX: draft.coach || !point ? null : point.x,
+        coordY: draft.coach || !point ? null : point.y,
         kind: draft.kind,
         context: draft.context,
         offenderId: draft.offenderId,
@@ -2212,11 +2324,11 @@ export default function CaptureScreen({
         throws: draft.throws,
         rebounderId: draft.rebounderId,
         unknownRebound: draft.unknownRebound === true,
-      });
+      }));
       if ('error' in result) {
         showNote(foulErrorText(result.error));
-        if (liveRebound && foulLiveClockRef.current != null) freezeClockAt(foulLiveClockRef.current);
-        else if (wasRunning) holdClock(true, clockAtPlay);
+        if (decided.changed) revertToServer(ticket);
+        undoClock();
         return;
       }
       if (result.groupId) {
@@ -2237,9 +2349,9 @@ export default function CaptureScreen({
         }
       }
       if (result.possessionChanged) {
-        setPossession(result.possession ?? null);
-        setGame((prev) => (prev ? { ...prev, possession: result.possession ?? null } : prev));
-      }
+        noteServerPossession(result.possession ?? null);
+        confirmPossession(ticket, result.possession ?? null);
+      } else if (decided.changed) revertToServer(ticket);
       if (typeof result.teamScore === 'number') setTeamScore(result.teamScore);
       if (typeof result.opponentScore === 'number') setOpponentScore(result.opponentScore);
       const outcome = liveRebound
@@ -2262,13 +2374,12 @@ export default function CaptureScreen({
         },
       ]);
       showNote(promptFoulOut(leaving) ? foulOutSubNote() : ejectionNote(leaving, outcome));
-      clearFoulUi();
     } catch {
       showNote(t('trke_foul_hint_error', 'Could not save the foul'));
-      if (liveRebound && foulLiveClockRef.current != null) freezeClockAt(foulLiveClockRef.current);
-      else if (wasRunning) holdClock(true, clockAtPlay);
+      if (decided.changed) revertToServer(ticket);
+      undoClock();
     } finally {
-      foulSavingRef.current = false;
+      possessionAhead.current = Math.max(0, possessionAhead.current - 1);
     }
   }
 
@@ -2282,6 +2393,7 @@ export default function CaptureScreen({
       showNote(t('trke_foul_hint_roster', 'Put players on the court before the foul'), 'foul');
       return;
     }
+    bumpCapture();
     const clockAtWhistle = clockNow();
     holdClock(false, clockAtWhistle);
     void updateGameState({
@@ -2463,9 +2575,11 @@ export default function CaptureScreen({
   async function writePossession(side: 'home' | 'away') {
     const parsed = openingTipWinnerSchema.safeParse(side);
     if (!parsed.success) return false;
-    setPossession(parsed.data);
-    setGame((prev) => (prev ? { ...prev, possession: parsed.data } : prev));
-    return updateGameState({ possession: parsed.data });
+    const ticket = applyPossession(parsed.data);
+    const saved = await updateGameState({ possession: parsed.data });
+    if (saved) noteServerPossession(parsed.data);
+    else revertToServer(ticket);
+    return saved;
   }
 
   function proposedInboundSide() {
@@ -2480,7 +2594,13 @@ export default function CaptureScreen({
     const saved = await writePossession(side);
     if (!saved) return;
     inboundAnsweredPeriodRef.current = currentPeriodRef.current;
+    setInboundPausedPeriod(null);
     setInboundFlipped(null);
+    setShowInbound(false);
+  }
+
+  function pauseInbound() {
+    setInboundPausedPeriod(currentPeriodRef.current);
     setShowInbound(false);
   }
 
@@ -2494,16 +2614,50 @@ export default function CaptureScreen({
 
   function acknowledgeInboundFlip() {
     inboundAnsweredPeriodRef.current = currentPeriodRef.current;
+    setInboundPausedPeriod(null);
     setInboundFlipped(null);
     setShowInbound(false);
   }
 
-  function handleJumpBallConfirm(result: JumpBallResult) {
-    showNote(`${t('trke_jump_title', 'Jump ball')}: ${result.label}`, null);
+  async function handleJumpBallConfirm(result: JumpBallResult) {
+    const before = possessionRef.current;
     setShowJumpBall(false);
-    setPossession(result.winner);
-    void updateGameState({ possession: result.winner });
+    const ticket = applyPossession(result.winner);
+    void updateGameState({ possession: result.winner }).then((saved) => {
+      if (saved) noteServerPossession(result.winner);
+      else revertToServer(ticket);
+    });
     rememberTipWinner(result.winner);
+
+    const remaining = Math.min(600000, Math.max(0, Math.round(clockNow())));
+    const { data, error } = await supabase
+      .from('game_events')
+      .insert({
+        game_id: gameId,
+        event_type: 'jump',
+        period_number: currentPeriodRef.current,
+        clock_remaining_ms: remaining,
+        elapsed_ms: 600000 - remaining,
+        points: 0,
+        jump_side: result.winner,
+        jump_won: true,
+        jump_home_player_id: result.homePlayerId,
+        jump_away_player_id: result.awayPlayerId,
+        possession_before: before,
+        recorded_by_user_id: currentUser?.id ?? null,
+      })
+      .select(`
+        *,
+        player:players!game_events_player_id_fkey(full_name, jersey_number, avatar_url),
+        player_out:players!game_events_player_out_id_fkey(full_name, jersey_number, avatar_url)
+      `)
+      .single();
+    if (error || !data) {
+      showNote(t('trke_jump_error', 'Could not save the jump'), null);
+      return;
+    }
+    setEvents((prev) => (prev.some((event) => event.id === data.id) ? prev : [data, ...prev]));
+    showNote(`${t('trke_deferred_jump_won', 'Jump won')}: ${result.label}`, null);
   }
 
   function countsAsPlayerFoul(event: GameEvent, id: string, side: 'home' | 'away') {
@@ -3155,8 +3309,10 @@ export default function CaptureScreen({
   async function assignPossession(side: 'home' | 'away') {
     if (gameStatusRef.current === 'final' || shotStep || miss || turnoverStep || foulStep) return;
     if (possession === side) return;
-    setPossession(side);
-    await updateGameState({ possession: side });
+    const ticket = applyPossession(side);
+    const saved = await updateGameState({ possession: side });
+    if (saved) noteServerPossession(side);
+    else revertToServer(ticket);
   }
 
   async function handleChooseSide(attackRight: boolean) {
@@ -3226,8 +3382,9 @@ export default function CaptureScreen({
 
   useEffect(() => {
     if (inboundAnsweredPeriodRef.current === currentPeriod) return;
+    if (inboundPausedPeriod === currentPeriod) return;
     setShowInbound(inboundLineupReady);
-  }, [currentPeriod, inboundLineupReady]);
+  }, [currentPeriod, inboundLineupReady, inboundPausedPeriod]);
 
   if (loading) {
     return <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white">Loading...</div>;
@@ -3452,14 +3609,14 @@ export default function CaptureScreen({
     setSubSaving(true);
     setSubError(null);
     try {
-      const result = await commitCapturePlay({
+      const result = await enqueueCommit(() => commitCapturePlay({
         play: 'substitution',
         gameId,
         periodNumber: currentPeriod,
         clockRemainingMs: clockNow(),
         side,
         swaps,
-      });
+      }));
       if ('error' in result) {
         setSubError(subErrorText(result.error));
         return;
@@ -3580,7 +3737,7 @@ export default function CaptureScreen({
           : { ...input, ...base };
 
     try {
-      const result = await commitCapturePlay(payload);
+      const result = await enqueueCommit(() => commitCapturePlay(payload));
       if ('error' in result) {
         if (result.error.endsWith('_final')) return t('trke_deferred_closed', 'This game is closed');
         if (input.play === 'made') return madeErrorText(result.error);
@@ -3739,7 +3896,10 @@ export default function CaptureScreen({
       openingTipWinnerRef.current = result.openingTipWinner;
       setOpeningTipWinner(result.openingTipWinner);
     }
-    if (result.possession) setPossession(result.possession);
+    if (result.possession) {
+      noteServerPossession(result.possession);
+      applyPossession(result.possession);
+    }
     showNote(t('trke_jump_saved', 'Jump saved'), null);
     return null;
   }
@@ -3986,10 +4146,12 @@ export default function CaptureScreen({
         ? (game.opponent_name || 'Away')
         : (game.teams?.name || 'Home');
     } else if (event.event_type === 'jump') {
-      title = t('trke_jump_button', 'Jump');
       const side = event.jump_side === 'away' ? 'away' : 'home';
       const winnerSide = event.jump_won ? side : otherCaptureSide(side);
       const loserSide = otherCaptureSide(winnerSide);
+      const teamName = (who: 'home' | 'away') => (
+        who === 'home' ? (game.teams?.name || 'Home') : (game.opponent_name || 'Away')
+      );
       const jumperName = (who: 'home' | 'away', id: string | null | undefined) => {
         if (!id) return '';
         if (who === 'home') {
@@ -4002,15 +4164,13 @@ export default function CaptureScreen({
       const winnerName = jumperName(
         winnerSide,
         winnerSide === 'home' ? event.jump_home_player_id : event.jump_away_player_id,
-      );
+      ) || teamName(winnerSide);
       const loserName = jumperName(
         loserSide,
         loserSide === 'home' ? event.jump_home_player_id : event.jump_away_player_id,
-      );
-      detail = [
-        winnerName ? `${t('trke_ganado', 'Won')} ${winnerName}` : '',
-        loserName ? `${t('trke_perdido', 'Lost')} ${loserName}` : '',
-      ].filter(Boolean).join('\n');
+      ) || teamName(loserSide);
+      title = `${t('trke_deferred_jump_won', 'Jump won')} · ${winnerName}`;
+      detail = `${t('trke_deferred_jump_lost', 'Jump lost')} · ${loserName}`;
     } else if (event.event_type === 'substitution') {
       const group = event.play_group_id
         ? events.filter((item) => item.event_type === 'substitution' && item.play_group_id === event.play_group_id)
@@ -4471,10 +4631,23 @@ export default function CaptureScreen({
             ? withTeam('trke_inbound_flipped', 'Possession changes to {team}.', inboundFlipped)
             : null}
           okLabel={t('trke_notice_ok', 'OK')}
+          cancelLabel={t('trke_cancel', 'Cancel')}
           onNo={() => { void keepProposedInbound(); }}
           onYes={() => { void acceptHeldBall(); }}
           onAck={acknowledgeInboundFlip}
+          onCancel={pauseInbound}
         />
+      ) : inboundPausedPeriod === currentPeriod && proposedSide ? (
+        <button
+          type="button"
+          onClick={() => {
+            setInboundPausedPeriod(null);
+            setShowInbound(true);
+          }}
+          className="fixed bottom-4 left-4 z-40 max-w-xs border-2 border-neutral-900 bg-white px-4 py-3 text-left text-sm font-black text-neutral-900 shadow-lg hover:bg-neutral-100"
+        >
+          {t('trke_held_ball_question', 'Was there a held ball?')}
+        </button>
       ) : null}
 
       {/* Modals */}

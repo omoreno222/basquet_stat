@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 type Translate = (key: string, fallback: string) => string;
 
-const ASSIST_TICK_MS = 600;
+const ASSIST_TICK_MS = 150;
 
 function Tick() {
   return (

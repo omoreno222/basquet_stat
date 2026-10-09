@@ -15,6 +15,8 @@ export interface JumpBallPlayer {
 export interface JumpBallResult {
   winner: JumpBallWinner;
   label: string;
+  homePlayerId: string;
+  awayPlayerId: string;
 }
 
 type Translate = (key: string, fallback: string) => string;
@@ -101,8 +103,15 @@ export function JumpBallPopup({
     setClosing(true);
     const player = side === 'home' ? homeJumper : awayJumper;
     const team = side === 'home' ? homeName : awayName;
+    const homePlayerId = homeJumper.id;
+    const awayPlayerId = awayJumper.id;
     closeTimer.current = window.setTimeout(() => {
-      onConfirm({ winner: side, label: jumperLabel(player, team) });
+      onConfirm({
+        winner: side,
+        label: jumperLabel(player, team),
+        homePlayerId,
+        awayPlayerId,
+      });
     }, JUMP_WIN_CLOSE_MS);
   }
 

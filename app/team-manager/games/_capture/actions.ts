@@ -39,8 +39,9 @@ import {
   type TimeoutPlayInput,
   type TurnoverReason,
 } from '@/lib/capture/plays';
-import { freeThrowNeedsRebound, shotFoulLeavesBallWithOffense } from '@/lib/capture/free-throws';
+import { freeThrowNeedsRebound } from '@/lib/capture/free-throws';
 import { missNextPossession, missStopsClock, reboundIsOffensive } from '@/lib/capture/miss';
+import { foulNextPossession, madeNextPossession } from '@/lib/capture/next-possession';
 import { arrowSide } from '@/lib/capture/period-inbound';
 import { captureHappenedBefore, onCourtAfterSubs, onCourtBefore, playerEliminatedBefore } from '@/lib/capture/substitutions';
 import { scoreFromEvents } from '@/lib/capture/score';
@@ -307,27 +308,17 @@ async function commitFoul(
 
   const teamScore = (game.team_score ?? 0) + homePoints;
   const opponentScore = (game.opponent_score ?? 0) + awayPoints;
-  const lastThrow = play.throws[play.throws.length - 1];
-  let nextPossession: CaptureSide | null = possession;
-  let possessionChanged = false;
-  if (play.kind === 'technical' || play.kind === 'double') {
-    nextPossession = possession;
-  } else if (play.context === 'offensive' || play.kind !== 'personal') {
-    nextPossession = otherSide;
-    possessionChanged = true;
-  } else if (play.context === 'no_shot' && play.throws.length === 0) {
-    nextPossession = otherSide;
-    possessionChanged = true;
-  } else if (lastThrow === 'made') {
-    nextPossession = play.side;
-    possessionChanged = true;
-  } else if (liveRebound && reboundSide) {
-    nextPossession = reboundSide;
-    possessionChanged = true;
-  } else {
-    nextPossession = null;
-    possessionChanged = true;
-  }
+  const decided = foulNextPossession({
+    possession,
+    side: play.side,
+    kind: play.kind,
+    context: play.context,
+    throws: play.throws,
+    liveRebound,
+    reboundSide,
+  });
+  const nextPossession = decided.possession;
+  const possessionChanged = decided.changed;
 
   const patch: {
     clock_running?: boolean;
@@ -555,15 +546,14 @@ async function commitMade(
 
   const teamScore = (game.team_score ?? 0) + homePoints;
   const opponentScore = (game.opponent_score ?? 0) + awayPoints;
-  const lastThrow = play.throws[play.throws.length - 1];
-  const offenseKeeps = !!play.foulKind && shotFoulLeavesBallWithOffense(play.foulKind);
-  const nextPossession: CaptureSide | null = offenseKeeps
-    ? play.side
-    : liveRebound && reboundSide
-      ? reboundSide
-      : play.foulerId && lastThrow !== 'made'
-        ? null
-        : otherSide;
+  const nextPossession = madeNextPossession({
+    side: play.side,
+    foulKind: play.foulKind,
+    foulerId: play.foulerId,
+    throws: play.throws,
+    liveRebound,
+    reboundSide,
+  });
   const patch: {
     team_score: number;
     opponent_score: number;
