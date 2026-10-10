@@ -196,6 +196,42 @@ function jerseyFill(color: string | undefined): CSSProperties | undefined {
   return { backgroundColor: color, color: inkOn(color) };
 }
 
+/** Drawn vertical grain, one piece filling the empty seat. */
+const BENCH_WOOD_TILE = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="76" viewBox="0 0 64 76">
+    <rect width="64" height="76" fill="#e8c39e"/>
+    <g fill="none" stroke-linecap="round">
+      <path d="M2-2c1.2 16-1.4 32 1 48s-.8 18 .6 32" stroke="#c4895a" stroke-width="1.1"/>
+      <path d="M5.5-2c1.6 14-.8 28 1.8 44s-1.2 20 .4 36" stroke="#a86b45" stroke-width="1.8"/>
+      <path d="M9-2c-.6 18 1.8 30-.4 48s1 18-.2 32" stroke="#b97a4e" stroke-width="1"/>
+      <path d="M12.5-2c1.4 12-1 26 1.6 42s-.6 20 1 36" stroke="#8f5a34" stroke-width="1.6"/>
+      <path d="M16-2c.8 16-1.6 28 1.2 46s-1 18 .4 34" stroke="#c4895a" stroke-width="1.15"/>
+      <path d="M19.5-2c1.2 18-.4 32 1.4 48s-.8 16 .2 32" stroke="#a86b45" stroke-width="2"/>
+      <path d="M23-2c-.8 14 1.6 30-.6 46s1.2 18-.2 34" stroke="#b97a4e" stroke-width="1.05"/>
+      <path d="M26.5-2c1.5 16-1.2 28 1.2 44s-1 20 .6 36" stroke="#a86b45" stroke-width="1.45"/>
+      <path d="M30-2c.4 18-1.6 32 .8 48s-.4 16 .2 32" stroke="#c4895a" stroke-width="1"/>
+      <path d="M33.2-2c1.4 14-.6 26 1.6 42s-1.2 20 .4 36" stroke="#8f5a34" stroke-width="1.7"/>
+      <path d="M37-2c-.6 16 1.8 30-.8 46s1 18-.2 34" stroke="#a86b45" stroke-width="1.2"/>
+      <path d="M40.5-2c1.2 18-.8 32 1.4 48s-.6 16 .4 32" stroke="#c4895a" stroke-width="1.9"/>
+      <path d="M44-2c.6 14-1.4 28 .8 44s-1 20 .2 36" stroke="#b97a4e" stroke-width="1.05"/>
+      <path d="M47.5-2c1.4 16-.4 30 1.2 46s-.8 18 .2 34" stroke="#a86b45" stroke-width="1.55"/>
+      <path d="M51-2c-.8 18 1.6 32-.6 48s1 16-.2 32" stroke="#8f5a34" stroke-width="1.15"/>
+      <path d="M54.5-2c1 14-.6 26 1.4 42s-.8 20 .4 36" stroke="#c4895a" stroke-width="1.7"/>
+      <path d="M58-2c.6 16-1.2 30 .8 46s-.4 18 .2 34" stroke="#a86b45" stroke-width="1.1"/>
+      <path d="M61.5-2c1.2 18-.6 32 .6 48s-.4 16 .2 32" stroke="#b97a4e" stroke-width="1.35"/>
+      <path d="M21 24c1.6 3.2 1.6 8 0 11.2-1.6-3.2-1.6-8 0-11.2" stroke="#a86b45" stroke-width="1.15"/>
+      <path d="M45 40c1.3 2.6 1.3 6.4 0 9-1.3-2.6-1.3-6.4 0-9" stroke="#8f5a34" stroke-width="1"/>
+    </g>
+  </svg>`,
+)}`;
+
+const BENCH_WOOD: CSSProperties = {
+  backgroundColor: '#e8c39e',
+  backgroundImage: `url("${BENCH_WOOD_TILE}")`,
+  backgroundSize: '100% 100%',
+  backgroundRepeat: 'no-repeat',
+};
+
 function chipBox(compact: boolean, wide: boolean, fit: boolean) {
   if (fit) return 'h-full w-full';
   const height = wide
@@ -243,7 +279,8 @@ function JerseyChip({
       <div
         title={player.name}
         aria-label={player.name}
-        className={`${box} overflow-hidden rounded-md border-2 border-black bg-transparent`}
+        className={`${box} overflow-hidden rounded-md border-2 border-black`}
+        style={BENCH_WOOD}
       />
     );
   }
@@ -589,6 +626,7 @@ function HintBar({
   onCancelDelete,
   quintetoLabel,
   onQuinteto,
+  onFlipCourt,
   onBack,
   onEditGame,
   editLabel,
@@ -607,6 +645,7 @@ function HintBar({
   onCancelDelete?: () => void;
   quintetoLabel?: string;
   onQuinteto?: () => void;
+  onFlipCourt?: () => void;
   onBack?: () => void;
   onEditGame?: () => void;
   editLabel?: string;
@@ -652,6 +691,7 @@ function HintBar({
           </p>
         ) : null}
       </div>
+      {onFlipCourt ? <FlipCourtButton onFlipCourt={onFlipCourt} /> : null}
       {onCloseGame ? (
         <button
           type="button"
@@ -842,7 +882,7 @@ function ActionColumn({
         disabled={!isEnabled}
         aria-label={bolt ? (id === 'miss_personal' ? missPersonalLabel : personalLabel) : label}
         onClick={() => onAction(side, id)}
-        className={`flex min-h-0 flex-1 items-center justify-center gap-1 rounded-lg px-1 text-center font-black leading-tight tracking-wide ${compact ? 'text-[10px]' : 'text-sm'} ${possessionLocked || live ? '' : LABEL_SHADOW} ${
+        className={`flex min-h-0 flex-1 items-center justify-center gap-1 rounded-lg px-1 text-center font-black leading-tight tracking-wide ${compact ? 'text-[10px]' : 'text-sm'} ${possessionLocked || live ? '' : LABEL_SHADOW} ${isEnabled ? 'animate-pulse' : ''} ${
           live
             ? 'bg-blue-700 text-white shadow-md hover:bg-blue-800'
             : isActive
@@ -884,7 +924,7 @@ function ActionColumn({
             type="button"
             disabled={!isEnabled}
             onClick={() => onAction(side, action.id)}
-            className={`flex min-h-0 flex-1 items-center justify-center rounded-lg px-1 text-center font-black leading-tight tracking-wide ${compact ? 'text-[10px]' : 'text-sm'} ${direction === 'row' ? 'min-w-0' : 'w-full'} ${possessionLocked || live ? '' : LABEL_SHADOW} ${
+            className={`flex min-h-0 flex-1 items-center justify-center rounded-lg px-1 text-center font-black leading-tight tracking-wide ${compact ? 'text-[10px]' : 'text-sm'} ${direction === 'row' ? 'min-w-0' : 'w-full'} ${possessionLocked || live ? '' : LABEL_SHADOW} ${followsPossession && isEnabled ? 'animate-pulse' : ''} ${
               live
                 ? 'bg-blue-700 text-white shadow-md hover:bg-blue-800'
                 : isActive
@@ -964,7 +1004,6 @@ function TeamNamePlate({
   active,
   canSet,
   onSelect,
-  onFlipCourt,
   onShotClock,
   onEightSeconds,
   onFiveSeconds,
@@ -982,7 +1021,6 @@ function TeamNamePlate({
   active: boolean;
   canSet: boolean;
   onSelect: () => void;
-  onFlipCourt?: () => void;
   onShotClock: (side: 'home' | 'away') => void;
   onEightSeconds: (side: 'home' | 'away') => void;
   onFiveSeconds: (side: 'home' | 'away') => void;
@@ -1031,11 +1069,6 @@ function TeamNamePlate({
       {align === 'start' ? <PossessionDot active={active} /> : null}
       <div className={`relative z-10 flex min-w-0 flex-1 flex-col justify-center gap-1 px-2 py-1 ${towardScore ? 'items-end' : 'items-start'}`}>
         <div className="flex w-full min-w-0 items-center gap-2">
-          {onFlipCourt ? (
-            <span onClick={(event) => event.stopPropagation()}>
-              <FlipCourtButton onFlipCourt={onFlipCourt} />
-            </span>
-          ) : null}
           <span className={`flex min-w-0 flex-1 items-center gap-3 ${towardScore ? 'justify-end' : 'justify-start'}`}>
             {logoUrl ? <TeamLogo url={logoUrl} /> : null}
             <span
@@ -1127,7 +1160,7 @@ function ClockReadout({
   const rightUnit = face.lastMinute ? 'tenth' : 'second';
 
   return (
-    <div className={`flex w-full items-center justify-center gap-1 text-white ${scoreboardTone(face.running)} ${dense ? 'mt-0.5 px-1.5 py-0.5' : 'mt-1 px-2 py-0.5 shadow-sm'}`}>
+    <div className={`flex w-full items-center justify-center gap-1 text-white ${scoreboardTone(face.running)} ${face.running ? 'animate-pulse' : ''} ${dense ? 'mt-0.5 px-1.5 py-0.5' : 'mt-1 px-2 py-0.5 shadow-sm'}`}>
       <ClockStepper
         value={face.left}
         label={leftUnit}
@@ -1663,6 +1696,7 @@ export function CaptureBoard({
             onCancelDelete={onCancelDelete}
             quintetoLabel={quintetoLabel}
             onQuinteto={onQuinteto}
+            onFlipCourt={onFlipCourt}
             onBack={onBack}
             onEditGame={onEditGame}
             editLabel={editLabel}
@@ -1806,11 +1840,6 @@ export function CaptureBoard({
       {portrait ? (
         <>
           <div className="flex shrink-0 items-stretch gap-1 px-1 pt-1">
-            {onFlipCourt ? (
-              <div className="flex shrink-0 items-center gap-1 self-center">
-                <FlipCourtButton onFlipCourt={onFlipCourt} />
-              </div>
-            ) : null}
             <button
               type="button"
               title={homeName}
@@ -1930,7 +1959,6 @@ export function CaptureBoard({
           active={possession === 'home'}
           canSet={canSetPossession}
           onSelect={() => onSetPossession('home')}
-          onFlipCourt={onFlipCourt}
           onShotClock={onShotClock}
           onEightSeconds={onEightSeconds}
           onFiveSeconds={onFiveSeconds}

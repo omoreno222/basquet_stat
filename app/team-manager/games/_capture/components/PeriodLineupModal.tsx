@@ -148,6 +148,11 @@ export function PeriodLineupModal({
   }
 
   async function save() {
+    const short = (count: number, required: number) => count > 0 && count < required;
+    if (short(homeIds.length, homeRequired) || short(awayIds.length, awayRequired)) {
+      setError(t('trke_period_lineup_must_five', 'With 5 or more players available, the team cannot take the court with fewer than 5.'));
+      return;
+    }
     setSaving(true);
     const message = await onSave(homeIds, awayIds);
     setSaving(false);
@@ -167,7 +172,7 @@ export function PeriodLineupModal({
             {periodLabel} · {t('trke_period_lineup_title', 'Who starts this period')}
           </h2>
           <p className="mt-1 text-center text-[11px] font-medium text-neutral-500">
-            {t('trke_period_lineup_hint', 'You can save fewer than five. The period starts only when both teams have enough players on the court.')}
+            {t('trke_period_lineup_hint', 'With 5 or more players available, the team must take the court with 5.')}
           </p>
           <p className="mt-1 text-center text-[11px] font-bold text-neutral-700">
             {t('trke_period_lineup_need', 'Players needed to start')}: {homeName} {homeRequired} · {awayName} {awayRequired}

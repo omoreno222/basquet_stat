@@ -15,6 +15,7 @@ import {
   type TeamEval,
 } from '@/lib/stats/sampaio-eval';
 import { formatPossessionTime, possessionTime } from '@/lib/stats/possession-time';
+import { periodPartials } from '@/lib/stats/period-partials';
 import { eventChart } from '@/lib/stats/event-chart';
 import { shotChart } from '@/lib/stats/shot-chart';
 import {
@@ -57,6 +58,7 @@ const COPY = {
   trke_eval_updated: 'Updated at {time}',
   trke_eval_reload_button: 'Reload',
   trke_eval_quarter: 'Quarter',
+  trke_eval_partials: 'Partials',
   trke_eval_in_play: 'In play',
   trke_eval_stopped: 'Stopped',
   trke_eval_timeout_short: 'TO',
@@ -88,6 +90,7 @@ const COPY_LOCALE: Record<string, Partial<Record<CopyKey, string>>> = {
     trke_eval_updated: 'Actualizado a las {time}',
     trke_eval_reload_button: 'Recargar',
     trke_eval_quarter: 'Cuarto',
+    trke_eval_partials: 'Parciales',
     trke_eval_in_play: 'En juego',
     trke_eval_stopped: 'Parado',
     trke_eval_timeout_short: 'T.M.',
@@ -117,6 +120,7 @@ const COPY_LOCALE: Record<string, Partial<Record<CopyKey, string>>> = {
     trke_eval_updated: 'Actualitzat a les {time}',
     trke_eval_reload_button: 'Recarregar',
     trke_eval_quarter: 'Quart',
+    trke_eval_partials: 'Parcials',
     trke_eval_in_play: 'En joc',
     trke_eval_stopped: 'Aturat',
     trke_eval_timeout_short: 'T.M.',
@@ -564,6 +568,8 @@ export default async function GameEvalPage({
           homeTimeouts={sideTimeouts('home')}
           awayTimeouts={sideTimeouts('away')}
           quarterLabel={headers.trke_eval_quarter}
+          partials={periodPartials(events, period)}
+          partialsLabel={headers.trke_eval_partials}
           inPlayLabel={headers.trke_eval_in_play}
           stoppedLabel={headers.trke_eval_stopped}
           overtimeLabel={headers.trke_eval_overtime}

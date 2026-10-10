@@ -358,6 +358,8 @@ const turnoverPlaySchema = z.object({
   coordY: z.number().finite().min(0).max(1),
   reason: z.enum(turnoverReasons),
   offenderId: z.string().uuid(),
+  /** Live-ball turnover: the clock was running at the whistle and should keep going. */
+  resumeClock: z.boolean().optional(),
 });
 
 const shotClockPlaySchema = z.object({

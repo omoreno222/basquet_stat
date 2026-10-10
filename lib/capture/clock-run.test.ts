@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clockFace, displayedRemaining, formatGameClock, liveRemaining, sameClockFace, scoreboardClock } from './clock-run';
+import { clockFace, displayedRemaining, formatGameClock, liveRemaining, remainingAfterPause, sameClockFace, scoreboardClock } from './clock-run';
 
 describe('liveRemaining', () => {
   it('keeps a stopped clock on the frozen time', () => {
@@ -13,6 +13,24 @@ describe('liveRemaining', () => {
 
   it('does not go below zero', () => {
     expect(liveRemaining(true, 100, 500, 900)).toBe(0);
+  });
+});
+
+describe('remainingAfterPause', () => {
+  it('subtracts the wall time spent choosing a live-ball turnover', () => {
+    expect(remainingAfterPause(300_000, 1_000, 6_000)).toBe(295_000);
+  });
+
+  it('keeps the frozen reading when no wall time has passed', () => {
+    expect(remainingAfterPause(300_000, 5_000, 5_000)).toBe(300_000);
+  });
+
+  it('stops at zero when the pause crosses the end of the period', () => {
+    expect(remainingAfterPause(3_000, 1_000, 9_000)).toBe(0);
+  });
+
+  it('does not add time when the clock jumps backward', () => {
+    expect(remainingAfterPause(300_000, 5_000, 4_000)).toBe(300_000);
   });
 });
 

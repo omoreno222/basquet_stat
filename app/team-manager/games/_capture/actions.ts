@@ -1196,8 +1196,12 @@ export async function commitCapturePlay(
     const patch: { possession: CaptureSide; clock_running?: boolean; clock_remaining_ms?: number } = {
       possession: otherSide,
     };
+    const resumeLiveClock = play.play === 'turnover' && play.resumeClock === true && !stopsClock;
     if (stopsClock) {
       patch.clock_running = false;
+      patch.clock_remaining_ms = play.clockRemainingMs;
+    } else if (resumeLiveClock) {
+      patch.clock_running = true;
       patch.clock_remaining_ms = play.clockRemainingMs;
     }
 

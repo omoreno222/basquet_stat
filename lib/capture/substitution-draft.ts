@@ -8,6 +8,8 @@ export interface SubstitutionSwap {
 export interface SubstitutionDraft {
   /** Replacements already paired. The bench player is not on court until this exists. */
   swaps: SubstitutionSwap[];
+  /** Bench players added to complete a short court. They do not replace anyone. */
+  entries: string[];
   /** Players who have left and still need a replacement, including a foul-out. */
   waitingOutIds: string[];
   /** Bench player chosen first. They stay on the bench until someone on court is tapped. */
@@ -18,6 +20,7 @@ export function createSubstitutionDraft(initialCourt: string[], forcedOutId: str
   const parked = forcedOutId && initialCourt.includes(forcedOutId) ? forcedOutId : null;
   return {
     swaps: [],
+    entries: [],
     waitingOutIds: parked ? [parked] : [],
     pendingInId: null,
   };
@@ -28,14 +31,21 @@ export function draftCourtIds(initialCourt: string[], draft: SubstitutionDraft):
   return [
     ...initialCourt.filter((id) => !gone.has(id)),
     ...draft.swaps.map((swap) => swap.inId),
+    ...draft.entries,
   ];
 }
 
-export function substitutionReady(draft: SubstitutionDraft, saving: boolean): boolean {
+export function substitutionReady(
+  draft: SubstitutionDraft,
+  saving: boolean,
+  courtSize = COURT_MAX,
+  minimumOnCourt = 0,
+): boolean {
   return !saving
     && draft.pendingInId == null
     && draft.waitingOutIds.length === 0
-    && draft.swaps.length > 0;
+    && (draft.swaps.length > 0 || draft.entries.length > 0)
+    && courtSize >= minimumOnCourt;
 }
 
 export type SubstitutionTap =
@@ -46,6 +56,7 @@ export function applySubstitutionTap(
   initialCourt: string[],
   draft: SubstitutionDraft,
   tap: SubstitutionTap,
+  fillVacancies = false,
 ): { draft: SubstitutionDraft; full: boolean } {
   const court = draftCourtIds(initialCourt, draft);
 
@@ -57,7 +68,18 @@ export function applySubstitutionTap(
       return {
         draft: {
           swaps: draft.swaps.filter((_, index) => index !== entered),
+          entries: draft.entries,
           waitingOutIds: [...draft.waitingOutIds, swap.outId],
+          pendingInId: null,
+        },
+        full: false,
+      };
+    }
+    if (draft.entries.includes(tap.playerId)) {
+      return {
+        draft: {
+          ...draft,
+          entries: draft.entries.filter((id) => id !== tap.playerId),
           pendingInId: null,
         },
         full: false,
@@ -66,10 +88,14 @@ export function applySubstitutionTap(
     if (!initialCourt.includes(tap.playerId) || draft.waitingOutIds.includes(tap.playerId)) {
       return { draft, full: false };
     }
+    if (fillVacancies && court.length < COURT_MAX && !draft.pendingInId) {
+      return { draft, full: false };
+    }
     if (draft.pendingInId) {
       return {
         draft: {
           swaps: [...draft.swaps, { outId: tap.playerId, inId: draft.pendingInId }],
+          entries: draft.entries,
           waitingOutIds: draft.waitingOutIds,
           pendingInId: null,
         },
@@ -93,6 +119,7 @@ export function applySubstitutionTap(
     return {
       draft: {
         swaps: draft.swaps.filter((_, index) => index !== asOut),
+        entries: draft.entries,
         waitingOutIds: draft.waitingOutIds,
         pendingInId: null,
       },
@@ -116,7 +143,19 @@ export function applySubstitutionTap(
     return {
       draft: {
         swaps: [...draft.swaps, { outId, inId: tap.playerId }],
+        entries: draft.entries,
         waitingOutIds: rest,
+        pendingInId: null,
+      },
+      full: false,
+    };
+  }
+
+  if (fillVacancies && court.length < COURT_MAX) {
+    return {
+      draft: {
+        ...draft,
+        entries: [...draft.entries, tap.playerId],
         pendingInId: null,
       },
       full: false,

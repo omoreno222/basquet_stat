@@ -24,6 +24,55 @@ export function periodFace(period: number, overtimeLabel: string): string {
   return `${overtimeLabel}${period - 4}`;
 }
 
+export interface PeriodPartial {
+  period: number;
+  home: number;
+  away: number;
+}
+
+function QuarterMark({
+  period,
+  quarterLabel,
+  overtimeLabel,
+  partials,
+  partialsLabel,
+}: {
+  period: number;
+  quarterLabel: string;
+  overtimeLabel: string;
+  partials: PeriodPartial[];
+  partialsLabel: string;
+}) {
+  return (
+    <div className="flex w-full min-w-0">
+      {partials.length > 0 ? (
+        <ol aria-label={partialsLabel} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1">
+          {partials.map((row) => {
+            const face = periodFace(row.period, overtimeLabel);
+            const live = row.period === period;
+            return (
+              <li
+                key={row.period}
+                title={`${quarterLabel} ${face}: ${row.home}–${row.away}`}
+                className="flex items-center gap-1.5 whitespace-nowrap leading-none"
+              >
+                <span className={`inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-1.5 text-base font-black tabular-nums sm:h-9 sm:min-w-9 sm:text-lg ${live ? 'bg-amber-400 text-slate-950' : 'bg-white/15 text-white'}`}>
+                  {face}
+                </span>
+                <span className={`text-xs font-semibold tabular-nums sm:text-sm ${live ? 'text-white' : 'text-white/65'}`}>
+                  {row.home}
+                  <span className="px-0.5 text-white/35">–</span>
+                  {row.away}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+    </div>
+  );
+}
+
 function PlayerFace({
   player,
   size,
@@ -127,10 +176,10 @@ function LineMark({
   const end = align === 'end';
   return (
     <div className={`flex min-w-0 flex-col ${end ? 'items-end' : 'items-start'}`}>
-      <span className="text-[9px] font-bold uppercase tracking-wide text-white/45">{label}</span>
-      <span className="whitespace-nowrap text-[10px] font-semibold tabular-nums leading-tight text-white">{value}</span>
+      <span className="text-[10px] font-bold uppercase tracking-wide text-white/45">{label}</span>
+      <span className="whitespace-nowrap text-base font-black tabular-nums leading-tight text-white min-[380px]:text-lg sm:text-xl">{value}</span>
       {detail ? (
-        <span className="whitespace-nowrap text-[10px] font-semibold tabular-nums leading-tight text-white/60">{detail}</span>
+        <span className="whitespace-nowrap text-sm font-bold tabular-nums leading-tight text-white/70 min-[380px]:text-base sm:text-lg">{detail}</span>
       ) : null}
     </div>
   );
@@ -157,8 +206,8 @@ function TeamLine({
     [labels.fr, line.foulsReceived],
   ] as const;
   return (
-    <div className={`mt-1.5 flex w-[10.5rem] max-w-full flex-col gap-1.5 ${align === 'end' ? 'items-end' : 'items-start'}`}>
-      <div className="grid w-full grid-cols-3 gap-x-1.5">
+    <div className={`mt-1.5 flex w-full max-w-full flex-col gap-2 ${align === 'end' ? 'items-end' : 'items-start'}`}>
+      <div className="grid w-full grid-cols-3 gap-x-1">
         {shots.map(([label, text]) => {
           const face = shotFace(text);
           return <LineMark key={label} label={label} value={face.value} detail={face.detail} align={align} />;
@@ -190,7 +239,7 @@ function OnCourt({
 }) {
   const end = align === 'end';
   return (
-    <div className={`flex min-w-0 flex-col gap-1 ${end ? 'items-end' : 'items-start'}`}>
+    <div className={`flex w-full min-w-0 max-w-full flex-col gap-1 lg:w-[15.5rem] lg:max-w-[15.5rem] lg:shrink-0 ${end ? 'items-end' : 'items-start'}`}>
       <p className="text-[10px] font-bold uppercase tracking-wide text-white/55">{label}</p>
       {players.length === 0 ? null : (
     <ul className={`flex flex-wrap items-end gap-1 ${end ? 'justify-end' : ''}`}>
@@ -233,7 +282,7 @@ function TeamSide({
     <div className={`min-w-0 ${end ? 'text-right' : 'text-left'}`}>
       <p className={`min-w-0 truncate text-xs font-bold uppercase tracking-wide text-white/70 sm:text-sm ${end ? 'text-right' : 'text-left'}`}>{name}</p>
       <div className={`mt-1 flex items-center gap-2 ${end ? 'flex-row-reverse' : ''}`}>
-        <p className="text-4xl font-black tabular-nums leading-none sm:text-5xl">{score}</p>
+        <p className="text-3xl font-black tabular-nums leading-none min-[420px]:text-4xl sm:text-5xl">{score}</p>
         <span className={`text-2xl leading-none ${hasBall ? '' : 'invisible'}`} aria-hidden="true">
           🏀
         </span>
@@ -272,6 +321,8 @@ export function EvalScoreboard({
   homeTimeouts,
   awayTimeouts,
   quarterLabel,
+  partials,
+  partialsLabel,
   inPlayLabel,
   stoppedLabel,
   overtimeLabel,
@@ -303,6 +354,8 @@ export function EvalScoreboard({
   homeTimeouts: ScoreboardTimeout[];
   awayTimeouts: ScoreboardTimeout[];
   quarterLabel: string;
+  partials: PeriodPartial[];
+  partialsLabel: string;
   inPlayLabel: string;
   stoppedLabel: string;
   overtimeLabel: string;
@@ -324,14 +377,14 @@ export function EvalScoreboard({
     />
   );
   const betweenScores = () => (
-    <div className="flex w-[7.25rem] flex-col items-center self-start pt-6 text-center sm:w-[8.75rem] sm:pt-8">
-      <p className="font-mono text-3xl font-semibold tabular-nums leading-none sm:text-4xl">{clock()}</p>
-      <p className={`mt-1 flex items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wide sm:text-xs ${clockRunning ? 'text-emerald-400' : 'text-white/45'}`}>
-        <span className={`h-2 w-2 rounded-full ${clockRunning ? 'animate-pulse bg-emerald-400' : 'bg-white/30'}`} />
+    <div className="flex w-[6.5rem] max-w-full flex-col items-center self-start pt-5 text-center min-[420px]:w-[7.25rem] min-[420px]:pt-6 sm:w-[8.75rem] sm:pt-8">
+      <p className="font-mono text-2xl font-semibold tabular-nums leading-none min-[420px]:text-3xl sm:text-4xl">{clock()}</p>
+      <p className={`mt-1 flex max-w-full flex-wrap items-center justify-center gap-1.5 text-center text-[10px] font-bold uppercase leading-tight tracking-wide sm:text-xs ${clockRunning ? 'text-emerald-400' : 'text-white/45'}`}>
+        <span className={`h-2 w-2 shrink-0 rounded-full ${clockRunning ? 'animate-pulse bg-emerald-400' : 'bg-white/30'}`} />
         {status}
       </p>
-      <p className="mt-3 text-[10px] font-bold uppercase leading-tight tracking-wide text-white/50">{possessionTimeLabel}</p>
-      <p className="mt-1 flex items-baseline justify-center gap-1.5 font-mono text-sm font-semibold tabular-nums leading-none sm:gap-2 sm:text-base">
+      <p className="mt-3 max-w-full text-[10px] font-bold uppercase leading-tight tracking-wide text-white/50">{possessionTimeLabel}</p>
+      <p className="mt-1 flex max-w-full flex-wrap items-baseline justify-center gap-x-1.5 font-mono text-xs font-semibold tabular-nums leading-tight sm:text-base">
         <span>{homeHeld}</span>
         <span className="text-white/30">·</span>
         <span>{awayHeld}</span>
@@ -341,10 +394,13 @@ export function EvalScoreboard({
   return (
     <section className="overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg ring-1 ring-white/10">
       <div className="flex flex-col gap-4 px-3 py-4 lg:hidden">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300">{quarterLabel}</p>
-          <p className="text-3xl font-black tabular-nums leading-none">{periodFace(period, overtimeLabel)}</p>
-        </div>
+        <QuarterMark
+          period={period}
+          quarterLabel={quarterLabel}
+          overtimeLabel={overtimeLabel}
+          partials={partials}
+          partialsLabel={partialsLabel}
+        />
         <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2">
           <TeamSide
             name={homeName}
@@ -374,41 +430,44 @@ export function EvalScoreboard({
         </div>
         {children}
       </div>
-      <div className="hidden grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 px-3 py-4 sm:gap-4 sm:px-5 lg:grid">
-        <div className="flex min-w-0 items-start gap-3 sm:gap-5">
-          <div className="flex flex-col items-start gap-3">
+      <div className="hidden flex-col gap-4 px-3 py-4 sm:px-5 lg:flex">
+        <QuarterMark
+          period={period}
+          quarterLabel={quarterLabel}
+          overtimeLabel={overtimeLabel}
+          partials={partials}
+          partialsLabel={partialsLabel}
+        />
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 sm:gap-4">
+          <div className="flex min-w-0 items-start gap-3 sm:gap-5">
             <OnCourt players={homeOnCourt} label={playersLabel} line={homeLine} lineLabels={lineLabels} />
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-300">{quarterLabel}</p>
-              <p className="text-3xl font-black tabular-nums leading-none">{periodFace(period, overtimeLabel)}</p>
-            </div>
+            <TeamSide
+              name={homeName}
+              score={homeScore}
+              possessionsLabel={possessionsLabel}
+              possessions={homePossessions}
+              hasBall={possession === 'home'}
+              timeouts={homeTimeouts}
+              timeoutPrefix={timeoutPrefix}
+              align="start"
+            />
           </div>
-          <TeamSide
-            name={homeName}
-            score={homeScore}
-            possessionsLabel={possessionsLabel}
-            possessions={homePossessions}
-            hasBall={possession === 'home'}
-            timeouts={homeTimeouts}
-            timeoutPrefix={timeoutPrefix}
-            align="start"
-          />
-        </div>
-        {betweenScores()}
-        <div className="flex min-w-0 items-start justify-end gap-3 sm:gap-5">
-          <TeamSide
-            name={awayName}
-            score={awayScore}
-            possessionsLabel={possessionsLabel}
-            possessions={awayPossessions}
-            hasBall={possession === 'away'}
-            timeouts={awayTimeouts}
-            timeoutPrefix={timeoutPrefix}
-            align="end"
-          />
-          <div className="flex flex-col items-end self-stretch">
-            <OnCourt players={awayOnCourt} label={playersLabel} placeholder="avatar" align="end" line={awayLine} lineLabels={lineLabels} />
-            <div className="mt-auto">{children}</div>
+          {betweenScores()}
+          <div className="flex min-w-0 items-start justify-end gap-3 sm:gap-5">
+            <TeamSide
+              name={awayName}
+              score={awayScore}
+              possessionsLabel={possessionsLabel}
+              possessions={awayPossessions}
+              hasBall={possession === 'away'}
+              timeouts={awayTimeouts}
+              timeoutPrefix={timeoutPrefix}
+              align="end"
+            />
+            <div className="flex flex-col items-end self-stretch">
+              <OnCourt players={awayOnCourt} label={playersLabel} placeholder="avatar" align="end" line={awayLine} lineLabels={lineLabels} />
+              <div className="mt-auto">{children}</div>
+            </div>
           </div>
         </div>
       </div>

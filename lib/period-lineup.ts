@@ -2,20 +2,21 @@ export const SQUAD_LIMIT = 12;
 export const COURT_LIMIT = 5;
 export const FOUL_OUT = 5;
 
-export function minimumToStart(eliminated: number): number {
-  if (eliminated <= 0) return 5;
-  if (eliminated === 1) return 4;
+/** Players who must be on the court. Five whenever five or more can still play. */
+export function requiredOnCourt(available: number): number {
+  if (available >= COURT_LIMIT) return COURT_LIMIT;
+  if (available >= 4) return 4;
   return 3;
 }
 
 export function canStartPeriod(
   homeOnCourt: number,
   awayOnCourt: number,
-  homeEliminated: number,
-  awayEliminated: number,
+  homeAvailable: number,
+  awayAvailable: number,
 ): boolean {
-  const homeMinimum = minimumToStart(homeEliminated);
-  const awayMinimum = minimumToStart(awayEliminated);
+  const homeMinimum = requiredOnCourt(homeAvailable);
+  const awayMinimum = requiredOnCourt(awayAvailable);
   return homeOnCourt >= homeMinimum
     && homeOnCourt <= COURT_LIMIT
     && awayOnCourt >= awayMinimum

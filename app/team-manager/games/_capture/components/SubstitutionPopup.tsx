@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { LogIn, LogOut } from 'lucide-react';
 import { inkOn } from '@/lib/colors';
 import {
   COURT_MAX,
@@ -27,6 +28,14 @@ export interface SubstitutionSwap {
 
 type Translate = (key: string, fallback: string) => string;
 
+type RowMark = 'in' | 'out';
+
+/** Fixed fills so a green kit does not hide who entered. */
+const MARK_FILL: Record<RowMark, string> = {
+  in: '#15803d',
+  out: '#b91c1c',
+};
+
 interface SubstitutionPopupProps {
   t: Translate;
   teamName: string;
@@ -37,7 +46,7 @@ interface SubstitutionPopupProps {
   addFirstNote?: string | null;
   /** Player already moved to the bench because they fouled out. They cannot return. */
   forcedOutId?: string | null;
-  onConfirm: (swaps: SubstitutionSwap[]) => void;
+  onConfirm: (swaps: SubstitutionSwap[], entries: string[]) => void;
   onClose: () => void;
 }
 
@@ -45,6 +54,8 @@ function PlayerRow({
   player,
   color,
   muted = false,
+  mark = null,
+  markLabel,
   locked = false,
   note,
   selected = false,
@@ -53,20 +64,24 @@ function PlayerRow({
   player: SubstitutionChoice;
   color: string;
   muted?: boolean;
+  mark?: RowMark | null;
+  markLabel?: string;
   locked?: boolean;
   note?: string;
   selected?: boolean;
   onPick: () => void;
 }) {
-  const ink = muted ? '#525252' : inkOn(color);
+  const fill = muted ? '#d4d4d4' : mark ? MARK_FILL[mark] : color;
+  const ink = muted ? '#525252' : inkOn(fill);
+  const MarkIcon = mark === 'in' ? LogIn : LogOut;
   return (
     <button
       type="button"
       disabled={muted || locked}
-      aria-pressed={selected}
+      aria-pressed={selected || !!mark}
       onClick={onPick}
       className={`flex min-h-12 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left shadow-sm disabled:cursor-default ${selected ? 'ring-4 ring-neutral-900 ring-offset-2' : ''}`}
-      style={{ backgroundColor: muted ? '#d4d4d4' : color, color: ink }}
+      style={{ backgroundColor: fill, color: ink }}
     >
       {player.avatarUrl ? (
         <img src={player.avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-md object-cover" />
@@ -81,6 +96,12 @@ function PlayerRow({
         </span>
         {note ? <span className="block truncate text-[11px] font-bold opacity-80">{note}</span> : null}
       </span>
+      {mark && markLabel ? (
+        <span className="flex shrink-0 items-center gap-1 text-[11px] font-black">
+          <MarkIcon className="h-4 w-4" aria-hidden />
+          {markLabel}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -115,6 +136,7 @@ export function SubstitutionPopup({
     const player = byId.get(id);
     return player ? [player] : [];
   });
+  const entered = new Set([...draft.swaps.map((swap) => swap.inId), ...draft.entries]);
   const departed = new Set([...draft.swaps.map((swap) => swap.outId), ...draft.waitingOutIds]);
   const bench = players
     .filter((player) => !courtIds.includes(player.id))
@@ -123,8 +145,12 @@ export function SubstitutionPopup({
       const bLeft = departed.has(b.id) ? 0 : 1;
       return aLeft - bLeft || a.jersey - b.jersey || a.name.localeCompare(b.name);
     });
-  const ready = substitutionReady(draft, saving);
+  const eligible = players.filter((player) => !player.eliminated && player.id !== parkedId).length;
+  const fillVacancies = eligible >= COURT_MAX;
+  const ready = substitutionReady(draft, saving, onCourt.length, fillVacancies ? COURT_MAX : 0);
   const eliminatedLabel = t('trke_period_lineup_eliminated', 'Eliminado');
+  const inLabel = t('trke_in', 'Entra');
+  const outLabel = t('trke_out', 'Sale');
   const benchCanEnter = players.some((player) => !player.onCourt && !player.eliminated);
   const foulOutWaiting = !!parkedId && draft.waitingOutIds.includes(parkedId);
   const foulOutHint = t('trke_sub_hint_foul_out', 'Fuera del partido. Toca quién entra del banquillo.');
@@ -138,20 +164,20 @@ export function SubstitutionPopup({
           ? addFirstNote
           : full
             ? t('trke_sub_hint_full', 'Máximo 5 en pista')
-            : draft.waitingOutIds.length > 0
+            : draft.waitingOutIds.length > 0 || (fillVacancies && onCourt.length < COURT_MAX)
               ? t('trke_sub_hint_in', 'Toca quién entra del banquillo')
               : t('trke_sub_hint_move', 'Toca en pista para bajar al banquillo. Toca en el banquillo para subir.');
 
   function apply(tap: Parameters<typeof applySubstitutionTap>[2]) {
     if (saving) return;
-    const result = applySubstitutionTap(initialCourt, draft, tap);
+    const result = applySubstitutionTap(initialCourt, draft, tap, fillVacancies);
     setDraft(result.draft);
     setFull(result.full);
   }
 
   function confirm() {
     if (!ready) return;
-    onConfirm(draft.swaps);
+    onConfirm(draft.swaps, draft.entries);
   }
 
   return (
@@ -180,6 +206,8 @@ export function SubstitutionPopup({
                   key={player.id}
                   player={player}
                   color={color}
+                  mark={entered.has(player.id) ? 'in' : null}
+                  markLabel={inLabel}
                   locked={saving}
                   onPick={() => apply({ kind: 'court', playerId: player.id })}
                 />
@@ -199,6 +227,8 @@ export function SubstitutionPopup({
                     player={player}
                     color={color}
                     muted={fouledOut}
+                    mark={!fouledOut && departed.has(player.id) ? 'out' : null}
+                    markLabel={outLabel}
                     locked={saving && !fouledOut}
                     selected={draft.pendingInId === player.id}
                     note={fouledOut ? eliminatedLabel : undefined}

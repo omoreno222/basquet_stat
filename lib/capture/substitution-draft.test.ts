@@ -61,19 +61,39 @@ describe('substitution draft', () => {
     expect(blocked.draft).toEqual(filled.draft);
   });
 
-  it('lets a short lineup bring someone in only by replacing a player, not by adding an extra', () => {
+  it('adds a bench player when five or more can still play, and does not stay at four', () => {
+    const four = ['a', 'b', 'c', 'd'];
+    const start = createSubstitutionDraft(four, null);
+    const removed = applySubstitutionTap(four, start, { kind: 'court', playerId: 'a' }, true);
+    expect(draftCourtIds(four, removed.draft)).toEqual(four);
+    expect(substitutionReady(removed.draft, false, 4, 5)).toBe(false);
+
+    const added = applySubstitutionTap(four, start, {
+      kind: 'bench', playerId: 'f', eliminated: false, forcedOut: false,
+    }, true);
+    expect(draftCourtIds(four, added.draft)).toEqual(['a', 'b', 'c', 'd', 'f']);
+    expect(added.draft.entries).toEqual(['f']);
+    expect(added.draft.swaps).toEqual([]);
+    expect(substitutionReady(added.draft, false, 5, 5)).toBe(true);
+
+    const undone = applySubstitutionTap(four, added.draft, { kind: 'court', playerId: 'f' }, true);
+    expect(draftCourtIds(four, undone.draft)).toEqual(four);
+    expect(substitutionReady(undone.draft, false, 4, 5)).toBe(false);
+  });
+
+  it('lets a team that cannot field five replace a player without adding one', () => {
     const four = ['a', 'b', 'c', 'd'];
     const start = createSubstitutionDraft(four, null);
     const selected = applySubstitutionTap(four, start, {
       kind: 'bench', playerId: 'f', eliminated: false, forcedOut: false,
     });
     expect(draftCourtIds(four, selected.draft)).toEqual(four);
-    expect(substitutionReady(selected.draft, false)).toBe(false);
+    expect(substitutionReady(selected.draft, false, 4, 0)).toBe(false);
 
     const swapped = applySubstitutionTap(four, selected.draft, { kind: 'court', playerId: 'a' });
     expect(draftCourtIds(four, swapped.draft)).toEqual(['b', 'c', 'd', 'f']);
     expect(swapped.draft.swaps).toEqual([{ outId: 'a', inId: 'f' }]);
-    expect(substitutionReady(swapped.draft, false)).toBe(true);
+    expect(substitutionReady(swapped.draft, false, 4, 0)).toBe(true);
   });
 
   it('undoes a player who just left and a player who just entered', () => {

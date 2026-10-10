@@ -81,12 +81,12 @@ import {
 import { DEFAULT_OPPONENT_COLOR, normalizeHexColor } from '@/lib/colors';
 import { gameSquadSchema, incorporatePlayerSchema, openingTipWinnerSchema, opponentBenchAddSchema, opponentRosterSchema, periodLineupSchema, schemaError } from '@/lib/form-schemas';
 import { userCanEditGame, userManagesClub } from '@/lib/live-access';
-import { canStartPeriod, isEliminated, minimumToStart } from '@/lib/period-lineup';
+import { canStartPeriod, isEliminated, requiredOnCourt } from '@/lib/period-lineup';
 import { boardFlowFallback, boardFlowKey, formatBoardNote, nextBoardFlow, type BoardFlow } from '@/lib/capture/board-note';
 import { readCourtOrientation } from '@/lib/capture/court-orientation';
 import { nextClockFromRemote } from '@/lib/capture/clock-sync';
 import { acceptGameUpdate } from '@/lib/capture/realtime-game';
-import { clockFace, displayedRemaining, liveRemaining, sameClockFace, type ClockFace } from '@/lib/capture/clock-run';
+import { clockFace, displayedRemaining, liveRemaining, remainingAfterPause, sameClockFace, type ClockFace } from '@/lib/capture/clock-run';
 import { periodInbound } from '@/lib/capture/period-inbound';
 import { onCourtAfterSubs, onCourtBefore, playerEliminatedBefore } from '@/lib/capture/substitutions';
 import { countTimeouts, periodOutcome, timeoutWindow } from '@/lib/capture/timeouts';
@@ -437,6 +437,9 @@ export default function CaptureScreen({
   const turnoverSavingRef = useRef(false);
   const turnoverPickRef = useRef<TurnoverReason | null>(null);
   const turnoverCloseTimer = useRef<number | null>(null);
+  const turnoverClockRef = useRef<{ remainingMs: number; pausedAt: number; wasRunning: boolean } | null>(null);
+  const turnoverStopWrite = useRef<Promise<boolean>>(Promise.resolve(true));
+  const turnoverClockGen = useRef(0);
   const clockViolationRef = useRef(false);
   const [foulSide, setFoulSide] = useState<CaptureSide | null>(null);
   const [foulStep, setFoulStep] = useState<'court' | 'player' | 'type' | 'other' | 'rebound' | null>(null);
@@ -1257,8 +1260,30 @@ export default function CaptureScreen({
     setTurnoverReasonPicked(null);
   }
 
-  function cancelTurnover() {
+  function postTurnoverClock(running: boolean, remainingMs: number) {
+    const gen = turnoverClockGen.current + 1;
+    turnoverClockGen.current = gen;
+    const write = turnoverStopWrite.current.then(() => {
+      if (turnoverClockGen.current !== gen) return false;
+      return updateGameState({
+        clock_running: running,
+        clock_remaining_ms: remainingMs,
+      });
+    }, () => {
+      if (turnoverClockGen.current !== gen) return false;
+      return updateGameState({
+        clock_running: running,
+        clock_remaining_ms: remainingMs,
+      });
+    });
+    turnoverStopWrite.current = write.then(() => true, () => false);
+    return write;
+  }
+
+  function cancelTurnover(resume = true) {
     clearTurnoverClose();
+    const anchor = turnoverClockRef.current;
+    turnoverClockRef.current = null;
     setTurnoverSide(null);
     setTurnoverStep(null);
     setTurnoverOffenderId(null);
@@ -1267,6 +1292,17 @@ export default function CaptureScreen({
     setPendingAction(null);
     setTapCoordinates(null);
     showNote(null);
+    if (!resume || !anchor?.wasRunning) return;
+    const continued = remainingAfterPause(anchor.remainingMs, anchor.pausedAt, Date.now());
+    if (continued > 0) {
+      holdClock(true, continued);
+      void postTurnoverClock(true, continued);
+      return;
+    }
+    holdClock(false, 0);
+    void postTurnoverClock(false, 0).then((written) => {
+      if (written) requestPeriodEndRef.current();
+    });
   }
 
   function armTurnover(side: CaptureSide) {
@@ -1280,6 +1316,14 @@ export default function CaptureScreen({
       return;
     }
     bumpCapture();
+    const now = Date.now();
+    const wasRunning = clockRunningRef.current;
+    const remainingMs = clockNow(now);
+    turnoverClockRef.current = { remainingMs, pausedAt: now, wasRunning };
+    if (wasRunning) {
+      holdClock(false, remainingMs);
+      void postTurnoverClock(false, remainingMs);
+    }
     setTurnoverSide(side);
     setTurnoverStep('court');
     setTurnoverOffenderId(null);
@@ -2089,9 +2133,15 @@ export default function CaptureScreen({
     const point = tapCoordinates;
     const normalized = worldToNormalized(point.x, point.y);
     const stopsClock = turnoverStopsClock(reason);
+    const anchor = turnoverClockRef.current;
+    turnoverClockRef.current = null;
+    const wasRunning = anchor?.wasRunning === true;
+    const frozen = anchor?.remainingMs ?? clockNow();
+    const clockAtPlay = anchor && wasRunning && !stopsClock
+      ? remainingAfterPause(anchor.remainingMs, anchor.pausedAt, Date.now())
+      : frozen;
+    const resumeClock = !stopsClock && wasRunning && clockAtPlay > 0;
     const nextPossession = otherCaptureSide(side);
-    const wasRunning = clockRunningRef.current;
-    const clockAtPlay = clockNow();
     turnoverSavingRef.current = true;
     setTurnoverSaving(true);
     const ticket = applyPossession(nextPossession);
@@ -2104,19 +2154,26 @@ export default function CaptureScreen({
     setTapCoordinates(null);
     turnoverSavingRef.current = false;
     setTurnoverSaving(false);
-    if (stopsClock) holdClock(false, clockAtPlay);
+    if (stopsClock || (wasRunning && clockAtPlay === 0)) holdClock(false, clockAtPlay);
+    else if (resumeClock) holdClock(true, clockAtPlay);
     const epoch = bumpCapture();
     const reopenTurnover = () => {
       revertToServer(ticket);
       if (captureEpoch.current !== epoch) return;
+      turnoverClockRef.current = anchor;
       setTurnoverSide(side);
       setTurnoverOffenderId(offenderId);
       setTapCoordinates(point);
       setTurnoverStep('reason');
       setShowTurnoverMenu(true);
-      if (stopsClock && wasRunning) holdClock(true, clockAtPlay);
+      if (wasRunning && anchor) {
+        holdClock(false, anchor.remainingMs);
+        void postTurnoverClock(false, anchor.remainingMs);
+      }
     };
     try {
+      if (wasRunning) await turnoverStopWrite.current;
+      const stillOurs = captureEpoch.current === epoch;
       const result = await enqueueCommit(() => commitCapturePlay({
         play: 'turnover',
         gameId,
@@ -2127,6 +2184,7 @@ export default function CaptureScreen({
         side,
         reason,
         offenderId,
+        resumeClock: resumeClock && stillOurs,
       }));
       if ('error' in result) {
         const message = t(turnoverHintKey(result.error), turnoverHintFallback(result.error));
@@ -2150,6 +2208,11 @@ export default function CaptureScreen({
       showNote(stopsClock
         ? t('trke_turnover_hint_saved', 'Turnover saved. Press start clock.')
         : t('trke_turnover_hint_saved_live', 'Turnover saved.'));
+      if (!stopsClock && wasRunning && clockAtPlay === 0 && captureEpoch.current === epoch) {
+        holdClock(false, 0);
+        const written = await postTurnoverClock(false, 0);
+        if (written && captureEpoch.current === epoch) requestPeriodEndRef.current();
+      }
     } catch {
       const message = t('trke_turnover_hint_error', 'Could not save the turnover');
       showNote(message);
@@ -2974,11 +3037,18 @@ export default function CaptureScreen({
     return idsForPeriod(currentPeriod, side).filter((id) => !playerIsOut(id, side));
   }
 
-  function eliminatedCount(side: 'home' | 'away') {
-    const pool = side === 'home'
+  function sidePool(side: 'home' | 'away') {
+    return side === 'home'
       ? dressedPlayers()
       : opponentPlayers.filter((player) => !player.is_coach);
-    return pool.filter((player) => playerIsOut(player.id, side)).length;
+  }
+
+  function eliminatedCount(side: 'home' | 'away') {
+    return sidePool(side).filter((player) => playerIsOut(player.id, side)).length;
+  }
+
+  function availableCount(side: 'home' | 'away') {
+    return sidePool(side).filter((player) => !playerIsOut(player.id, side)).length;
   }
 
   function blockUntilReady() {
@@ -2994,7 +3064,7 @@ export default function CaptureScreen({
     }
     const homeCount = periodLineups.filter((row) => row.period_number === currentPeriod && row.side === 'home').length;
     const awayCount = periodLineups.filter((row) => row.period_number === currentPeriod && row.side === 'away').length;
-    if (!canStartPeriod(homeCount, awayCount, eliminatedCount('home'), eliminatedCount('away'))) {
+    if (!canStartPeriod(homeCount, awayCount, availableCount('home'), availableCount('away'))) {
       setShowPeriodLineup(true);
       showNote(t('trke_lineup_start_blocked', 'Set both lineups before starting the period'), null);
       return true;
@@ -3274,6 +3344,14 @@ export default function CaptureScreen({
     if (parsed.data.home_player_ids.some((id) => !squad.ids.includes(id))) {
       return t('trke_period_lineup_not_dressed', 'Only a dressed player can start a period');
     }
+    const homeNeed = requiredOnCourt(availableCount('home'));
+    const awayNeed = requiredOnCourt(availableCount('away'));
+    if (
+      (parsed.data.home_player_ids.length > 0 && parsed.data.home_player_ids.length < homeNeed)
+      || (parsed.data.away_player_ids.length > 0 && parsed.data.away_player_ids.length < awayNeed)
+    ) {
+      return t('trke_period_lineup_must_five', 'With 5 or more players available, the team cannot take the court with fewer than 5.');
+    }
 
     const homeError = await replacePeriodSide('home', parsed.data.home_player_ids);
     if (homeError) return homeError;
@@ -3320,8 +3398,8 @@ export default function CaptureScreen({
     if (!canStartPeriod(
       parsed.data.home_player_ids.length,
       parsed.data.away_player_ids.length,
-      eliminatedCount('home'),
-      eliminatedCount('away'),
+      availableCount('home'),
+      availableCount('away'),
     )) {
       showNote(t('trke_period_lineup_saved_short', 'Saved. This period cannot start yet.'), null);
     } else {
@@ -3411,7 +3489,7 @@ export default function CaptureScreen({
   }
 
   async function enterDeferredEnd() {
-    cancelTurnover();
+    cancelTurnover(false);
     if (!foulSavingRef.current) cancelFoul();
     cancelShot(false);
     cancelMiss(false);
@@ -3489,7 +3567,7 @@ export default function CaptureScreen({
     if (periodEndBusyRef.current) return;
     periodEndBusyRef.current = true;
     try {
-      cancelTurnover();
+      cancelTurnover(false);
       if (!foulSavingRef.current) cancelFoul();
       cancelShot(false);
       cancelMiss(false);
@@ -3529,10 +3607,12 @@ export default function CaptureScreen({
   }
 
   function leaveCapture() {
+    if (turnoverClockRef.current) cancelTurnover(true);
     router.push(`/team-manager/games/${gameId}`);
   }
 
   function openGameEditor() {
+    if (turnoverClockRef.current) cancelTurnover(true);
     const returnTo = encodeURIComponent(`/team-manager/games/live/${gameId}`);
     router.push(`/admin/games/${gameId}?returnTo=${returnTo}`);
   }
@@ -3572,7 +3652,7 @@ export default function CaptureScreen({
     && openingTipWinner != null
     && captureNotice?.kind !== 'attack_change'
     && !periodAlreadyStarted(currentPeriod)
-    && canStartPeriod(homeStarterCount, awayStarterCount, eliminatedCount('home'), eliminatedCount('away'));
+    && canStartPeriod(homeStarterCount, awayStarterCount, availableCount('home'), availableCount('away'));
 
   useEffect(() => {
     if (inboundAnsweredPeriodRef.current === currentPeriod) return;
@@ -3805,8 +3885,30 @@ export default function CaptureScreen({
     return t('trke_sub_hint_error', 'No se ha podido guardar el cambio');
   }
 
-  async function saveSubstitution(side: CaptureSide, swaps: SubstitutionSwap[]) {
-    if (subSavingRef.current || swaps.length === 0) return;
+  async function appendCourtPlayers(side: CaptureSide, ids: string[]) {
+    const starters = idsForPeriod(currentPeriod, side);
+    const next = [...starters];
+    for (const id of ids) {
+      if (!next.includes(id) && next.length < 5) next.push(id);
+    }
+    if (next.length === starters.length) return null;
+    const error = await replacePeriodSide(side, next);
+    if (error) return error;
+    setPeriodLineups((current) => [
+      ...current.filter((row) => !(row.period_number === currentPeriod && row.side === side)),
+      ...next.map((id, index) => ({
+        period_number: currentPeriod,
+        side,
+        position_index: index,
+        player_id: side === 'home' ? id : null,
+        opponent_player_id: side === 'away' ? id : null,
+      })),
+    ]);
+    return null;
+  }
+
+  async function saveSubstitution(side: CaptureSide, swaps: SubstitutionSwap[], entries: string[] = []) {
+    if (subSavingRef.current || (swaps.length === 0 && entries.length === 0)) return;
     if (clockRunningRef.current) {
       if (!foulOutRef.current) return;
       freezeClockAt(clockNow());
@@ -3815,6 +3917,19 @@ export default function CaptureScreen({
     setSubSaving(true);
     setSubError(null);
     try {
+      if (entries.length > 0) {
+        const lineupError = await appendCourtPlayers(side, entries);
+        if (lineupError) {
+          setSubError(lineupError);
+          return;
+        }
+      }
+      if (swaps.length === 0) {
+        setSubSide(null);
+        setSubError(null);
+        showNote(t('trke_sub_hint_saved', 'Cambio guardado'), 'sub');
+        return;
+      }
       const result = await enqueueCommit(() => commitCapturePlay({
         play: 'substitution',
         gameId,
@@ -5026,7 +5141,7 @@ export default function CaptureScreen({
               ? t('trke_sub_add_player_first', 'Add the player with the pencil on the bench, then substitute.')
               : null
           }
-          onConfirm={(swaps) => { void saveSubstitution(subSide, swaps); }}
+          onConfirm={(swaps, entries) => { void saveSubstitution(subSide, swaps, entries); }}
           onClose={cancelSub}
         />
       )}
@@ -5047,7 +5162,7 @@ export default function CaptureScreen({
           disabled={turnoverSaving}
           selectedId={turnoverReasonPicked}
           onSelect={chooseTurnoverReason}
-          onClose={cancelTurnover}
+          onClose={() => cancelTurnover()}
         />
       )}
 
@@ -5221,8 +5336,8 @@ export default function CaptureScreen({
           }))}
           initialHomeIds={suggestedStarterIds('home')}
           initialAwayIds={suggestedStarterIds('away')}
-          homeRequired={minimumToStart(eliminatedCount('home'))}
-          awayRequired={minimumToStart(eliminatedCount('away'))}
+          homeRequired={requiredOnCourt(availableCount('home'))}
+          awayRequired={requiredOnCourt(availableCount('away'))}
           undressedPlayers={teamSheet()
             .filter((player) => !dressedIdsNow().includes(player.id))
             .map((player) => ({

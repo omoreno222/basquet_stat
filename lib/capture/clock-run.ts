@@ -54,6 +54,17 @@ export function liveRemaining(
 }
 
 /**
+ * A turnover stops the clock at the whistle, then a live-ball reason
+ * continues from that reading minus the wall time spent choosing it.
+ */
+export function remainingAfterPause(frozenMs: number, pausedAt: number, now: number): number {
+  const frozen = Number.isFinite(frozenMs) ? frozenMs : 0;
+  const elapsed = Number.isFinite(now) && Number.isFinite(pausedAt) ? now - pausedAt : 0;
+  const spent = elapsed > 0 ? elapsed : 0;
+  return Math.max(0, Math.round(frozen - spent));
+}
+
+/**
  * The stored remaining time is a sample, not a live counter.
  * While the clock is running, subtract the wall time since that sample.
  */
