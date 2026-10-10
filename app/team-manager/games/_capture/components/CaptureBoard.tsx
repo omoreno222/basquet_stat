@@ -196,38 +196,28 @@ function jerseyFill(color: string | undefined): CSSProperties | undefined {
   return { backgroundColor: color, color: inkOn(color) };
 }
 
-/** Drawn vertical grain. Inline so the seat paints without a data-URI background. */
+/** Filled planks. The color is a shape, so the empty seat stays wood on the tablet. */
 function BenchWood({ className, label }: { className: string; label?: string }) {
   return (
-    <div title={label} aria-label={label} className={`relative overflow-hidden bg-[#e8c39e] ${className}`}>
-      <svg
-        viewBox="0 0 64 76"
-        preserveAspectRatio="none"
-        className="absolute inset-0 h-full w-full"
-        aria-hidden="true"
-      >
-        <g fill="none" strokeLinecap="round">
-          <path d="M2-2c1.2 16-1.4 32 1 48s-.8 18 .6 32" stroke="#c4895a" strokeWidth="1.1" />
-          <path d="M5.5-2c1.6 14-.8 28 1.8 44s-1.2 20 .4 36" stroke="#a86b45" strokeWidth="1.8" />
-          <path d="M9-2c-.6 18 1.8 30-.4 48s1 18-.2 32" stroke="#b97a4e" strokeWidth="1" />
-          <path d="M12.5-2c1.4 12-1 26 1.6 42s-.6 20 1 36" stroke="#8f5a34" strokeWidth="1.6" />
-          <path d="M16-2c.8 16-1.6 28 1.2 46s-1 18 .4 34" stroke="#c4895a" strokeWidth="1.15" />
-          <path d="M19.5-2c1.2 18-.4 32 1.4 48s-.8 16 .2 32" stroke="#a86b45" strokeWidth="2" />
-          <path d="M23-2c-.8 14 1.6 30-.6 46s1.2 18-.2 34" stroke="#b97a4e" strokeWidth="1.05" />
-          <path d="M26.5-2c1.5 16-1.2 28 1.2 44s-1 20 .6 36" stroke="#a86b45" strokeWidth="1.45" />
-          <path d="M30-2c.4 18-1.6 32 .8 48s-.4 16 .2 32" stroke="#c4895a" strokeWidth="1" />
-          <path d="M33.2-2c1.4 14-.6 26 1.6 42s-1.2 20 .4 36" stroke="#8f5a34" strokeWidth="1.7" />
-          <path d="M37-2c-.6 16 1.8 30-.8 46s1 18-.2 34" stroke="#a86b45" strokeWidth="1.2" />
-          <path d="M40.5-2c1.2 18-.8 32 1.4 48s-.6 16 .4 32" stroke="#c4895a" strokeWidth="1.9" />
-          <path d="M44-2c.6 14-1.4 28 .8 44s-1 20 .2 36" stroke="#b97a4e" strokeWidth="1.05" />
-          <path d="M47.5-2c1.4 16-.4 30 1.2 46s-.8 18 .2 34" stroke="#a86b45" strokeWidth="1.55" />
-          <path d="M51-2c-.8 18 1.6 32-.6 48s1 16-.2 32" stroke="#8f5a34" strokeWidth="1.15" />
-          <path d="M54.5-2c1 14-.6 26 1.4 42s-.8 20 .4 36" stroke="#c4895a" strokeWidth="1.7" />
-          <path d="M58-2c.6 16-1.2 30 .8 46s-.4 18 .2 34" stroke="#a86b45" strokeWidth="1.1" />
-          <path d="M61.5-2c1.2 18-.6 32 .6 48s-.4 16 .2 32" stroke="#b97a4e" strokeWidth="1.35" />
-          <path d="M21 24c1.6 3.2 1.6 8 0 11.2-1.6-3.2-1.6-8 0-11.2" stroke="#a86b45" strokeWidth="1.15" />
-          <path d="M45 40c1.3 2.6 1.3 6.4 0 9-1.3-2.6-1.3-6.4 0-9" stroke="#8f5a34" strokeWidth="1" />
-        </g>
+    <div
+      title={label}
+      aria-label={label}
+      className={`overflow-hidden ${className}`}
+      style={{ backgroundColor: '#d4a574' }}
+    >
+      <svg viewBox="0 0 64 76" preserveAspectRatio="none" className="block h-full w-full" aria-hidden="true">
+        <rect width="64" height="76" fill="#d4a574" />
+        <rect x="0" width="7" height="76" fill="#c4895a" />
+        <rect x="7" width="6" height="76" fill="#e8c39e" />
+        <rect x="13" width="4" height="76" fill="#a86b45" />
+        <rect x="17" width="9" height="76" fill="#e0b88a" />
+        <rect x="26" width="3" height="76" fill="#8f5a34" />
+        <rect x="29" width="8" height="76" fill="#c89960" />
+        <rect x="37" width="5" height="76" fill="#e8c39e" />
+        <rect x="42" width="3" height="76" fill="#8f5a34" />
+        <rect x="45" width="8" height="76" fill="#d7b08a" />
+        <rect x="53" width="4" height="76" fill="#a86b45" />
+        <rect x="57" width="7" height="76" fill="#c4895a" />
       </svg>
     </div>
   );

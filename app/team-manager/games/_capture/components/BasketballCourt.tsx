@@ -27,7 +27,7 @@ interface BasketballCourtProps {
   tableOnBottom?: boolean;
   tableLabel?: string;
   logoInverted?: boolean;
-  /** Pulsing wood strip on the attacking half. Visual only; taps pass through. */
+  /** Pulsing wash over the whole attacking half. Visual only; taps pass through. */
   showAttackBar?: boolean;
   /** Round marks in the bottom corners. Off on the live court; they sit on the hint bar. */
   showAttackMarks?: boolean;
@@ -54,9 +54,7 @@ const ATTACK_MARK_TRI_W = 42;
 const ATTACK_MARK_OVERLAP = 14;
 const ATTACK_MARK_W = ATTACK_MARK_R * 2 + ATTACK_MARK_TRI_W - ATTACK_MARK_OVERLAP;
 const ATTACK_MARK_H = ATTACK_MARK_R * 2;
-/** Short of the corner three, which starts 90cm from the sideline. */
-const ATTACK_BAR_H = 64;
-const ATTACK_BAR_FILL = '#c4894a';
+const ATTACK_BAR_FILL = '#ffe14a';
 
 /** Round mark with a triangular pointer tucked into one side. */
 function attackMarkLayout(x: number, y: number, pointRight: boolean) {
@@ -290,11 +288,11 @@ export function BasketballCourt({
       {showAttackBar ? (
         <rect
           x={highlightRight ? COURT_LENGTH / 2 : 0}
-          y={tableOnBottom ? 0 : COURT_WIDTH - ATTACK_BAR_H}
+          y={0}
           width={COURT_LENGTH / 2}
-          height={ATTACK_BAR_H}
+          height={COURT_WIDTH}
           fill={ATTACK_BAR_FILL}
-          className="pointer-events-none animate-pulse"
+          className="pointer-events-none animate-attack-half"
           aria-hidden="true"
         />
       ) : null}
