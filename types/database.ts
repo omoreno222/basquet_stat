@@ -1,7 +1,21 @@
-export type UserRole = 'admin' | 'team_manager' | 'coach' | 'parent' | 'player';
+export type UserRole = 'admin' | 'club_admin' | 'team_manager' | 'coach' | 'parent' | 'player';
 export type GameStatus = 'scheduled' | 'live' | 'final';
-export type EventType = 'shot' | 'free_throw' | 'foul' | 'rebound' | 'assist' | 'steal' | 'turnover';
+export type KitColor = 'primary' | 'secondary';
+export type EventType = 'shot' | 'free_throw' | 'foul' | 'rebound' | 'assist' | 'steal' | 'turnover' | 'timeout' | 'jump';
 export type Locale = 'en' | 'es' | 'ca';
+export type TeamCategory = 'premini' | 'mini' | 'infantil' | 'cadete' | 'junior' | 'sub22' | 'senior';
+export type TeamGender = 'male' | 'female' | 'mixed';
+
+export interface Club {
+  id: string;
+  name: string;
+  short_name: string | null;
+  logo_url: string | null;
+  primary_color: string;
+  secondary_color: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface Profile {
   id: string;
@@ -9,6 +23,7 @@ export interface Profile {
   full_name: string | null;
   role: UserRole;
   language: Locale;
+  avatar_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -16,6 +31,7 @@ export interface Profile {
 export interface ProfileRole {
   profile_id: string;
   role: UserRole;
+  club_id: string | null;
   created_at: string;
 }
 
@@ -32,19 +48,31 @@ export interface Season {
 export interface Team {
   id: string;
   season_id: string;
+  club_id: string;
   name: string;
+  fiba_short_name: string | null;
+  category: TeamCategory;
+  gender: TeamGender;
+  logo_url: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface TeamCoach {
+  team_id: string;
+  profile_id: string;
 }
 
 export interface Player {
   id: string;
   team_id: string;
+  club_id: string;
   user_id: string | null;
   full_name: string;
   jersey_number: number;
   position: string | null;
   date_of_birth: string | null;
+  avatar_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -66,13 +94,15 @@ export interface Game {
   venue: string | null;
   game_date: string;
   status: GameStatus;
-  slot_a_user_id: string | null;
-  slot_b_user_id: string | null;
   clock_running: boolean;
   clock_remaining_ms: number;
+  clock_synced_at: string | null;
   current_period: number;
   possession: 'home' | 'away' | null;
+  opening_tip_winner?: 'home' | 'away' | null;
   official: boolean;
+  kit_color: KitColor;
+  opponent_color: string;
   created_at: string;
   updated_at: string;
 }
@@ -86,6 +116,21 @@ export interface GamePeriod {
   started_at: string | null;
   ended_at: string | null;
   created_at: string;
+}
+
+export interface GameOpponentPlayer {
+  id: string;
+  game_id: string;
+  jersey_number: number | null;
+  name: string | null;
+  is_coach: boolean;
+  created_at: string;
+}
+
+export interface GameOpponentLineup {
+  game_id: string;
+  opponent_player_id: string;
+  position_index: number;
 }
 
 export interface Stint {
@@ -102,6 +147,7 @@ export interface GameEvent {
   id: string;
   game_id: string;
   player_id: string | null;
+  opponent_player_id: string | null;
   event_type: EventType;
   period_number: number;
   clock_remaining_ms: number;
@@ -112,6 +158,19 @@ export interface GameEvent {
   coord_y: number | null;
   zone: number | null;
   is_offensive: boolean | null;
+  /** Opponent team rebound with no player. */
+  rebound_side?: 'away' | null;
+  /** Missed shot with no rebound: ball lodged, or the period ended. */
+  dead_ball?: 'lodged' | 'period_end' | null;
+  turnover_type: string | null;
+  turnover_side: 'home' | 'away' | null;
+  timeout_side: 'home' | 'away' | null;
+  jump_side?: 'home' | 'away' | null;
+  jump_won?: boolean | null;
+  jump_home_player_id?: string | null;
+  jump_away_player_id?: string | null;
+  foul_received_player_id?: string | null;
+  foul_received_opponent_player_id?: string | null;
   recorded_by_user_id: string | null;
   created_at: string;
 }

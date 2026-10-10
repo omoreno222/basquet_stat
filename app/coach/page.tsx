@@ -1,20 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
+import { SeasonMathLogo } from '@/components/SeasonMathLogo';
+import { Profile, Player } from '@/lib/types';
+import { CoachNavPills } from '@/components/NavPills';
+
+interface PlayerWithTeam extends Player {
+  teams?: { name: string };
+}
 
 export default function CoachDashboard() {
-  const [profile, setProfile] = useState<any>(null);
-  const [players, setPlayers] = useState<any[]>([]);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [players, setPlayers] = useState<PlayerWithTeam[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  useEffect(() => {
-    checkUser();
-  }, []);
-
-  async function checkUser() {
+  const checkUser = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       router.push('/login');
@@ -49,7 +52,11 @@ export default function CoachDashboard() {
     setProfile(profileData);
     await loadPlayers();
     setLoading(false);
-  }
+  }, [router]);
+
+  useEffect(() => {
+    checkUser();
+  }, [checkUser]);
 
   async function loadPlayers() {
     const { data } = await supabase
@@ -65,6 +72,7 @@ export default function CoachDashboard() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    document.cookie = 'sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     router.push('/login');
   };
 
@@ -74,14 +82,15 @@ export default function CoachDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
+      <nav className="bg-brand dark:bg-brand-dark text-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
-            <div className="flex-shrink-0 flex items-center">
-              <h1 className="text-xl font-bold">BasquetStat - Coach</h1>
+            <div className="flex-shrink-0 flex items-center space-x-3">
+              <SeasonMathLogo width={120} height={120} className="h-10 w-auto" />
+              <span className="font-display text-lg font-semibold text-white">Coach</span>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-gray-700">Welcome, {profile.full_name || profile.email}</span>
+              <span className="text-gray-700">Welcome, {profile?.full_name || profile?.email}</span>
               <button
                 onClick={handleLogout}
                 className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
@@ -92,6 +101,7 @@ export default function CoachDashboard() {
           </div>
         </div>
       </nav>
+      <CoachNavPills />
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">

@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Locale } from '@/types/database';
-import Link from 'next/link';
+import { Translation } from '@/lib/types';
+import { AdminNavbar } from '@/components/AdminNavbar';
 
 export default function TranslationsPage() {
-  const [translations, setTranslations] = useState<any[]>([]);
+  const [translations, setTranslations] = useState<Translation[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterLocale, setFilterLocale] = useState<string>('all');
-  const [editingTranslation, setEditingTranslation] = useState<any>(null);
+  const [editingTranslation, setEditingTranslation] = useState<Translation | null>(null);
   const [editValue, setEditValue] = useState('');
   const [error, setError] = useState('');
 
@@ -29,7 +29,7 @@ export default function TranslationsPage() {
     setLoading(false);
   }
 
-  function handleEdit(translation: any) {
+  function handleEdit(translation: Translation) {
     setEditingTranslation(translation);
     setEditValue(translation.value);
     setError('');
@@ -43,6 +43,11 @@ export default function TranslationsPage() {
 
   async function handleSave() {
     setError('');
+    
+    if (!editingTranslation) {
+      setError('No translation selected');
+      return;
+    }
     
     if (!editValue.trim()) {
       setError('Value cannot be empty');
@@ -70,63 +75,54 @@ export default function TranslationsPage() {
   const uniqueKeys = [...new Set(translations.map(t => t.key))];
 
   if (loading) {
-    return <div className="p-8">Loading...</div>;
+    return <div className="min-h-screen bg-gray-100 p-8 text-gray-900 dark:bg-gray-800 dark:text-gray-100">Loading...</div>;
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <Link href="/admin" className="text-blue-500 hover:text-blue-700 mr-4">
-                ← Back
-              </Link>
-              <h1 className="text-xl font-bold">Translations</h1>
-            </div>
-            <div className="flex items-center">
-              <select
-                value={filterLocale}
-                onChange={(e) => setFilterLocale(e.target.value)}
-                className="border rounded px-3 py-2"
-              >
-                <option value="all">All Languages</option>
-                <option value="en">English</option>
-                <option value="es">Español</option>
-                <option value="ca">Català</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </nav>
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-800">
+      <AdminNavbar />
 
+      <div className="lg:pl-56">
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <div className="mb-6 flex items-center justify-between gap-4 px-4">
+          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Translations</h1>
+          <select
+            value={filterLocale}
+            onChange={(e) => setFilterLocale(e.target.value)}
+            className="rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-white/20 dark:bg-gray-950 dark:text-gray-100"
+          >
+            <option value="all">All Languages</option>
+            <option value="en">English</option>
+            <option value="es">Español</option>
+            <option value="ca">Català</option>
+          </select>
+        </div>
         {error && (
           <div className="mb-4 px-4">
-            <div className="p-3 bg-red-100 text-red-700 rounded">
+            <div className="rounded bg-red-100 p-3 text-red-700 dark:bg-red-950 dark:text-red-200">
               {error}
             </div>
           </div>
         )}
 
         <div className="px-4 py-6 sm:px-0">
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
-            <div className="p-4 bg-gray-50 border-b">
-              <p className="text-sm text-gray-600">
+          <div className="overflow-hidden bg-white shadow sm:rounded-md dark:bg-gray-900 dark:ring-1 dark:ring-white/10">
+            <div className="border-b border-gray-200 bg-gray-50 p-4 dark:border-white/10 dark:bg-gray-900">
+              <p className="text-sm text-gray-600 dark:text-gray-400">
                 {uniqueKeys.length} unique translation keys · {translations.length} total translations
               </p>
             </div>
-            <ul className="divide-y divide-gray-200">
+            <ul className="divide-y divide-gray-200 dark:divide-white/10">
               {filteredTranslations.length === 0 ? (
-                <li className="px-6 py-4 text-gray-500">No translations found</li>
+                <li className="px-6 py-4 text-gray-500 dark:text-gray-400">No translations found</li>
               ) : (
                 filteredTranslations.map((trans) => (
-                  <li key={trans.id} className="px-6 py-4 hover:bg-gray-50">
+                  <li key={trans.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-white/5">
                     {editingTranslation?.id === trans.id ? (
                       <div>
                         <div className="mb-2">
-                          <span className="text-sm font-mono text-gray-900">{trans.key}</span>
-                          <span className="ml-2 px-2 py-1 text-xs font-semibold text-indigo-800 bg-indigo-100 rounded uppercase">
+                          <span className="font-mono text-sm text-gray-900 dark:text-gray-100">{trans.key}</span>
+                          <span className="ml-2 rounded bg-indigo-100 px-2 py-1 text-xs font-semibold uppercase text-indigo-800 dark:bg-indigo-300 dark:text-indigo-950">
                             {trans.locale}
                           </span>
                         </div>
@@ -135,7 +131,7 @@ export default function TranslationsPage() {
                             type="text"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
-                            className="flex-1 border rounded px-3 py-2"
+                            className="flex-1 rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-white/20 dark:bg-gray-950 dark:text-gray-100"
                             autoFocus
                           />
                           <button
@@ -155,11 +151,11 @@ export default function TranslationsPage() {
                     ) : (
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <h3 className="text-sm font-mono text-gray-900">{trans.key}</h3>
-                          <p className="text-sm text-gray-700 mt-1">{trans.value}</p>
+                          <h3 className="font-mono text-sm text-gray-900 dark:text-gray-100">{trans.key}</h3>
+                          <p className="mt-1 text-sm text-gray-700 dark:text-gray-300">{trans.value}</p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="px-2 py-1 text-xs font-semibold text-indigo-800 bg-indigo-100 rounded uppercase">
+                          <span className="rounded bg-indigo-100 px-2 py-1 text-xs font-semibold uppercase text-indigo-800 dark:bg-indigo-300 dark:text-indigo-950">
                             {trans.locale}
                           </span>
                           <button
@@ -177,6 +173,7 @@ export default function TranslationsPage() {
             </ul>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

@@ -1,0 +1,172 @@
+'use client';
+
+import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { forgotPassword } from '@/lib/password-auth';
+import Image from 'next/image';
+
+export default function LoginScreen() {
+  const loginError = useSearchParams().get('error') || '';
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    setLoading(true);
+
+    const result = await forgotPassword(forgotEmail);
+    setLoading(false);
+
+    if (result.success) {
+      setSuccess(result.message || 'If an account exists, a password reset email has been sent.');
+      setForgotEmail('');
+      setTimeout(() => {
+        setShowForgotPassword(false);
+        setSuccess('');
+      }, 5000);
+    } else {
+      setError('An error occurred. Please try again.');
+    }
+  };
+
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center bg-black bg-cover bg-center bg-no-repeat"
+      style={{ backgroundImage: "url('/images/login-bg.jpg')" }}
+    >
+      <div className="bg-white/95 p-8 rounded-lg shadow-2xl w-full max-w-md">
+        <div className="flex justify-center mb-6">
+          <Image
+            src="/images/seasonmath-logo-light.png"
+            alt="SeasonMath"
+            width={200}
+            height={200}
+            priority
+            className="h-auto"
+          />
+        </div>
+        <h2 className="text-xl mb-6 text-center text-gray-600">Sign In</h2>
+
+        {(loginError || error) && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+            {loginError || error}
+          </div>
+        )}
+
+        {success && (
+          <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
+            {success}
+          </div>
+        )}
+
+        {!showForgotPassword ? (
+          <form method="post" action="/api/login">
+            <div className="mb-4">
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="email">
+                Email
+              </label>
+              <input
+                id="email"
+                name="email"
+                type="text"
+                inputMode="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                autoComplete="username"
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                placeholder="email@basquet.local"
+                required
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="password">
+                Password
+              </label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autoCapitalize="none"
+                autoCorrect="off"
+                autoComplete="current-password"
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                required
+              />
+            </div>
+
+            <div className="mb-6 text-right">
+              <button
+                type="button"
+                onClick={() => setShowForgotPassword(true)}
+                className="text-sm text-blue-500 hover:text-blue-700"
+              >
+                Forgot Password?
+              </button>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+            >
+              Sign In
+            </button>
+          </form>
+        ) : (
+          <>
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold mb-2">Reset Password</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Enter your email address and we&apos;ll send you a password reset link.
+              </p>
+            </div>
+            <form onSubmit={handleForgotPassword}>
+              <div className="mb-4">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="forgot-email">
+                  Email
+                </label>
+                <input
+                  id="forgot-email"
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                  placeholder="email@basquet.local"
+                  required
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline disabled:bg-gray-400"
+                >
+                  {loading ? 'Sending...' : 'Send Reset Link'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForgotPassword(false);
+                    setError('');
+                    setSuccess('');
+                    setForgotEmail('');
+                  }}
+                  className="flex-1 bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+                >
+                  Back to Login
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

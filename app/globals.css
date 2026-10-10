@@ -17,11 +17,52 @@
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: Manrope, "Manrope Fallback", ui-sans-serif, system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  font-family: Sora, "Sora Fallback", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+}
+
+@keyframes attack-half-pulse {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 0.78; }
+}
+
+.animate-attack-half {
+  animation: attack-half-pulse 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-attack-half {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
+@keyframes capture-hysteria {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  18% { opacity: 0.15; transform: scale(1.16); }
+  36% { opacity: 1; transform: scale(0.94); }
+  54% { opacity: 0.2; transform: scale(1.2); }
+  72% { opacity: 1; transform: scale(1.05); }
+}
+
+.animate-capture-hysteria {
+  animation: capture-hysteria 0.38s linear infinite;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-capture-hysteria {
+    animation-duration: 1.6s;
   }
 }

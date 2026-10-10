@@ -34,6 +34,13 @@ async function seed() {
         full_name: 'Team Manager' 
       },
       { 
+        email: 'pere.alier@basquet.local', 
+        password: 'basquet2024', 
+        role: 'team_manager', 
+        roles: ['team_manager'],
+        full_name: 'Pere Alier' 
+      },
+      { 
         email: 'coach@basquet.local', 
         password: 'basquet2024', 
         role: 'coach', 
@@ -106,6 +113,55 @@ async function seed() {
       }
     }
 
+    // Get or create demo club (reuse club created by 018 backfill if it exists)
+    console.log('Getting or creating demo club...');
+    let club;
+    
+    // Try to find existing club (created by migration 018 backfill)
+    const { data: existingClub } = await supabase
+      .from('clubs')
+      .select()
+      .limit(1)
+      .single();
+
+    if (existingClub) {
+      club = existingClub;
+      console.log('✓ Using existing club:', club.name);
+    } else {
+      // Create new club if none exists
+      const { data: newClub, error: clubError } = await supabase
+        .from('clubs')
+        .insert({
+          name: 'Demo Basketball Club',
+          short_name: 'DBC',
+          primary_color: '#1e40af',
+          secondary_color: '#f97316',
+        })
+        .select()
+        .single();
+
+      if (clubError) {
+        console.error('Error creating club:', clubError);
+        return;
+      }
+      club = newClub;
+      console.log('✓ Created club:', club.name);
+    }
+
+    // Update profile_roles to include club_id (except for admin)
+    console.log('Updating user roles with club_id...');
+    for (const user of users) {
+      const { error: updateError } = await supabase
+        .from('profile_roles')
+        .update({ club_id: club.id })
+        .eq('profile_id', user.id)
+        .neq('role', 'admin');
+
+      if (updateError) {
+        console.error(`Error updating roles for ${user.email}:`, updateError);
+      }
+    }
+
     // Create a season
     console.log('Creating season...');
     const { data: season, error: seasonError } = await supabase
@@ -132,6 +188,9 @@ async function seed() {
       .insert({
         season_id: season.id,
         name: 'Junior Warriors',
+        club_id: club.id,
+        category: 'junior',
+        gender: 'mixed',
       })
       .select()
       .single();
@@ -159,6 +218,7 @@ async function seed() {
         .from('players')
         .insert({
           team_id: team.id,
+          club_id: club.id,
           ...playerData,
         })
         .select()
